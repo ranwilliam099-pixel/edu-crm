@@ -3,7 +3,8 @@
 -- 公共 schema 6 表 DDL（BE-W0-5）
 -- 依据：教育培训行业销售CRM-字段清单-V1.md §2 + A04 责任链规约 + A10/A11/A12 执行细化
 -- 出具：研发负责人 / 开发总监  2026-04-29
--- 注意：本文件是教培项目独立工程，不引用、不污染主线 33 静态 + 59 e2e + 13 step 守护
+-- 项目隔离（评估意见追加 #8 红线）：教育培训机构项目 ≠ 企业管理系统项目，两个独立工程
+-- 本文件不引用企业管理系统的任何 schema、表、字段；亦无"主线守护"概念
 -- ============================================================
 
 BEGIN;
@@ -12,8 +13,10 @@ BEGIN;
 -- 2.1 tenants（租户主表）
 -- A01 schema-per-tenant：schema 名 = tenant_<id>
 -- A07 标准版账号上限 50；A08 校区上限 3
--- A10 状态流转：试用中 → 已付费 → 已到期 → 已冻结 → 已删除
--- 054 价格锚点：单校区入门版 1999/年（version 枚举可后续扩展）
+-- A10 状态流转：试用中 → 已付费 → 已到期 / 已冻结 → 已删除
+-- M07 三档版本：标准版/校区版/增长版
+-- 054 价格锚点 1999/年是营销 SKU 命名（按 §0 不猜测原则，不擅自加 version 枚举），
+--   存于 payment_orders.price_tier，待 Q.PRICE.a/b/c 由产品经理拍板后再迁移
 -- ----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.tenants (
     id              VARCHAR(32)  PRIMARY KEY,
@@ -21,7 +24,7 @@ CREATE TABLE IF NOT EXISTS public.tenants (
     status          VARCHAR(16)  NOT NULL DEFAULT '试用中'
                     CHECK (status IN ('试用中','已付费','已到期','已冻结','已删除')),
     version         VARCHAR(16)  NOT NULL DEFAULT '标准版'
-                    CHECK (version IN ('单校区入门版','标准版','校区版','增长版')),
+                    CHECK (version IN ('标准版','校区版','增长版')),
     campus_limit    INTEGER      NOT NULL DEFAULT 3
                     CHECK (campus_limit > 0),
     account_limit   INTEGER      NOT NULL DEFAULT 50
@@ -42,7 +45,8 @@ CREATE INDEX IF NOT EXISTS idx_tenants_paid_until  ON public.tenants(paid_until)
 CREATE TABLE IF NOT EXISTS public.payment_orders (
     id                  VARCHAR(32)   PRIMARY KEY,
     tenant_id           VARCHAR(32)   NOT NULL REFERENCES public.tenants(id),
-    version             VARCHAR(16)   NOT NULL,                      -- 购买版本（与 tenants.version 同枚举）
+    version             VARCHAR(16)   NOT NULL,                      -- 购买版本（与 tenants.version 同枚举：标准版/校区版/增长版）
+    price_tier          VARCHAR(32)   NULL,                          -- 营销 SKU 标签占位（如"单校区入门版-1999"），待 Q.PRICE 拍板后启用，当前不参与计费校验
     amount              NUMERIC(12,2) NOT NULL CHECK (amount >= 0),
     status              VARCHAR(16)   NOT NULL DEFAULT '待支付'
                         CHECK (status IN ('待支付','已支付','退款处理中','已退款','已取消')),
@@ -131,8 +135,9 @@ CREATE INDEX IF NOT EXISTS idx_platform_admin_logs_created_at   ON public.platfo
 -- A10 paid_until / frozen_at / keep_until 守护提示
 -- 应用层 Job 计算续费提醒、到期冻结、3 个月清理时点
 -- ----------------------------------------------------------------
-COMMENT ON COLUMN public.tenants.paid_until IS '到期时间，A10 续费提醒锚点';
-COMMENT ON COLUMN public.tenants.frozen_at  IS '冻结时间，A10 到期后冻结';
-COMMENT ON COLUMN public.tenants.keep_until IS 'A10 §2.5 平台超管设置的保留标记，清理前必须校验';
+COMMENT ON COLUMN public.tenants.paid_until IS '到期时间，A10 续费提醒锚点（D-30/D-7/D-1/D+0/D+75/D+89/D+90）';
+COMMENT ON COLUMN public.tenants.frozen_at  IS '冻结时间，A10 到期即冻结锚点';
+COMMENT ON COLUMN public.tenants.keep_until IS 'A10 §2.5 平台超管设置的保留标记，清理 cron 必须三重校验：冻结状态 + 90 天无续费 + 无保留标记';
+COMMENT ON COLUMN public.payment_orders.price_tier IS '营销 SKU 标签占位（如单校区入门版-1999）。Q.PRICE.a/b/c 待产品经理拍板前，本字段不参与计费校验，仅做营销报表分析';
 
 COMMIT;
