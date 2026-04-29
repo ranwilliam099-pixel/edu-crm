@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.pnp.*
+
+# Build artifacts
+dist/
+build/
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env / secrets — 严禁提交（特别是微信支付 V3 商户号 + API 密钥 EXT-01）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+apiclient_*.pem
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Local DB / runtime
+docker-volumes/
+postgres-data/
+redis-data/
+
+# OS
+Thumbs.db
