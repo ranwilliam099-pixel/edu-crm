@@ -1,20 +1,28 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { JwtService, TokenExpiredError, JsonWebTokenError } from '@nestjs/jwt';
 import { JwtPayload, isPlatformRole } from './jwt-payload.interface';
 
 /**
- * JWT 解析与校验（接口清单 V1 §6.1）
+ * JWT 解析与校验（接口清单 V1 §6.1）— BE-W1-3 真接入版
  *
  * 职责：
- *   1. 从 Authorization: Bearer <token> 解析 JWT
- *   2. 校验 sub / tenantId / role / campusId 字段
+ *   1. 从 Authorization: Bearer <token> 解析 JWT（用 @nestjs/jwt JwtService.verify）
+ *   2. 校验 sub / tenantId / role / campusId 字段（claims 完整性）
  *   3. 拒绝过期 / 签名错误 / claims 缺失的 token
  *
- * §0 不猜测：黑名单 / 续签 / 权限矩阵到角色级具体映射，等产品 + 项目经理拍板后再补
+ * §0 不猜测严守：
+ *   - 黑名单 / 续签 / Redis 失效列表等待产品 + 项目经理拍板后补
+ *   - 权限矩阵到角色级具体路由映射在路由 guard 层落地，本类只做 token 解析
+ *
+ * 项目隔离（追加 #8）：本类不引用企业管理系统主项目任何 auth 实现
  */
 @Injectable()
 export class JwtStrategy {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly jwt: JwtService,
+  ) {}
 
   /**
    * 解析并校验 JWT，返回 typed payload
@@ -30,19 +38,26 @@ export class JwtStrategy {
       throw new UnauthorizedException('JWT_SECRET not configured');
     }
 
-    const decoded = this.decode(token, secret);
+    const decoded = this.verify(token);
     this.validateClaims(decoded);
     return decoded;
   }
 
   /**
-   * @nestjs/jwt 接入位置（W1 真实接入时替换为 jwtService.verify）
-   * 当前为占位实现，仅供单测与契约对齐
+   * 用 @nestjs/jwt JwtService.verify 真实校验签名 + 过期
    */
-  private decode(_token: string, _secret: string): JwtPayload {
-    throw new UnauthorizedException(
-      'JwtStrategy.decode() is a placeholder — wire @nestjs/jwt JwtService.verify in W1 BE-W1-3',
-    );
+  private verify(token: string): JwtPayload {
+    try {
+      return this.jwt.verify<JwtPayload>(token);
+    } catch (e) {
+      if (e instanceof TokenExpiredError) {
+        throw new UnauthorizedException('Token expired');
+      }
+      if (e instanceof JsonWebTokenError) {
+        throw new UnauthorizedException(`Invalid token: ${e.message}`);
+      }
+      throw new UnauthorizedException('Token verification failed');
+    }
   }
 
   private validateClaims(payload: JwtPayload): void {
