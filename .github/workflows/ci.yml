@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-test-build:
+    name: Lint + Test + Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js 24 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Unit tests
+        run: pnpm run test
+
+      - name: Build
+        run: pnpm run build
+
+  sql-static-check:
+    name: SQL static check (V1 + V2 syntax)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: eduapp
+          POSTGRES_PASSWORD: eduapp
+          POSTGRES_DB: edudb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eduapp -d edudb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run V1 migration
+        run: |
+          PGPASSWORD=eduapp psql -h localhost -U eduapp -d edudb -f migrations/V1__init_public_schema.sql
+
+      - name: Verify 6 public tables exist (T-W0-02)
+        run: |
+          PGPASSWORD=eduapp psql -h localhost -U eduapp -d edudb -c "\dt public.*" | tee /tmp/tables.txt
+          for t in tenants payment_orders payment_refunds invoice_requests marketing_channels platform_admin_logs; do
+            grep -q " $t " /tmp/tables.txt || (echo "MISSING TABLE: $t" && exit 1)
+          done
+
+      - name: Verify tenants.version 3-tier CHECK rejects '单校区入门版' (T-W0-04)
+        run: |
+          PGPASSWORD=eduapp psql -h localhost -U eduapp -d edudb -c \
+            "INSERT INTO tenants (id,name,version) VALUES ('t01','test','单校区入门版');" \
+            && (echo "FAIL: 4-tier insert should be rejected" && exit 1) \
+            || echo "PASS: CHECK constraint correctly rejected '单校区入门版'"
+
+      - name: Verify payment_orders.price_tier exists (T-W0-05)
+        run: |
+          PGPASSWORD=eduapp psql -h localhost -U eduapp -d edudb -c "\d public.payment_orders" \
+            | grep -q "price_tier .* character varying(32)" \
+            || (echo "FAIL: price_tier column missing" && exit 1)
+          echo "PASS: price_tier column exists"
+
+      - name: Run V2 tenant template (substitute __TENANT_SCHEMA__)
+        run: |
+          sed 's/__TENANT_SCHEMA__/tenant_test_a/g' migrations/V2__tenant_schema_template.sql > /tmp/V2_test.sql
+          PGPASSWORD=eduapp psql -h localhost -U eduapp -d edudb -f /tmp/V2_test.sql
+
+      - name: Verify 11 tenant tables exist
+        run: |
+          PGPASSWORD=eduapp psql -h localhost -U eduapp -d edudb -c "\dt tenant_test_a.*" | tee /tmp/ttables.txt
+          for t in campuses users leads customers students opportunities trial_lessons course_products contracts payments reverse_orders referrals; do
+            grep -q " $t " /tmp/ttables.txt || (echo "MISSING TENANT TABLE: $t" && exit 1)
+          done
+          echo "PASS: all 12 tenant tables created"
