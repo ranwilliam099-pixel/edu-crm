@@ -3,6 +3,7 @@ import { WxPayModule } from './wxpay/wxpay.module';
 import { PaymentOrderStateService } from './payment-order-state.service';
 import { RefundService } from './refund.service';
 import { InvoiceService } from './invoice.service';
+import { PlatformReviewService } from './platform-review.service';
 
 /**
  * Checkout 模块（W2 主链路骨架）
@@ -23,7 +24,13 @@ import { InvoiceService } from './invoice.service';
  */
 @Module({
   imports: [WxPayModule],
-  providers: [PaymentOrderStateService, RefundService, InvoiceService],
-  exports: [PaymentOrderStateService, RefundService, InvoiceService, WxPayModule],
+  providers: [PaymentOrderStateService, RefundService, InvoiceService, PlatformReviewService],
+  exports: [
+    PaymentOrderStateService,
+    RefundService,
+    InvoiceService,
+    PlatformReviewService,
+    WxPayModule,
+  ],
 })
 export class CheckoutModule {}
