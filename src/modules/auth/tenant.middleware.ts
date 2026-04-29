@@ -25,7 +25,12 @@ export class TenantMiddleware implements NestMiddleware {
   constructor(private readonly jwt: JwtStrategy) {}
 
   use(req: Request, _res: Response, next: NextFunction): void {
-    const path = req.path;
+    // 用 originalUrl 而非 req.path：NestJS setGlobalPrefix('api') 后，全局 middleware
+    // 在路由解析前执行；req.path 在某些 Express 内部路由层可能去掉 prefix。
+    // originalUrl 保留 ?query，需先去 query 段再做前缀匹配。
+    // 实测发现：req.path 在 setGlobalPrefix + middleware('*') 组合下不可靠。
+    const fullUrl = req.originalUrl || req.url || req.path || '';
+    const path = fullUrl.split('?')[0];
 
     // 公开成交链路：游客可访问，仅在已登录时挂用户
     if (path.startsWith('/api/public/') || path.startsWith('/api/checkout/')) {

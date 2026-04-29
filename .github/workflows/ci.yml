@@ -11,8 +11,10 @@ jobs:
     name: Lint + Test + Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # W0 阶段 ESLint 9 flat config / pnpm-lock.yaml 待真后端工程师到岗后补；本 job 暂容忍失败
-    continue-on-error: true
+    # 本机实测发现 lint-test-build 在 continue-on-error 下静默吞 build 错误（BE-W0
+    # 实测留痕 2026-04-30）。改为非容忍：lint 仍可失败（ESLint config TBD），但
+    # test/build 必须真过 — 防止 typeorm union type / supertest namespace 类型错误
+    # 这种工程缺陷被 CI 漏过。
 
     steps:
       - name: Checkout

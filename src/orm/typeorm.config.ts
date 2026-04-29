@@ -17,6 +17,8 @@ import { TypeOrmModuleOptions } from '@nestjs/typeorm';
  * 项目隔离（追加 #8）：本配置不引用企业管理系统主项目的 ORM 配置
  */
 export function createTypeOrmOptions(config: ConfigService): TypeOrmModuleOptions {
+  // @nestjs/typeorm `TypeOrmModuleOptions` 是 union；type:'postgres' 实际对应
+  // PostgresConnectionOptions（含 schema 字段）。整体 as 断言避免 union narrow 问题。
   return {
     type: 'postgres',
     host: config.get<string>('DB_HOST', 'localhost'),
@@ -34,5 +36,5 @@ export function createTypeOrmOptions(config: ConfigService): TypeOrmModuleOption
       max: 10,
       idleTimeoutMillis: 30_000,
     },
-  };
+  } as TypeOrmModuleOptions;
 }

@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AppModule } from '../src/app.module';
 
 /**
@@ -46,7 +46,7 @@ describe('Health (e2e)', () => {
     await request(app.getHttpServer())
       .get('/api/public/health')
       .expect(200)
-      .expect((res) => {
+      .expect((res: request.Response) => {
         if (!res.body.ok) throw new Error('expected ok=true on public path');
       });
   });
