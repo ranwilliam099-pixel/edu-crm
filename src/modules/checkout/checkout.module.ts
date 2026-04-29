@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { WxPayModule } from './wxpay/wxpay.module';
 import { PaymentOrderStateService } from './payment-order-state.service';
 import { RefundService } from './refund.service';
+import { InvoiceService } from './invoice.service';
 
 /**
  * Checkout 模块（W2 主链路骨架）
@@ -22,7 +23,7 @@ import { RefundService } from './refund.service';
  */
 @Module({
   imports: [WxPayModule],
-  providers: [PaymentOrderStateService, RefundService],
-  exports: [PaymentOrderStateService, RefundService, WxPayModule],
+  providers: [PaymentOrderStateService, RefundService, InvoiceService],
+  exports: [PaymentOrderStateService, RefundService, InvoiceService, WxPayModule],
 })
 export class CheckoutModule {}
