@@ -6,6 +6,7 @@ import { TenantModule } from './modules/tenant/tenant.module';
 import { UserModule } from './modules/user/user.module';
 import { LifecycleModule } from './modules/lifecycle/lifecycle.module';
 import { ReverseOrderModule } from './modules/reverse-order/reverse-order.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -19,6 +20,8 @@ import { ReverseOrderModule } from './modules/reverse-order/reverse-order.module
     LifecycleModule,
     // PM-AUTH-7(2026-04-30): ReverseOrderModule W3-1 Phase 4 — A12 逆向单状态机（条目 14 BE-W5-1）
     ReverseOrderModule,
+    // PM-AUTH-7(2026-04-30): AdminModule W3-1 Phase 4 — A11 §3.4 平台超管 API（条目 14 BE-W4-1）
+    AdminModule,
   ],
 })
 export class AppModule {}
