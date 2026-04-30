@@ -155,13 +155,36 @@ describe('AdminTenantService - PM-AUTH-7 A11 §3.4 平台超管 API', () => {
       expect(action.decision).toBe('approve');
     });
 
-    it('platform_admin 不允许审批发票 → BadRequestException', () => {
+    it('platform_admin 也可审批发票（A11 §3.4 双角色）', () => {
+      const action = service.approveInvoice({
+        invoiceId: ULID32_I,
+        decision: 'approve',
+        reason: 'tax info verified',
+        approverRole: 'platform_admin',
+        approverId: ULID32_O,
+      });
+      expect(action.decision).toBe('approve');
+    });
+
+    it('未知 approverRole 仍被拒绝 → BadRequestException', () => {
       expect(() =>
         service.approveInvoice({
           invoiceId: ULID32_I,
           decision: 'approve',
           reason: 'x',
-          approverRole: 'platform_admin' as any,
+          approverRole: 'sales' as any,
+          approverId: ULID32_O,
+        }),
+      ).toThrow(BadRequestException);
+    });
+
+    it('approveInvoice 缺 reason → BadRequestException', () => {
+      expect(() =>
+        service.approveInvoice({
+          invoiceId: ULID32_I,
+          decision: 'approve',
+          reason: '',
+          approverRole: 'finance_admin',
           approverId: ULID32_O,
         }),
       ).toThrow(BadRequestException);

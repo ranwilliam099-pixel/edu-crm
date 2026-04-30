@@ -37,10 +37,10 @@ export class AdminRefundController {
 
   /**
    * POST /api/admin/invoices/approve
-   * 仅 finance_admin
+   * A11 §3.4 platform_admin + finance_admin 双角色
    */
   @Post('invoices/approve')
-  @Roles('finance_admin')
+  @Roles('platform_admin', 'finance_admin')
   @HttpCode(HttpStatus.OK)
   approveInvoice(
     @Body()
@@ -48,7 +48,7 @@ export class AdminRefundController {
       invoiceId: string;
       decision: 'approve' | 'reject';
       reason: string;
-      approverRole: 'finance_admin';
+      approverRole: 'platform_admin' | 'finance_admin';
       approverId: string;
     },
   ) {

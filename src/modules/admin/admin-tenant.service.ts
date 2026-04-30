@@ -66,7 +66,8 @@ export interface InvoiceApprovalAction {
   invoiceId: string;
   decision: 'approve' | 'reject';
   reason: string;
-  approverRole: 'finance_admin';
+  /** A11 §3.4 #5/#6 platform_admin + #3/#4 finance_admin 双角色 */
+  approverRole: 'platform_admin' | 'finance_admin';
   approverId: string;
 }
 
@@ -173,14 +174,24 @@ export class AdminTenantService {
   }
 
   /**
-   * 发票审批（finance_admin）
+   * 发票审批（A11 §3.4 platform_admin + finance_admin 双角色）
+   *
+   * PM-AUTH-7(2026-04-30): 条目 22/24 RBAC 提请采纳方案 A — 字面对齐 A11 §3.4
    */
   approveInvoice(input: InvoiceApprovalAction): InvoiceApprovalAction {
     if (!input.invoiceId || input.invoiceId.length !== 32) {
       throw new BadRequestException('invoiceId must be 32-char ULID');
     }
-    if (input.approverRole !== 'finance_admin') {
-      throw new BadRequestException('Only finance_admin can approve invoice');
+    if (!['platform_admin', 'finance_admin'].includes(input.approverRole)) {
+      throw new BadRequestException(
+        'approverRole must be platform_admin / finance_admin (A11 §3.4)',
+      );
+    }
+    if (!['approve', 'reject'].includes(input.decision)) {
+      throw new BadRequestException('decision must be approve / reject');
+    }
+    if (!input.reason) {
+      throw new BadRequestException('reason required (A11 audit)');
     }
     return input;
   }

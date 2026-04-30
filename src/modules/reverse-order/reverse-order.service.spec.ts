@@ -26,10 +26,10 @@ describe('ReverseOrderService - PM-AUTH-7 A12 4 类逆向单', () => {
 
   describe('assertTransition - 合法转换', () => {
     const legal: Array<[ReverseOrderState, ReverseOrderState]> = [
-      ['申请中', '审批通过'],
-      ['申请中', '审批驳回'],
-      ['申请中', '已撤回'],
-      ['审批通过', '已生效'],
+      ['待审核', '已批准'],
+      ['待审核', '已拒绝'],
+      ['待审核', '已取消'],
+      ['已批准', '已执行'],
     ];
     legal.forEach(([from, to]) => {
       it(`${from} → ${to} 合法`, () => {
@@ -40,14 +40,14 @@ describe('ReverseOrderService - PM-AUTH-7 A12 4 类逆向单', () => {
 
   describe('assertTransition - 非法转换（A12 paid 锁严守）', () => {
     const illegal: Array<[ReverseOrderState, ReverseOrderState]> = [
-      ['申请中', '已生效'], // 必须先审批通过
-      ['审批通过', '审批驳回'], // 已通过不能再驳回
-      ['审批通过', '已撤回'], // 已通过不能撤回
-      ['审批驳回', '申请中'], // 终态
-      ['已撤回', '申请中'], // 终态
-      ['已生效', '审批驳回'], // 终态 + paid 锁
-      ['已生效', '已撤回'], // paid 锁
-      ['已生效', '申请中'], // paid 锁
+      ['待审核', '已执行'], // 必须先审批通过
+      ['已批准', '已拒绝'], // 已通过不能再驳回
+      ['已批准', '已取消'], // 已通过不能撤回
+      ['已拒绝', '待审核'], // 终态
+      ['已取消', '待审核'], // 终态
+      ['已执行', '已拒绝'], // 终态 + paid 锁
+      ['已执行', '已取消'], // paid 锁
+      ['已执行', '待审核'], // paid 锁
     ];
     illegal.forEach(([from, to]) => {
       it(`${from} → ${to} 抛 ConflictException`, () => {
@@ -56,37 +56,37 @@ describe('ReverseOrderService - PM-AUTH-7 A12 4 类逆向单', () => {
     });
 
     it('未知 from → BadRequestException', () => {
-      expect(() => service.assertTransition('unknown' as any, '申请中')).toThrow(BadRequestException);
+      expect(() => service.assertTransition('unknown' as any, '待审核')).toThrow(BadRequestException);
     });
 
     it('未知 to → BadRequestException', () => {
-      expect(() => service.assertTransition('申请中', 'unknown' as any)).toThrow(BadRequestException);
+      expect(() => service.assertTransition('待审核', 'unknown' as any)).toThrow(BadRequestException);
     });
   });
 
   describe('isTerminal', () => {
     it('审批驳回 / 已撤回 / 已生效 都是终态', () => {
-      expect(service.isTerminal('审批驳回')).toBe(true);
-      expect(service.isTerminal('已撤回')).toBe(true);
-      expect(service.isTerminal('已生效')).toBe(true);
+      expect(service.isTerminal('已拒绝')).toBe(true);
+      expect(service.isTerminal('已取消')).toBe(true);
+      expect(service.isTerminal('已执行')).toBe(true);
     });
 
     it('申请中 / 审批通过 不是终态', () => {
-      expect(service.isTerminal('申请中')).toBe(false);
-      expect(service.isTerminal('审批通过')).toBe(false);
+      expect(service.isTerminal('待审核')).toBe(false);
+      expect(service.isTerminal('已批准')).toBe(false);
     });
   });
 
   describe('isPaidLocked', () => {
     it('已生效 → paid 锁定', () => {
-      expect(service.isPaidLocked('已生效')).toBe(true);
+      expect(service.isPaidLocked('已执行')).toBe(true);
     });
 
     it('其他状态 → 未锁定', () => {
-      expect(service.isPaidLocked('申请中')).toBe(false);
-      expect(service.isPaidLocked('审批通过')).toBe(false);
-      expect(service.isPaidLocked('审批驳回')).toBe(false);
-      expect(service.isPaidLocked('已撤回')).toBe(false);
+      expect(service.isPaidLocked('待审核')).toBe(false);
+      expect(service.isPaidLocked('已批准')).toBe(false);
+      expect(service.isPaidLocked('已拒绝')).toBe(false);
+      expect(service.isPaidLocked('已取消')).toBe(false);
     });
   });
 });
