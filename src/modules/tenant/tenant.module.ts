@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TenantService } from './tenant.service';
 import { CapacityService } from './capacity.service';
+import { TenantLifecycleService } from './tenant-lifecycle.service';
 
 /**
  * Tenant 模块（W1 BE-W1-2 + BE-W1-5）
@@ -11,7 +12,8 @@ import { CapacityService } from './capacity.service';
  * 不暴露 HTTP 路由 — 内部服务，由业务编排触发。
  */
 @Module({
-  providers: [TenantService, CapacityService],
-  exports: [TenantService, CapacityService],
+  // PM-AUTH-7(2026-04-30): TenantLifecycleService W3-1 Phase 2.1 — A10 状态机（条目 14 BE-W3-2）
+  providers: [TenantService, CapacityService, TenantLifecycleService],
+  exports: [TenantService, CapacityService, TenantLifecycleService],
 })
 export class TenantModule {}
