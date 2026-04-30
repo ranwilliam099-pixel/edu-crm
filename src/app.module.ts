@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { TenantModule } from './modules/tenant/tenant.module';
+import { CheckoutModule } from './modules/checkout/checkout.module';
 import { UserModule } from './modules/user/user.module';
 import { LifecycleModule } from './modules/lifecycle/lifecycle.module';
 import { ReverseOrderModule } from './modules/reverse-order/reverse-order.module';
@@ -15,6 +16,8 @@ import { FeatureFlagModule } from './modules/feature-flag/feature-flag.module';
     AuthModule,
     TenantModule,
     HealthModule,
+    // PM-AUTH-6(2026-04-30): CheckoutModule W2/W3 主链路 + 4 SKU 价格查询 + 订单创建
+    CheckoutModule,
     // PM-AUTH-5(2026-04-30): UserModule W3-1 sales campus_scope 应用层填充骨架
     UserModule,
     // PM-AUTH-7(2026-04-30): LifecycleModule W3-1 Phase 2.3 — A10 调度器（条目 14 BE-W3-6）
