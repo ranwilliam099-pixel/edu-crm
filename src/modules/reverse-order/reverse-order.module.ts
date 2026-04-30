@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ReverseOrderService } from './reverse-order.service';
+import { RevenueAdjustmentService } from './revenue-adjustment.service';
 
 /**
  * ReverseOrder 模块（W3-1 Phase 4 BE-W5-1）
@@ -11,7 +12,8 @@ import { ReverseOrderService } from './reverse-order.service';
  * PM-AUTH-7(2026-04-30): A12 逆向单 4 类状态机守护
  */
 @Module({
-  providers: [ReverseOrderService],
-  exports: [ReverseOrderService],
+  // PM-AUTH-7(2026-04-30): RevenueAdjustmentService W3-1 Phase 4 — A12 §4.5 GMV 报表口径（条目 14 BE-W5-2）
+  providers: [ReverseOrderService, RevenueAdjustmentService],
+  exports: [ReverseOrderService, RevenueAdjustmentService],
 })
 export class ReverseOrderModule {}
