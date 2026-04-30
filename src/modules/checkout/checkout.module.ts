@@ -4,6 +4,7 @@ import { PaymentOrderStateService } from './payment-order-state.service';
 import { RefundService } from './refund.service';
 import { InvoiceService } from './invoice.service';
 import { PlatformReviewService } from './platform-review.service';
+import { CheckoutService } from './checkout.service';
 
 /**
  * Checkout 模块（W2 主链路骨架）
@@ -24,12 +25,14 @@ import { PlatformReviewService } from './platform-review.service';
  */
 @Module({
   imports: [WxPayModule],
-  providers: [PaymentOrderStateService, RefundService, InvoiceService, PlatformReviewService],
+  // PM-AUTH-6(2026-04-30): CheckoutService W3-1 Phase 1.3 — 4 SKU 价格表 + 订单生成（条目 14 BE-W3-3）
+  providers: [PaymentOrderStateService, RefundService, InvoiceService, PlatformReviewService, CheckoutService],
   exports: [
     PaymentOrderStateService,
     RefundService,
     InvoiceService,
     PlatformReviewService,
+    CheckoutService,
     WxPayModule,
   ],
 })
