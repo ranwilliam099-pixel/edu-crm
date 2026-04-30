@@ -55,7 +55,8 @@ describe('UserService', () => {
       expect(result.campusScope).toEqual([ULID32_C, ULID32_D]);
     });
 
-    it('role=teacher 不传 campusScope → 默认 []', () => {
+    it('role=teacher 不传 campusScope → 默认 [campusId]（PM-AUTH-5 临时按主校区单值，DepartmentService 落地后 V6 ALTER）', () => {
+      // PM-AUTH-5(2026-04-30): 普通员工部门归属未实现前，临时与 sales 一致
       const dto: CreateUserDto = {
         id: ULID32_A,
         tenantId: ULID32_B,
@@ -63,7 +64,42 @@ describe('UserService', () => {
         campusId: ULID32_C,
       };
       const result = service.createUser(dto);
+      expect(result.campusScope).toEqual([ULID32_C]);
+    });
+
+    it('role=manager 不传 campusScope → 默认 [campusId]（PM-AUTH-5 同 teacher）', () => {
+      const dto: CreateUserDto = {
+        id: ULID32_A,
+        tenantId: ULID32_B,
+        role: 'manager',
+        campusId: ULID32_C,
+      };
+      const result = service.createUser(dto);
+      expect(result.campusScope).toEqual([ULID32_C]);
+    });
+
+    it('role=admin 不传 campusScope → 默认 []（PM-AUTH-5 admin 不受 campus_scope 限制，业务层跳过 scope check）', () => {
+      // PM-AUTH-5(2026-04-30): admin 全校区语义由权限层处理，应用层默认空数组
+      const dto: CreateUserDto = {
+        id: ULID32_A,
+        tenantId: ULID32_B,
+        role: 'admin',
+        campusId: ULID32_C,
+      };
+      const result = service.createUser(dto);
       expect(result.campusScope).toEqual([]);
+    });
+
+    it('role=admin 显式传 campusScope → 按显式值（特定 admin 限制场景）', () => {
+      const dto: CreateUserDto = {
+        id: ULID32_A,
+        tenantId: ULID32_B,
+        role: 'admin',
+        campusId: ULID32_C,
+        campusScope: [ULID32_C],
+      };
+      const result = service.createUser(dto);
+      expect(result.campusScope).toEqual([ULID32_C]);
     });
   });
 

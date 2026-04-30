@@ -70,18 +70,38 @@ export class UserService {
   }
 
   /**
-   * 解析 campus_scope。
+   * 解析 campus_scope（按角色分支默认填充）。
    *
-   * PM-TEMP-AUTH(2026-04-30): 主校区单值
-   *   sales 默认 [campusId]；其他角色默认 []。
+   * PM-AUTH-5(2026-04-30): 条目 14 代码冲刺总授权 — sales 主校区单值已转**正式签字**
+   * BE-W3-1（条目 14 §B Track CODE-1）扩展范围：admin 全校区 / 普通员工部门归属
+   *
+   * 默认填充策略：
+   *   - sales → [campusId]（主校区单值，AUTH-5 正式签字）
+   *   - admin → []（业务语义：admin 不受 campus_scope 限制，业务层权限校验直接跳过此字段）
+   *   - teacher / manager → [campusId]（部门归属待 DepartmentService 落地，临时按主校区单值；
+   *     DepartmentService 落地后由 V6 ALTER 路径补充部门归属计算）
+   *
+   * 显式传入 campusScope 时优先按显式值（运营批量导入场景）。
    */
   private resolveCampusScope(dto: CreateUserDto): ReadonlyArray<string> {
     if (dto.campusScope !== undefined) {
       return [...dto.campusScope];
     }
-    if (dto.role === 'sales') {
-      return [dto.campusId];
+    switch (dto.role) {
+      case 'sales':
+        // PM-AUTH-5: 主校区单值（条目 14 AUTH-5 正式签字）
+        return [dto.campusId];
+      case 'admin':
+        // PM-AUTH-5: admin 全校区语义 — 应用层默认空数组，业务层权限校验对 admin 跳过 scope check
+        // 不查 CampusService（待 BE-W4-1 落地后由权限层处理）
+        return [];
+      case 'teacher':
+      case 'manager':
+        // PM-AUTH-5: 普通员工部门归属临时按主校区单值
+        // DepartmentService 落地后（BE-W4+）补 V6 ALTER 路径
+        return [dto.campusId];
+      default:
+        return [];
     }
-    return [];
   }
 }
