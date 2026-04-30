@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AdminTenantService } from './admin-tenant.service';
+import { AdminTenantController } from './admin-tenant.controller';
+import { AdminRefundController } from './admin-refund.controller';
 import { TenantModule } from '../tenant/tenant.module';
 
 /**
@@ -13,6 +15,8 @@ import { TenantModule } from '../tenant/tenant.module';
  */
 @Module({
   imports: [TenantModule],
+  // PM-AUTH-7(2026-04-30): Controllers W3-1 Phase 4 BE-W4-1 HTTP 暴露 + RBAC 守护
+  controllers: [AdminTenantController, AdminRefundController],
   providers: [AdminTenantService],
   exports: [AdminTenantService],
 })
