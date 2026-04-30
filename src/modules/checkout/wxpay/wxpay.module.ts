@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MockWxPayClient } from './wxpay-mock.client';
+import { WxPayCallbackService } from './wxpay-callback.service';
 import { WX_PAY_CLIENT } from './wxpay.types';
 
 /**
@@ -29,7 +30,9 @@ import { WX_PAY_CLIENT } from './wxpay.types';
         );
       },
     },
+    // PM-AUTH-2(2026-04-30): WxPayCallbackService W3-1 Phase 2.2 — 回调通知处理（条目 14 BE-W3-4）
+    WxPayCallbackService,
   ],
-  exports: [WX_PAY_CLIENT],
+  exports: [WX_PAY_CLIENT, WxPayCallbackService],
 })
 export class WxPayModule {}
