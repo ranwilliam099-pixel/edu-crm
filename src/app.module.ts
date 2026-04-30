@@ -4,6 +4,7 @@ import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { TenantModule } from './modules/tenant/tenant.module';
 import { UserModule } from './modules/user/user.module';
+import { LifecycleModule } from './modules/lifecycle/lifecycle.module';
 
 @Module({
   imports: [
@@ -11,8 +12,10 @@ import { UserModule } from './modules/user/user.module';
     AuthModule,
     TenantModule,
     HealthModule,
-    // PM-TEMP-AUTH(2026-04-30): UserModule W3-1 sales campus_scope 应用层填充骨架
+    // PM-AUTH-5(2026-04-30): UserModule W3-1 sales campus_scope 应用层填充骨架
     UserModule,
+    // PM-AUTH-7(2026-04-30): LifecycleModule W3-1 Phase 2.3 — A10 调度器（条目 14 BE-W3-6）
+    LifecycleModule,
   ],
 })
 export class AppModule {}
