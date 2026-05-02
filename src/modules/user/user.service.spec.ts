@@ -1,12 +1,13 @@
 /**
  * UserService 单元测试
  *
- * PM-TEMP-AUTH(2026-04-30): 全部带本 tag 的 fixture 在产品最终签字回归时一并替换
+ * USER-AUTH(2026-05-02): sales 主校区单值由用户最终拍板锁定（台账条目 28），不再回归
+ * PM-AUTH-5(2026-04-30): admin/teacher/manager 临时填充语义，等 PD 二次明示
  *
- * 测试三场景：
- *   1. role=sales 不传 campusScope → 默认 [campusId]（主校区单值）
+ * 测试场景：
+ *   1. role=sales 不传 campusScope → 默认 [campusId]（主校区单值，用户拍板）
  *   2. role=sales 显式传 campusScope → 按显式值
- *   3. role=teacher 不传 campusScope → 默认 []
+ *   3. role=teacher/manager/admin 默认 / 显式 — 临时方案
  */
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
@@ -28,9 +29,9 @@ describe('UserService', () => {
     service = module.get<UserService>(UserService);
   });
 
-  describe('createUser - PM-TEMP-AUTH(2026-04-30) sales 主校区单值', () => {
+  describe('createUser - USER-AUTH(2026-05-02) sales 主校区单值（用户最终拍板）', () => {
     it('sales 不传 campusScope → 默认 [campusId]', () => {
-      // PM-TEMP-AUTH(2026-04-30): 此场景验证主校区单值临时默认
+      // USER-AUTH(2026-05-02): 此场景验证主校区单值默认（用户最终拍板，台账条目 28）
       const dto: CreateUserDto = {
         id: ULID32_A,
         tenantId: ULID32_B,
@@ -43,7 +44,7 @@ describe('UserService', () => {
     });
 
     it('sales 显式传 campusScope → 按显式值（运营批量导入场景）', () => {
-      // PM-TEMP-AUTH(2026-04-30): 显式值优先于默认，确保导入场景不被覆盖
+      // USER-AUTH(2026-05-02): 显式值优先于默认，确保导入场景不被覆盖
       const dto: CreateUserDto = {
         id: ULID32_A,
         tenantId: ULID32_B,

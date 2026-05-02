@@ -9,7 +9,7 @@
  *   - users.campus_id: V2__tenant_schema_template.sql line 197 FK
  *   - users.campus_scope: V4__pd_05_06_07_tenant_schema_alter.sql 已加 JSONB DEFAULT '[]'
  *
- * PM-TEMP-AUTH(2026-04-30): 仅本 DTO 用于 sales campus_scope 主校区单值临时授权代码路径
+ * USER-AUTH(2026-05-02): sales 主校区单值由用户最终拍板锁定（台账条目 28），PM-TEMP-AUTH 升级为 USER-AUTH
  */
 export type UserRole = 'admin' | 'manager' | 'sales' | 'teacher';
 
@@ -29,8 +29,8 @@ export interface CreateUserDto {
   /**
    * 显式传入则按显式值；不传由 UserService 按 role 自动填充。
    *
-   * PM-TEMP-AUTH(2026-04-30): role=sales 且本字段未传时，
-   * UserService 默认填充 [campusId]（主校区单值，等产品最终签字回归）。
+   * USER-AUTH(2026-05-02): role=sales 且本字段未传时，
+   * UserService 默认填充 [campusId]（主校区单值，用户最终拍板锁定，台账条目 28）。
    */
   readonly campusScope?: ReadonlyArray<string>;
 }
