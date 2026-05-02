@@ -14,6 +14,7 @@ import { ParentModule } from './modules/parent/parent.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { FeedbackModule } from './modules/feedback/feedback.module';
 import { CronModule } from './modules/cron/cron.module';
+import { CourseBalanceModule } from './modules/course-balance/course-balance.module';
 
 @Module({
   imports: [
@@ -43,6 +44,8 @@ import { CronModule } from './modules/cron/cron.module';
     FeedbackModule,
     // USER-AUTH(2026-05-02): CronModule 全局 cron 编排（接 V8.1/V9/V10 所有定时任务）
     CronModule,
+    // USER-AUTH(2026-05-02): CourseBalanceModule V12 课时包 + 余额管理（教学链路 §1）
+    CourseBalanceModule,
   ],
 })
 export class AppModule {}
