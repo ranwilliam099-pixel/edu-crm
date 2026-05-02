@@ -10,6 +10,7 @@ import { ReverseOrderModule } from './modules/reverse-order/reverse-order.module
 import { AdminModule } from './modules/admin/admin.module';
 import { FeatureFlagModule } from './modules/feature-flag/feature-flag.module';
 import { TeacherModule } from './modules/teacher/teacher.module';
+import { ParentModule } from './modules/parent/parent.module';
 
 @Module({
   imports: [
@@ -31,6 +32,8 @@ import { TeacherModule } from './modules/teacher/teacher.module';
     FeatureFlagModule,
     // USER-AUTH(2026-05-02): TeacherModule V7 教师独立档案（条目 29 方向 B + 条目 31 #2 + 32 L1）
     TeacherModule,
+    // USER-AUTH(2026-05-02): ParentModule V10 家长 + 9.9 订阅 + 7 天试用（条目 31 #3/#4 + 32 #10）
+    ParentModule,
   ],
 })
 export class AppModule {}

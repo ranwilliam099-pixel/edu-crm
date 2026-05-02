@@ -1,0 +1,187 @@
+import { Injectable, BadRequestException, ConflictException, Logger } from '@nestjs/common';
+
+/**
+ * ParentService — V10 家长身份 + 学员绑定 BE-V10-1
+ *
+ * 来源：
+ *   - 《PD设计稿-排课-教学反馈-家长订阅-V1-2026-05-02.md》§5
+ *   - 用户拍板《全部人员-审核往来总台账.md》条目 31 #3 跨机构共享 + 条目 32 L3
+ *   - PD 硬规则 P8（单孩最多 3 家长）+ P11（多家长各自支付）
+ *
+ * USER-AUTH(2026-05-02): 家长 C 端跨租户身份；单孩最多 3 家长；退订后保留绑定（条目 32 #10）
+ */
+export type ParentStatus = 'active' | 'suspended' | 'deleted';
+export type Relationship =
+  | 'father'
+  | 'mother'
+  | 'grandfather'
+  | 'grandmother'
+  | 'guardian'
+  | 'other';
+export type BindingStatus = 'active' | 'unbound';
+
+export interface Parent {
+  id: string;
+  phone: string;
+  wechatOpenid?: string;
+  wechatUnionid?: string;
+  name?: string;
+  avatarUrl?: string;
+  status: ParentStatus;
+}
+
+export interface ParentStudentBinding {
+  id: string;
+  parentId: string;
+  studentId: string;
+  tenantId: string;
+  isPrimary: boolean;
+  relationship: Relationship;
+  bindingStatus: BindingStatus;
+  boundAt: Date;
+  unboundAt?: Date;
+}
+
+@Injectable()
+export class ParentService {
+  private readonly logger = new Logger(ParentService.name);
+
+  /**
+   * 注册家长（小程序 OAuth 后调用）
+   */
+  registerParent(input: {
+    id: string;
+    phone: string;
+    wechatOpenid?: string;
+    wechatUnionid?: string;
+    name?: string;
+    avatarUrl?: string;
+  }): Parent {
+    if (!input.id || input.id.length !== 32) {
+      throw new BadRequestException('parent id must be 32-char ULID');
+    }
+    if (!input.phone || !/^1[3-9]\d{9}$/.test(input.phone)) {
+      throw new BadRequestException('phone must be valid 11-digit Chinese mobile');
+    }
+    if (input.wechatOpenid !== undefined && input.wechatOpenid.length === 0) {
+      throw new BadRequestException('wechatOpenid (if provided) cannot be empty');
+    }
+    this.logger.log(`[BE-V10-1] registerParent id=${input.id} phone=***${input.phone.slice(-4)}`);
+    return {
+      id: input.id,
+      phone: input.phone,
+      wechatOpenid: input.wechatOpenid,
+      wechatUnionid: input.wechatUnionid,
+      name: input.name,
+      avatarUrl: input.avatarUrl,
+      status: 'active',
+    };
+  }
+
+  /**
+   * 创建家长-学员绑定
+   *
+   * P8 单孩最多 3 家长（应用层校验，DB 触发器兜底）
+   *
+   * @param existingActiveBindings 该 student_id 当前已 active 的绑定列表（用于 3 家长上限校验）
+   * @throws ConflictException 已达 3 家长上限
+   * @throws BadRequestException 输入校验失败
+   */
+  createBinding(
+    input: {
+      id: string;
+      parentId: string;
+      studentId: string;
+      tenantId: string;
+      isPrimary?: boolean;
+      relationship: Relationship;
+    },
+    existingActiveBindings: ReadonlyArray<ParentStudentBinding>,
+  ): ParentStudentBinding {
+    if (!input.id || input.id.length !== 32) {
+      throw new BadRequestException('binding id must be 32-char ULID');
+    }
+    if (!input.parentId || input.parentId.length !== 32) {
+      throw new BadRequestException('parentId must be 32-char ULID');
+    }
+    if (!input.studentId || input.studentId.length !== 32) {
+      throw new BadRequestException('studentId must be 32-char ULID');
+    }
+    if (!input.tenantId || input.tenantId.length !== 32) {
+      throw new BadRequestException('tenantId must be 32-char ULID');
+    }
+    if (
+      !['father', 'mother', 'grandfather', 'grandmother', 'guardian', 'other'].includes(
+        input.relationship,
+      )
+    ) {
+      throw new BadRequestException(`relationship 必须是 father/mother/grandfather/grandmother/guardian/other`);
+    }
+
+    // P8 单孩最多 3 家长校验（DB 触发器兜底；应用层先抛 ConflictException 友好提示）
+    const activeForStudent = existingActiveBindings.filter(
+      (b) => b.studentId === input.studentId && b.bindingStatus === 'active',
+    );
+    if (activeForStudent.length >= 3) {
+      throw new ConflictException('STUDENT_MAX_3_PARENTS_EXCEEDED');
+    }
+
+    // 同一家长绑同一学员不可重复
+    if (
+      activeForStudent.some(
+        (b) => b.parentId === input.parentId && b.bindingStatus === 'active',
+      )
+    ) {
+      throw new ConflictException('PARENT_ALREADY_BOUND_TO_STUDENT');
+    }
+
+    return {
+      id: input.id,
+      parentId: input.parentId,
+      studentId: input.studentId,
+      tenantId: input.tenantId,
+      isPrimary: input.isPrimary ?? false,
+      relationship: input.relationship,
+      bindingStatus: 'active',
+      boundAt: new Date(),
+    };
+  }
+
+  /**
+   * 解绑（条目 32 #10：保留 binding 行，仅标记 unbound）
+   */
+  unbindStudent(binding: ParentStudentBinding): ParentStudentBinding {
+    if (binding.bindingStatus === 'unbound') {
+      throw new BadRequestException('binding already unbound');
+    }
+    return {
+      ...binding,
+      bindingStatus: 'unbound',
+      unboundAt: new Date(),
+    };
+  }
+
+  /**
+   * 查询某家长当前 active 绑定的孩子（用于 C-03 我的孩子列表）
+   */
+  listMyChildren(
+    parentId: string,
+    allBindings: ReadonlyArray<ParentStudentBinding>,
+  ): ParentStudentBinding[] {
+    return allBindings.filter(
+      (b) => b.parentId === parentId && b.bindingStatus === 'active',
+    );
+  }
+
+  /**
+   * 查询某学员当前 active 的家长数（用于 P8 上限可视化提示）
+   */
+  countActiveParentsForStudent(
+    studentId: string,
+    allBindings: ReadonlyArray<ParentStudentBinding>,
+  ): number {
+    return allBindings.filter(
+      (b) => b.studentId === studentId && b.bindingStatus === 'active',
+    ).length;
+  }
+}
