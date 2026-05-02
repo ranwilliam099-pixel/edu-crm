@@ -9,6 +9,7 @@ import { LifecycleModule } from './modules/lifecycle/lifecycle.module';
 import { ReverseOrderModule } from './modules/reverse-order/reverse-order.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { FeatureFlagModule } from './modules/feature-flag/feature-flag.module';
+import { TeacherModule } from './modules/teacher/teacher.module';
 
 @Module({
   imports: [
@@ -28,6 +29,8 @@ import { FeatureFlagModule } from './modules/feature-flag/feature-flag.module';
     AdminModule,
     // PM-AUTH(2026-04-30): FeatureFlagModule W3-1 Phase 5.5 — 全局灰度开关（条目 14 CODE-5）
     FeatureFlagModule,
+    // USER-AUTH(2026-05-02): TeacherModule V7 教师独立档案（条目 29 方向 B + 条目 31 #2 + 32 L1）
+    TeacherModule,
   ],
 })
 export class AppModule {}
