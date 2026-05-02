@@ -47,8 +47,8 @@ export class UserService {
     if (!dto.tenantId || dto.tenantId.length !== 32) {
       throw new BadRequestException(`tenantId must be 32-char ULID`);
     }
-    if (!['admin', 'manager', 'sales', 'teacher'].includes(dto.role)) {
-      throw new BadRequestException(`role must be one of admin/manager/sales/teacher`);
+    if (!['admin', 'manager', 'sales'].includes(dto.role)) {
+      throw new BadRequestException(`role must be one of admin/manager/sales`);
     }
     if (!dto.campusId || dto.campusId.length !== 32) {
       throw new BadRequestException(`campusId must be 32-char ULID`);
@@ -78,10 +78,12 @@ export class UserService {
    * BE-W3-1（条目 14 §B Track CODE-1）扩展范围：admin 全校区 / 普通员工部门归属
    *
    * 默认填充策略：
-   *   - sales → [campusId]（主校区单值，USER-AUTH 用户最终拍板）
-   *   - admin → []（业务语义：admin 不受 campus_scope 限制，业务层权限校验直接跳过此字段；等 PD 二次明示）
-   *   - teacher / manager → [campusId]（部门归属待 DepartmentService 落地，临时按主校区单值；
-   *     DepartmentService 落地后由 V6 ALTER 路径补充部门归属计算；等 PD 二次明示）
+   *   - sales → [campusId]（主校区单值，USER-AUTH 用户最终拍板，台账条目 28）
+   *   - admin → []（业务语义：admin 不受 campus_scope 限制，业务层权限校验直接跳过此字段；等用户/PD 二次明示）
+   *   - manager → [campusId]（临时按主校区单值；等用户/PD 二次明示 manager 在 8 枚举中的实际归属）
+   *
+   * teacher 已移出本 service：
+   *   USER-AUTH(2026-05-02) 用户拍板老师走方向 B（台账条目 29），独立 `teachers` 表 + V7 ALTER 待开
    *
    * 显式传入 campusScope 时优先按显式值（运营批量导入场景）。
    */
@@ -95,12 +97,10 @@ export class UserService {
         return [dto.campusId];
       case 'admin':
         // PM-AUTH-5: admin 全校区语义 — 应用层默认空数组，业务层权限校验对 admin 跳过 scope check
-        // 不查 CampusService（待 BE-W4-1 落地后由权限层处理）；等 PD 二次明示
+        // 不查 CampusService（待 BE-W4-1 落地后由权限层处理）；等用户/PD 二次明示
         return [];
-      case 'teacher':
       case 'manager':
-        // PM-AUTH-5: 普通员工部门归属临时按主校区单值
-        // DepartmentService 落地后（BE-W4+）补 V6 ALTER 路径；等 PD 二次明示
+        // 临时按主校区单值；等用户/PD 二次明示 manager 在 8 枚举中映射哪个角色（sales_manager?）
         return [dto.campusId];
       default:
         return [];

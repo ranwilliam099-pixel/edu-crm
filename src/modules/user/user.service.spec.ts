@@ -56,19 +56,10 @@ describe('UserService', () => {
       expect(result.campusScope).toEqual([ULID32_C, ULID32_D]);
     });
 
-    it('role=teacher 不传 campusScope → 默认 [campusId]（PM-AUTH-5 临时按主校区单值，DepartmentService 落地后 V6 ALTER）', () => {
-      // PM-AUTH-5(2026-04-30): 普通员工部门归属未实现前，临时与 sales 一致
-      const dto: CreateUserDto = {
-        id: ULID32_A,
-        tenantId: ULID32_B,
-        role: 'teacher',
-        campusId: ULID32_C,
-      };
-      const result = service.createUser(dto);
-      expect(result.campusScope).toEqual([ULID32_C]);
-    });
+    // USER-AUTH(2026-05-02 台账条目 29): teacher 不再是 users 表枚举（走方向 B 独立 teachers 表）
+    // 原 teacher 单测用例已删除
 
-    it('role=manager 不传 campusScope → 默认 [campusId]（PM-AUTH-5 同 teacher）', () => {
+    it('role=manager 不传 campusScope → 默认 [campusId]（临时按主校区单值，等用户/PD 二次明示）', () => {
       const dto: CreateUserDto = {
         id: ULID32_A,
         tenantId: ULID32_B,
@@ -115,7 +106,7 @@ describe('UserService', () => {
       expect(() => service.createUser(dto)).toThrow(BadRequestException);
     });
 
-    it('role 非 4 枚举 → BadRequestException', () => {
+    it('role 非 3 枚举 → BadRequestException', () => {
       const dto = {
         id: ULID32_A,
         tenantId: ULID32_B,
