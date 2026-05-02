@@ -15,6 +15,9 @@ import { ScheduleModule } from './modules/schedule/schedule.module';
 import { FeedbackModule } from './modules/feedback/feedback.module';
 import { CronModule } from './modules/cron/cron.module';
 import { CourseBalanceModule } from './modules/course-balance/course-balance.module';
+import { HomeworkModule } from './modules/homework/homework.module';
+import { AssessmentModule } from './modules/assessment/assessment.module';
+import { LearningProfileModule } from './modules/learning-profile/learning-profile.module';
 
 @Module({
   imports: [
@@ -46,6 +49,12 @@ import { CourseBalanceModule } from './modules/course-balance/course-balance.mod
     CronModule,
     // USER-AUTH(2026-05-02): CourseBalanceModule V12 课时包 + 余额管理（教学链路 §1）
     CourseBalanceModule,
+    // USER-AUTH(2026-05-02): HomeworkModule V13 作业管理（教学链路 §2）
+    HomeworkModule,
+    // USER-AUTH(2026-05-02): AssessmentModule V14 测评/考试（教学链路 §3）
+    AssessmentModule,
+    // USER-AUTH(2026-05-02): LearningProfileModule V15 学情累计档案（教学链路 §4）
+    LearningProfileModule,
   ],
 })
 export class AppModule {}
