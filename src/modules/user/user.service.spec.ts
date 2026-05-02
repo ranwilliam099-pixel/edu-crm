@@ -1,10 +1,10 @@
 /**
  * UserService 单元测试
  *
- * USER-AUTH(2026-05-02 台账条目 28/30): 8 枚举 campus_scope 默认填充全部由用户拍板锁定
- *   - 单校区组（sales / sales_manager / boss）→ [campusId]
+ * USER-AUTH(2026-05-02 台账条目 28/30/31): 8 枚举 campus_scope 默认填充全部由用户拍板锁定
+ *   - 单校区组（sales / sales_manager / boss / marketing / finance）→ [campusId]
  *   - 跨校区组（sales_director / admin / hr）→ []（业务层豁免）
- *   - 待拍板组（marketing / finance）→ throw BadRequestException
+ *   - 条目 31 修订：marketing / finance 从 throw 改为单校默认；显式 campusScope 仍优先
  *
  * teacher 走独立 teachers 表（条目 29 方向 B），不在本 service
  */
@@ -28,8 +28,8 @@ describe('UserService', () => {
     service = module.get<UserService>(UserService);
   });
 
-  describe('createUser - 单校区组 → [campusId]（USER-AUTH 条目 28/30 用户拍板）', () => {
-    const singleCampusRoles = ['sales', 'sales_manager', 'boss'] as const;
+  describe('createUser - 单校区组 → [campusId]（USER-AUTH 条目 28/30/31 用户拍板）', () => {
+    const singleCampusRoles = ['sales', 'sales_manager', 'boss', 'marketing', 'finance'] as const;
 
     singleCampusRoles.forEach((role) => {
       it(`role=${role} 不传 campusScope → 默认 [campusId]`, () => {
@@ -87,31 +87,29 @@ describe('UserService', () => {
     });
   });
 
-  describe('createUser - 待拍板组 → 强制显式传入（067 §3 不猜测）', () => {
-    const pendingRoles = ['marketing', 'finance'] as const;
+  describe('createUser - 单校区组显式覆盖 → 多校区授权（USER-AUTH 条目 31 boss 多校支持）', () => {
+    it('boss 显式传多校区 → 按显式值（连锁总校长场景）', () => {
+      const dto: CreateUserDto = {
+        id: ULID32_A,
+        tenantId: ULID32_B,
+        role: 'boss',
+        campusId: ULID32_C,
+        campusScope: [ULID32_C, ULID32_D],
+      };
+      const result = service.createUser(dto);
+      expect(result.campusScope).toEqual([ULID32_C, ULID32_D]);
+    });
 
-    pendingRoles.forEach((role) => {
-      it(`role=${role} 不传 campusScope → BadRequestException（等用户拍板）`, () => {
-        const dto: CreateUserDto = {
-          id: ULID32_A,
-          tenantId: ULID32_B,
-          role,
-          campusId: ULID32_C,
-        };
-        expect(() => service.createUser(dto)).toThrow(BadRequestException);
-      });
-
-      it(`role=${role} 显式传 campusScope → 按显式值（不阻塞显式场景）`, () => {
-        const dto: CreateUserDto = {
-          id: ULID32_A,
-          tenantId: ULID32_B,
-          role,
-          campusId: ULID32_C,
-          campusScope: [ULID32_C],
-        };
-        const result = service.createUser(dto);
-        expect(result.campusScope).toEqual([ULID32_C]);
-      });
+    it('marketing 显式传多校区 → 按显式值', () => {
+      const dto: CreateUserDto = {
+        id: ULID32_A,
+        tenantId: ULID32_B,
+        role: 'marketing',
+        campusId: ULID32_C,
+        campusScope: [ULID32_C, ULID32_D],
+      };
+      const result = service.createUser(dto);
+      expect(result.campusScope).toEqual([ULID32_C, ULID32_D]);
     });
   });
 

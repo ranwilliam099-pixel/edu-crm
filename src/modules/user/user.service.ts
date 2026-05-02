@@ -89,36 +89,37 @@ export class UserService {
    * PM-AUTH-5(2026-04-30): 条目 14 代码冲刺总授权 — admin/teacher/manager 三角色填充由 cron 临时编写
    * BE-W3-1（条目 14 §B Track CODE-1）扩展范围：admin 全校区 / 普通员工部门归属
    *
-   * USER-AUTH(2026-05-02 台账条目 30): 用户拍板 8 枚举 campus_scope 默认填充策略
+   * USER-AUTH(2026-05-02 台账条目 30 + 31): 用户拍板 8 枚举 campus_scope 默认填充策略
    *
-   * 单校区组 → [campusId]（数据权限边界 = 本人所属校区）：
+   * 单校区组 → [campusId]（数据权限边界 = 本人所属校区，前端可显式覆盖为多校）：
    *   - sales（销售，条目 28 已锁）
    *   - sales_manager（销售经理 / "man"）
-   *   - boss（校长）
+   *   - boss（校长，条目 31 修订：默认单校但前端 UX 可选多校 — 连锁总校长场景）
+   *   - marketing（市场，条目 31 拍板默认单校保守）
+   *   - finance（财务，条目 31 拍板默认单校保守）
    *
    * 跨校区组 → []（业务层权限校验对此组跳过 campus_scope 过滤，可见全租户）：
    *   - sales_director（大区销售总监 / 跨校区管理）
    *   - admin（系统管理员 / 跨校区管理）
    *   - hr（人事 / 跨校区管理，2026-05-02 修订）
    *
-   * 待用户拍板组 → 强制显式传入（不允许默认填充，符合 067 §3 不猜测原则）：
-   *   - marketing（市场，等用户）
-   *   - finance（财务，等用户）
-   *
    * teacher 已移出本 service：
-   *   条目 29 用户拍板老师走方向 B，独立 `teachers` 表 + V7 ALTER 待开
+   *   条目 29 用户拍板老师走方向 B，独立 `teachers` 表 + V7 ALTER 待开；
+   *   条目 31 进一步拍板 teachers.user_id NULLABLE（部分老师纯档案不登录）
    *
-   * 显式传入 campusScope 时优先按显式值（运营批量导入场景）。
+   * 显式传入 campusScope 时优先按显式值（运营批量导入场景 + 多校区授权）。
    */
   private resolveCampusScope(dto: CreateUserDto): ReadonlyArray<string> {
     if (dto.campusScope !== undefined) {
       return [...dto.campusScope];
     }
     switch (dto.role) {
-      // 单校区组 — 数据权限 = 本人所属校区
+      // 单校区组 — 数据权限 = 本人所属校区（前端 UX 可显式覆盖为多校）
       case 'sales':
       case 'sales_manager':
       case 'boss':
+      case 'marketing':
+      case 'finance':
         return [dto.campusId];
 
       // 跨校区组 — 空数组 + 业务层豁免（admin/sales_director/hr 跨校区管理）
@@ -126,13 +127,6 @@ export class UserService {
       case 'admin':
       case 'hr':
         return [];
-
-      // 待拍板组 — 强制显式传入（不猜测）
-      case 'marketing':
-      case 'finance':
-        throw new BadRequestException(
-          `role=${dto.role} campus_scope 默认填充逻辑等用户拍板，请显式传入 campusScope`,
-        );
 
       default:
         // 不应到达（validRoles 已过滤），保险分支
