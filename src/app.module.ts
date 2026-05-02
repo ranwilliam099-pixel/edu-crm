@@ -12,6 +12,7 @@ import { FeatureFlagModule } from './modules/feature-flag/feature-flag.module';
 import { TeacherModule } from './modules/teacher/teacher.module';
 import { ParentModule } from './modules/parent/parent.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
+import { FeedbackModule } from './modules/feedback/feedback.module';
 
 @Module({
   imports: [
@@ -37,6 +38,8 @@ import { ScheduleModule } from './modules/schedule/schedule.module';
     ParentModule,
     // USER-AUTH(2026-05-02): ScheduleModule V8 排课核心 — 冲突硬阻塞 + RBAC（PD §3 + 条目 32 L2）
     ScheduleModule,
+    // USER-AUTH(2026-05-02): FeedbackModule V9 教学反馈 + 月报 + 课消（PD §4 + P6/P7）
+    FeedbackModule,
   ],
 })
 export class AppModule {}
