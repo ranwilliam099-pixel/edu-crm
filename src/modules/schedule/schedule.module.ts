@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ScheduleService } from './schedule.service';
 import { RecurringScheduleService } from './recurring-schedule.service';
+import { ScheduleController } from './schedule.controller';
+import { RecurringScheduleController } from './recurring-schedule.controller';
 
 /**
  * Schedule 模块（V8 排课核心 + V8.1 周期性课表）
@@ -9,6 +11,7 @@ import { RecurringScheduleService } from './recurring-schedule.service';
  *   + 学员-老师固定绑定 + 周期性课表模板（P12）
  */
 @Module({
+  controllers: [ScheduleController, RecurringScheduleController],
   providers: [ScheduleService, RecurringScheduleService],
   exports: [ScheduleService, RecurringScheduleService],
 })

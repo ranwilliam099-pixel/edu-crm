@@ -1,0 +1,124 @@
+import {
+  Body,
+  Controller,
+  Param,
+  Post,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import {
+  ParentSubscriptionService,
+  ParentSubscription,
+} from './parent-subscription.service';
+
+/**
+ * ParentSubscriptionController — V10/V11 9.9 订阅 + 7 天试用 HTTP 暴露 BE-V10-2
+ *
+ * 路由前缀：/api/parent-subscriptions
+ *
+ * USER-AUTH(2026-05-02): 条目 31 #3 共享 + #4 7 天试用 + 条目 32 L3
+ */
+@Controller('parent-subscriptions')
+export class ParentSubscriptionController {
+  constructor(private readonly service: ParentSubscriptionService) {}
+
+  /**
+   * POST /api/parent-subscriptions/start-trial — 启动 7 天免费试用
+   */
+  @Post('start-trial')
+  @HttpCode(HttpStatus.CREATED)
+  startTrial(
+    @Body() body: { subscriptionId: string; parentId: string; nowMs?: number },
+  ): ParentSubscription {
+    return this.service.startTrial({
+      subscriptionId: body.subscriptionId,
+      parentId: body.parentId,
+      now: body.nowMs ? new Date(body.nowMs) : undefined,
+    });
+  }
+
+  /**
+   * POST /api/parent-subscriptions/convert-trial — 试用转 9.9/月（cron）
+   */
+  @Post('convert-trial')
+  @HttpCode(HttpStatus.OK)
+  convertTrialToActive(
+    @Body() body: { subscription: ParentSubscription; paymentOrderId: string; nowMs?: number },
+  ) {
+    return this.service.convertTrialToActive({
+      subscription: this.deserialize(body.subscription),
+      paymentOrderId: body.paymentOrderId,
+      now: body.nowMs ? new Date(body.nowMs) : undefined,
+    });
+  }
+
+  /**
+   * POST /api/parent-subscriptions/renew — 月度续费（cron）
+   */
+  @Post('renew')
+  @HttpCode(HttpStatus.OK)
+  monthlyRenew(
+    @Body()
+    body: {
+      subscription: ParentSubscription;
+      paymentOrderId: string;
+      paymentSucceeded: boolean;
+      nowMs?: number;
+    },
+  ) {
+    return this.service.monthlyRenew({
+      subscription: this.deserialize(body.subscription),
+      paymentOrderId: body.paymentOrderId,
+      paymentSucceeded: body.paymentSucceeded,
+      now: body.nowMs ? new Date(body.nowMs) : undefined,
+    });
+  }
+
+  /**
+   * POST /api/parent-subscriptions/cancel — 取消订阅
+   */
+  @Post('cancel')
+  @HttpCode(HttpStatus.OK)
+  cancelSubscription(
+    @Body() body: { subscription: ParentSubscription; atPeriodEnd: boolean; nowMs?: number },
+  ): ParentSubscription {
+    return this.service.cancelSubscription({
+      subscription: this.deserialize(body.subscription),
+      atPeriodEnd: body.atPeriodEnd,
+      now: body.nowMs ? new Date(body.nowMs) : undefined,
+    });
+  }
+
+  /**
+   * POST /api/parent-subscriptions/access-check — ParentReadGuard 校验入口
+   *
+   * 给前端预检（避免请求反馈接口才知道 403）
+   */
+  @Post('access-check')
+  @HttpCode(HttpStatus.OK)
+  accessCheck(
+    @Body() body: { subscription?: ParentSubscription; nowMs?: number },
+  ): { canAccess: boolean } {
+    return {
+      canAccess: this.service.canAccessContent({
+        subscription: body.subscription
+          ? this.deserialize(body.subscription)
+          : undefined,
+        now: body.nowMs ? new Date(body.nowMs) : undefined,
+      }),
+    };
+  }
+
+  // 由于 JSON 不带 Date 类型，反序列化输入的字符串日期
+  private deserialize(sub: ParentSubscription): ParentSubscription {
+    return {
+      ...sub,
+      currentPeriodEnd: sub.currentPeriodEnd
+        ? new Date(sub.currentPeriodEnd as unknown as string)
+        : undefined,
+      trialEndAt: sub.trialEndAt
+        ? new Date(sub.trialEndAt as unknown as string)
+        : undefined,
+    };
+  }
+}
