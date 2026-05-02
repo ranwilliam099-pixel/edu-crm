@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { JwtStrategy } from './jwt.strategy';
 import { ParentJwtStrategy } from './parent-jwt.strategy';
 import { TenantMiddleware } from './tenant.middleware';
+import { AuthController } from './auth.controller';
 
 /**
  * Auth 模块（W1 BE-W1-3 + V10 BE-V10-3 ParentJwt）
@@ -28,6 +29,7 @@ import { TenantMiddleware } from './tenant.middleware';
       }),
     }),
   ],
+  controllers: [AuthController],
   providers: [JwtStrategy, ParentJwtStrategy, TenantMiddleware],
   exports: [JwtStrategy, ParentJwtStrategy, TenantMiddleware, JwtModule],
 })

@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { UnauthorizedException } from '@nestjs/common';
 import { TenantMiddleware } from './tenant.middleware';
 import { JwtStrategy } from './jwt.strategy';
+import { ParentJwtStrategy } from './parent-jwt.strategy';
 
 const TEST_SECRET = 'test-secret';
 
@@ -16,6 +17,7 @@ describe('TenantMiddleware (W1 BE-W1-4 routing分发)', () => {
       providers: [
         TenantMiddleware,
         JwtStrategy,
+        ParentJwtStrategy,
         { provide: ConfigService, useValue: { get: (k: string) => (k === 'JWT_SECRET' ? TEST_SECRET : undefined) } },
       ],
     }).compile();

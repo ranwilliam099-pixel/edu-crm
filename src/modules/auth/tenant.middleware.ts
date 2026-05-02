@@ -1,6 +1,7 @@
 import { Injectable, NestMiddleware, UnauthorizedException } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { JwtStrategy } from './jwt.strategy';
+import { ParentJwtStrategy } from './parent-jwt.strategy';
 import { JwtPayload, isPlatformRole } from './jwt-payload.interface';
 
 /**
@@ -22,7 +23,10 @@ import { JwtPayload, isPlatformRole } from './jwt-payload.interface';
  */
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {
-  constructor(private readonly jwt: JwtStrategy) {}
+  constructor(
+    private readonly jwt: JwtStrategy,
+    private readonly parentJwt: ParentJwtStrategy,
+  ) {}
 
   use(req: Request, _res: Response, next: NextFunction): void {
     // 用 originalUrl 而非 req.path：NestJS setGlobalPrefix('api') 后，全局 middleware
@@ -35,6 +39,17 @@ export class TenantMiddleware implements NestMiddleware {
     // 公开成交链路：游客可访问，仅在已登录时挂用户
     if (path.startsWith('/api/public/') || path.startsWith('/api/checkout/')) {
       this.tryAttachUser(req);
+      return next();
+    }
+
+    // C 端家长路径：接受 ParentJwt 或 TenantJwt（联调期间双轨容错）
+    // /api/parents/* 和 /api/parent-subscriptions/*
+    // 真实 production 应严格按 ParentJwt（条目 34 Q-FE-2）
+    if (
+      path.startsWith('/api/parents/') ||
+      path.startsWith('/api/parent-subscriptions/')
+    ) {
+      this.requireParentOrTenantUser(req);
       return next();
     }
 
@@ -83,6 +98,24 @@ export class TenantMiddleware implements NestMiddleware {
     const user = this.jwt.parse(token);
     (req as RequestWithUser).user = user;
     return user;
+  }
+
+  /**
+   * Q-FE-2: 接受 ParentJwt 或 TenantJwt（双轨容错）
+   * 优先尝试 ParentJwt（type='parent'）；失败 → 退回 TenantJwt
+   */
+  private requireParentOrTenantUser(req: Request): void {
+    const token = this.extractToken(req);
+    if (!token) throw new UnauthorizedException('Missing Authorization header');
+    try {
+      const parent = this.parentJwt.parse(token);
+      (req as RequestWithUser & { parent?: any }).parent = parent;
+      return;
+    } catch {
+      // 不是 parent token，尝试 tenant token
+    }
+    const user = this.jwt.parse(token);
+    (req as RequestWithUser).user = user;
   }
 
   private extractToken(req: Request): string | null {
