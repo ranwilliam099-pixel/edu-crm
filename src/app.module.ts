@@ -11,6 +11,7 @@ import { AdminModule } from './modules/admin/admin.module';
 import { FeatureFlagModule } from './modules/feature-flag/feature-flag.module';
 import { TeacherModule } from './modules/teacher/teacher.module';
 import { ParentModule } from './modules/parent/parent.module';
+import { ScheduleModule } from './modules/schedule/schedule.module';
 
 @Module({
   imports: [
@@ -34,6 +35,8 @@ import { ParentModule } from './modules/parent/parent.module';
     TeacherModule,
     // USER-AUTH(2026-05-02): ParentModule V10 家长 + 9.9 订阅 + 7 天试用（条目 31 #3/#4 + 32 #10）
     ParentModule,
+    // USER-AUTH(2026-05-02): ScheduleModule V8 排课核心 — 冲突硬阻塞 + RBAC（PD §3 + 条目 32 L2）
+    ScheduleModule,
   ],
 })
 export class AppModule {}
