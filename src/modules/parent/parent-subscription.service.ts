@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, Logger, Optional } from '@nestjs/common';
+import { ParentSubscriptionRepository } from '../db/parent-subscription.repository';
 
 /**
  * ParentSubscriptionService — V10/V11 家长订阅 + 7 天试用 + 9.9 续费 BE-V10-2
@@ -52,6 +53,29 @@ export interface ParentPaymentOrder {
 @Injectable()
 export class ParentSubscriptionService {
   private readonly logger = new Logger(ParentSubscriptionService.name);
+
+  constructor(@Optional() private readonly repo?: ParentSubscriptionRepository) {}
+
+  // ============= 真存盘版 =============
+
+  async startTrialInDb(input: { subscriptionId: string; parentId: string }): Promise<ParentSubscription> {
+    if (!this.repo) throw new BadRequestException('repo not available');
+    const sub = this.startTrial(input);
+    return this.repo.upsertSubscription(sub);
+  }
+
+  async findSubscriptionInDb(parentId: string): Promise<ParentSubscription | null> {
+    if (!this.repo) throw new BadRequestException('repo not available');
+    return this.repo.findByParent(parentId);
+  }
+
+  async cancelSubscriptionInDb(parentId: string, atPeriodEnd: boolean): Promise<ParentSubscription> {
+    if (!this.repo) throw new BadRequestException('repo not available');
+    const current = await this.repo.findByParent(parentId);
+    if (!current) throw new BadRequestException('subscription not found for parent');
+    const updated = this.cancelSubscription({ subscription: current, atPeriodEnd });
+    return this.repo.upsertSubscription(updated);
+  }
 
   /**
    * 启动 7 天免费试用（绑定后立即调用，条目 31 #4）

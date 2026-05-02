@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, Logger, Optional } from '@nestjs/common';
+import { ParentRepository } from '../db/parent.repository';
 
 /**
  * ParentService — V10 家长身份 + 学员绑定 BE-V10-1
@@ -45,6 +46,8 @@ export interface ParentStudentBinding {
 @Injectable()
 export class ParentService {
   private readonly logger = new Logger(ParentService.name);
+
+  constructor(@Optional() private readonly repo?: ParentRepository) {}
 
   /**
    * 注册家长（小程序 OAuth 后调用）
@@ -159,6 +162,45 @@ export class ParentService {
       bindingStatus: 'unbound',
       unboundAt: new Date(),
     };
+  }
+
+  // ============= 真存盘版 =============
+
+  async registerParentInDb(input: {
+    id: string;
+    phone: string;
+    wechatOpenid?: string;
+    wechatUnionid?: string;
+    name?: string;
+    avatarUrl?: string;
+  }): Promise<Parent> {
+    if (!this.repo) throw new BadRequestException('ParentRepository not available');
+    const parent = this.registerParent(input);
+    return this.repo.insertParent(parent);
+  }
+
+  async createBindingInDb(input: {
+    id: string;
+    parentId: string;
+    studentId: string;
+    tenantId: string;
+    isPrimary?: boolean;
+    relationship: Relationship;
+  }): Promise<ParentStudentBinding> {
+    if (!this.repo) throw new BadRequestException('ParentRepository not available');
+    const existing = await this.repo.findActiveBindingsForStudent(input.studentId);
+    const binding = this.createBinding(input, existing);
+    return this.repo.insertBinding(binding);
+  }
+
+  async listMyChildrenInDb(parentId: string): Promise<ParentStudentBinding[]> {
+    if (!this.repo) throw new BadRequestException('ParentRepository not available');
+    return this.repo.findChildrenByParent(parentId);
+  }
+
+  async unbindBindingInDb(bindingId: string): Promise<ParentStudentBinding> {
+    if (!this.repo) throw new BadRequestException('ParentRepository not available');
+    return this.repo.unbind(bindingId);
   }
 
   /**

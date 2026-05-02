@@ -82,6 +82,45 @@ export class ScheduleController {
   }
 
   /**
+   * POST /api/schedules/db — 真存盘版（自动查 PG 冲突 + 事务 INSERT）
+   */
+  @Post('db')
+  @HttpCode(HttpStatus.CREATED)
+  async createScheduleInDb(
+    @Body()
+    body: {
+      input: CreateScheduleInput;
+      tenantSchema: string;
+      studentResponsibleSalesPairs: Array<[string, string]>;
+      schedulableTeachers: Array<{ id: string; userId?: string }>;
+    },
+  ): Promise<{ schedule: Schedule; students: ScheduleStudent[] }> {
+    return this.service.createScheduleInDb(
+      this.deserializeInput(body.input),
+      body.tenantSchema,
+      new Map(body.studentResponsibleSalesPairs),
+      body.schedulableTeachers,
+    );
+  }
+
+  /**
+   * POST /api/schedules/db/list-by-teacher
+   */
+  @Post('db/list-by-teacher')
+  @HttpCode(HttpStatus.OK)
+  async listByTeacherInDb(
+    @Body()
+    body: { tenantSchema: string; teacherId: string; fromIso: string; toIso: string },
+  ): Promise<Schedule[]> {
+    return this.service.listByTeacherInDb(
+      body.tenantSchema,
+      body.teacherId,
+      new Date(body.fromIso),
+      new Date(body.toIso),
+    );
+  }
+
+  /**
    * POST /api/schedules/:scheduleId/students/:studentId/attendance
    */
   @Post(':scheduleId/students/:studentId/attendance')

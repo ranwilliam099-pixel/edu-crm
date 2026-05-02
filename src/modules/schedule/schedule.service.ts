@@ -4,7 +4,9 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { ScheduleRepository } from '../db/schedule.repository';
 
 /**
  * ScheduleService — V8 排课核心 BE-V8-1
@@ -74,6 +76,8 @@ export interface CreateScheduleInput {
 @Injectable()
 export class ScheduleService {
   private readonly logger = new Logger(ScheduleService.name);
+
+  constructor(@Optional() private readonly repo?: ScheduleRepository) {}
 
   /**
    * 创建排课（含 RBAC + 冲突硬阻塞）
@@ -176,6 +180,98 @@ export class ScheduleService {
     );
 
     return { schedule, students };
+  }
+
+  /**
+   * 真存盘版 — 直接从 PG 查冲突 + 事务内 INSERT
+   *
+   * @param tenantSchema tenant_<tenantId>（小写）
+   */
+  async createScheduleInDb(
+    input: CreateScheduleInput,
+    tenantSchema: string,
+    studentResponsibleSalesMap: Map<string, string>,
+    schedulableTeachers: ReadonlyArray<{ id: string; userId?: string }>,
+  ): Promise<{ schedule: Schedule; students: ScheduleStudent[] }> {
+    if (!this.repo) {
+      throw new BadRequestException('ScheduleRepository not available');
+    }
+    this.assertInputs(input);
+
+    // RBAC（同 createSchedule 内存版）
+    const teacher = schedulableTeachers.find((t) => t.id === input.teacherId);
+    if (!teacher) {
+      throw new BadRequestException(
+        `teacher ${input.teacherId} not schedulable`,
+      );
+    }
+    if (input.callerRole === 'sales') {
+      const wrong: string[] = [];
+      for (const sid of input.studentIds) {
+        if (studentResponsibleSalesMap.get(sid) !== input.currentUser.id) wrong.push(sid);
+      }
+      if (wrong.length > 0) {
+        throw new ForbiddenException(`SALES_ONLY_OWN_STUDENTS: ${wrong.join(',')}`);
+      }
+    } else if (input.callerRole === 'teacher') {
+      const matched = schedulableTeachers.find((t) => t.userId === input.currentUser.id);
+      if (!matched) throw new ForbiddenException('TEACHER_USER_NOT_BOUND');
+    } else {
+      throw new ForbiddenException(`ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE`);
+    }
+
+    const endAt = new Date(input.startAt.getTime() + input.durationMin * 60 * 1000);
+
+    // 真查 PG 冲突
+    const teacherConflicts = await this.repo.findConflictsForTeacher(
+      tenantSchema,
+      input.teacherId,
+      input.startAt,
+      endAt,
+    );
+    if (teacherConflicts.length > 0) {
+      throw new ConflictException(
+        `TEACHER_TIME_CONFLICT: teacher=${input.teacherId} conflicts=${teacherConflicts.map((c) => c.id).join(',')}`,
+      );
+    }
+    const studentConflicts = await this.repo.findConflictsForStudents(
+      tenantSchema,
+      input.studentIds,
+      input.startAt,
+      endAt,
+    );
+    if (studentConflicts.length > 0) {
+      throw new ConflictException(
+        `STUDENT_TIME_CONFLICT: students=${studentConflicts.map((c) => c.conflictStudentId).join(',')}`,
+      );
+    }
+
+    const schedule: Schedule = {
+      id: input.id,
+      courseProductId: input.courseProductId,
+      teacherId: input.teacherId,
+      startAt: input.startAt,
+      durationMin: input.durationMin,
+      endAt,
+      status: '已排课',
+      source: input.source ?? 'one_off',
+      recurringScheduleId: input.recurringScheduleId,
+      createdByUserId: input.currentUser.id,
+      createdByRole: input.callerRole,
+      notes: input.notes,
+    };
+
+    return this.repo.insertWithStudents(tenantSchema, schedule, input.studentIds);
+  }
+
+  async listByTeacherInDb(
+    tenantSchema: string,
+    teacherId: string,
+    fromDate: Date,
+    toDate: Date,
+  ): Promise<Schedule[]> {
+    if (!this.repo) throw new BadRequestException('ScheduleRepository not available');
+    return this.repo.listByTeacher(tenantSchema, teacherId, fromDate, toDate);
   }
 
   /**

@@ -109,6 +109,33 @@ export class ParentSubscriptionController {
     };
   }
 
+  /**
+   * POST /api/parent-subscriptions/db/start-trial — 真存盘
+   */
+  @Post('db/start-trial')
+  @HttpCode(HttpStatus.CREATED)
+  async startTrialInDb(
+    @Body() body: { subscriptionId: string; parentId: string },
+  ): Promise<ParentSubscription> {
+    return this.service.startTrialInDb(body);
+  }
+
+  @Post('db/find/:parentId')
+  @HttpCode(HttpStatus.OK)
+  async findInDb(@Param('parentId') parentId: string): Promise<ParentSubscription | { found: false }> {
+    const sub = await this.service.findSubscriptionInDb(parentId);
+    return sub || ({ found: false } as any);
+  }
+
+  @Post('db/cancel/:parentId')
+  @HttpCode(HttpStatus.OK)
+  async cancelInDb(
+    @Param('parentId') parentId: string,
+    @Body() body: { atPeriodEnd: boolean },
+  ): Promise<ParentSubscription> {
+    return this.service.cancelSubscriptionInDb(parentId, body.atPeriodEnd);
+  }
+
   // 由于 JSON 不带 Date 类型，反序列化输入的字符串日期
   private deserialize(sub: ParentSubscription): ParentSubscription {
     return {

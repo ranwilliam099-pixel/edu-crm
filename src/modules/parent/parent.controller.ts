@@ -104,6 +104,53 @@ export class ParentController {
   }
 
   /**
+   * POST /api/parents/db/register — 真存盘
+   */
+  @Post('db/register')
+  @HttpCode(HttpStatus.CREATED)
+  async registerInDb(
+    @Body()
+    body: {
+      id: string;
+      phone: string;
+      wechatOpenid?: string;
+      name?: string;
+    },
+  ): Promise<Parent> {
+    return this.service.registerParentInDb(body);
+  }
+
+  @Post('db/:parentId/bindings')
+  @HttpCode(HttpStatus.CREATED)
+  async createBindingInDb(
+    @Param('parentId') parentId: string,
+    @Body()
+    body: {
+      id: string;
+      studentId: string;
+      tenantId: string;
+      isPrimary?: boolean;
+      relationship: Relationship;
+    },
+  ): Promise<ParentStudentBinding> {
+    return this.service.createBindingInDb({ ...body, parentId });
+  }
+
+  @Post('db/:parentId/children')
+  @HttpCode(HttpStatus.OK)
+  async listChildrenInDb(
+    @Param('parentId') parentId: string,
+  ): Promise<ParentStudentBinding[]> {
+    return this.service.listMyChildrenInDb(parentId);
+  }
+
+  @Post('db/bindings/:bindingId/unbind')
+  @HttpCode(HttpStatus.OK)
+  async unbindInDb(@Param('bindingId') bindingId: string): Promise<ParentStudentBinding> {
+    return this.service.unbindBindingInDb(bindingId);
+  }
+
+  /**
    * POST /api/parents/students/:studentId/active-parents-count
    *
    * 用于 C-02 显示"当前家长数 / 3"
