@@ -5,6 +5,13 @@ import { TeacherRepository } from './teacher.repository';
 import { ScheduleRepository } from './schedule.repository';
 import { ParentRepository } from './parent.repository';
 import { ParentSubscriptionRepository } from './parent-subscription.repository';
+import { LessonFeedbackRepository } from './lesson-feedback.repository';
+import { MonthlyReportRepository } from './monthly-report.repository';
+import { CourseConsumptionRepository } from './course-consumption.repository';
+import { CoursePackageRepository } from './course-package.repository';
+import { HomeworkRepository } from './homework.repository';
+import { AssessmentRepository } from './assessment.repository';
+import { LearningProfileRepository } from './learning-profile.repository';
 import { OnboardingController } from './onboarding.controller';
 
 /**
@@ -22,6 +29,13 @@ import { OnboardingController } from './onboarding.controller';
     ScheduleRepository,
     ParentRepository,
     ParentSubscriptionRepository,
+    LessonFeedbackRepository,
+    MonthlyReportRepository,
+    CourseConsumptionRepository,
+    CoursePackageRepository,
+    HomeworkRepository,
+    AssessmentRepository,
+    LearningProfileRepository,
   ],
   exports: [
     PgPoolService,
@@ -30,6 +44,13 @@ import { OnboardingController } from './onboarding.controller';
     ScheduleRepository,
     ParentRepository,
     ParentSubscriptionRepository,
+    LessonFeedbackRepository,
+    MonthlyReportRepository,
+    CourseConsumptionRepository,
+    CoursePackageRepository,
+    HomeworkRepository,
+    AssessmentRepository,
+    LearningProfileRepository,
   ],
 })
 export class DbModule {}
