@@ -47,8 +47,20 @@ export class UserService {
     if (!dto.tenantId || dto.tenantId.length !== 32) {
       throw new BadRequestException(`tenantId must be 32-char ULID`);
     }
-    if (!['admin', 'manager', 'sales'].includes(dto.role)) {
-      throw new BadRequestException(`role must be one of admin/manager/sales`);
+    const validRoles = [
+      'sales',
+      'sales_manager',
+      'sales_director',
+      'marketing',
+      'finance',
+      'boss',
+      'admin',
+      'hr',
+    ];
+    if (!validRoles.includes(dto.role)) {
+      throw new BadRequestException(
+        `role must be one of ${validRoles.join('/')} (V2 schema CHECK 8 枚举)`,
+      );
     }
     if (!dto.campusId || dto.campusId.length !== 32) {
       throw new BadRequestException(`campusId must be 32-char ULID`);
@@ -77,13 +89,24 @@ export class UserService {
    * PM-AUTH-5(2026-04-30): 条目 14 代码冲刺总授权 — admin/teacher/manager 三角色填充由 cron 临时编写
    * BE-W3-1（条目 14 §B Track CODE-1）扩展范围：admin 全校区 / 普通员工部门归属
    *
-   * 默认填充策略：
-   *   - sales → [campusId]（主校区单值，USER-AUTH 用户最终拍板，台账条目 28）
-   *   - admin → []（业务语义：admin 不受 campus_scope 限制，业务层权限校验直接跳过此字段；等用户/PD 二次明示）
-   *   - manager → [campusId]（临时按主校区单值；等用户/PD 二次明示 manager 在 8 枚举中的实际归属）
+   * USER-AUTH(2026-05-02 台账条目 30): 用户拍板 8 枚举 campus_scope 默认填充策略
+   *
+   * 单校区组 → [campusId]（数据权限边界 = 本人所属校区）：
+   *   - sales（销售，条目 28 已锁）
+   *   - sales_manager（销售经理 / "man"）
+   *   - boss（校长）
+   *
+   * 跨校区组 → []（业务层权限校验对此组跳过 campus_scope 过滤，可见全租户）：
+   *   - sales_director（大区销售总监 / 跨校区管理）
+   *   - admin（系统管理员 / 跨校区管理）
+   *   - hr（人事 / 跨校区管理，2026-05-02 修订）
+   *
+   * 待用户拍板组 → 强制显式传入（不允许默认填充，符合 067 §3 不猜测原则）：
+   *   - marketing（市场，等用户）
+   *   - finance（财务，等用户）
    *
    * teacher 已移出本 service：
-   *   USER-AUTH(2026-05-02) 用户拍板老师走方向 B（台账条目 29），独立 `teachers` 表 + V7 ALTER 待开
+   *   条目 29 用户拍板老师走方向 B，独立 `teachers` 表 + V7 ALTER 待开
    *
    * 显式传入 campusScope 时优先按显式值（运营批量导入场景）。
    */
@@ -92,17 +115,27 @@ export class UserService {
       return [...dto.campusScope];
     }
     switch (dto.role) {
+      // 单校区组 — 数据权限 = 本人所属校区
       case 'sales':
-        // USER-AUTH(2026-05-02): 主校区单值（用户最终拍板，台账条目 28）
+      case 'sales_manager':
+      case 'boss':
         return [dto.campusId];
+
+      // 跨校区组 — 空数组 + 业务层豁免（admin/sales_director/hr 跨校区管理）
+      case 'sales_director':
       case 'admin':
-        // PM-AUTH-5: admin 全校区语义 — 应用层默认空数组，业务层权限校验对 admin 跳过 scope check
-        // 不查 CampusService（待 BE-W4-1 落地后由权限层处理）；等用户/PD 二次明示
+      case 'hr':
         return [];
-      case 'manager':
-        // 临时按主校区单值；等用户/PD 二次明示 manager 在 8 枚举中映射哪个角色（sales_manager?）
-        return [dto.campusId];
+
+      // 待拍板组 — 强制显式传入（不猜测）
+      case 'marketing':
+      case 'finance':
+        throw new BadRequestException(
+          `role=${dto.role} campus_scope 默认填充逻辑等用户拍板，请显式传入 campusScope`,
+        );
+
       default:
+        // 不应到达（validRoles 已过滤），保险分支
         return [];
     }
   }
