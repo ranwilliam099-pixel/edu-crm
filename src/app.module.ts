@@ -13,6 +13,7 @@ import { TeacherModule } from './modules/teacher/teacher.module';
 import { ParentModule } from './modules/parent/parent.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { FeedbackModule } from './modules/feedback/feedback.module';
+import { CronModule } from './modules/cron/cron.module';
 
 @Module({
   imports: [
@@ -40,6 +41,8 @@ import { FeedbackModule } from './modules/feedback/feedback.module';
     ScheduleModule,
     // USER-AUTH(2026-05-02): FeedbackModule V9 教学反馈 + 月报 + 课消（PD §4 + P6/P7）
     FeedbackModule,
+    // USER-AUTH(2026-05-02): CronModule 全局 cron 编排（接 V8.1/V9/V10 所有定时任务）
+    CronModule,
   ],
 })
 export class AppModule {}
