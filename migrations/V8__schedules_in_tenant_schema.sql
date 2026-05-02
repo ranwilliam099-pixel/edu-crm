@@ -24,8 +24,9 @@ CREATE TABLE IF NOT EXISTS schedules (
     teacher_id          VARCHAR(32)  NOT NULL REFERENCES teachers(id),
     start_at            TIMESTAMPTZ  NOT NULL,
     duration_min        INT          NOT NULL CHECK (duration_min > 0 AND duration_min <= 480),
-    end_at              TIMESTAMPTZ  GENERATED ALWAYS AS
-                          (start_at + (duration_min || ' minutes')::interval) STORED,
+    -- end_at 由应用层 INSERT 时计算填充（PG 14 GENERATED STORED 要求 immutable，
+    --   interval 字符串拼接非 immutable，故改普通列 + 应用层 / trigger 维护）
+    end_at              TIMESTAMPTZ  NOT NULL,
     status              VARCHAR(16)  NOT NULL DEFAULT '已排课'
                         CHECK (status IN ('已排课','已完成','已取消','缺席')),
     source              VARCHAR(24)  NOT NULL DEFAULT 'one_off'

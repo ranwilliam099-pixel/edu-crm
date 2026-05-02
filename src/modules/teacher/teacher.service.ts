@@ -1,5 +1,6 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, Optional } from '@nestjs/common';
 import { CreateTeacherDto, TeacherStatus } from './dto/create-teacher.dto';
+import { TeacherRepository } from '../db/teacher.repository';
 
 /**
  * TeacherService — V7 teachers 独立档案 BE-V7-1
@@ -33,8 +34,14 @@ export interface Teacher {
 export class TeacherService {
   private readonly logger = new Logger(TeacherService.name);
 
+  constructor(@Optional() private readonly repo?: TeacherRepository) {}
+
   /**
-   * 创建教师档案（内存对象，不持久化）。
+   * 创建教师档案
+   *
+   * 业务校验通过后：
+   *   - 若注入了 TeacherRepository（持久化层在线）→ 真存进 PG
+   *   - 否则 → 仅返回内存对象（向后兼容旧测试）
    *
    * @throws BadRequestException 输入校验失败
    */
@@ -78,6 +85,29 @@ export class TeacherService {
       hourlyRateYuan: dto.hourlyRateYuan,
       status,
     };
+  }
+
+  /**
+   * 创建并真存进 PG（需 tenantSchema + repository 在线）
+   */
+  async createTeacherInDb(dto: CreateTeacherDto, tenantSchema: string): Promise<Teacher> {
+    if (!this.repo) {
+      throw new BadRequestException('TeacherRepository not available; falling back to mock not allowed for /db endpoint');
+    }
+    const memTeacher = this.createTeacher(dto);
+    const persisted = await this.repo.insert(tenantSchema, memTeacher, dto.operator);
+    this.logger.log(`[BE-V7-1 DB] persisted teacher ${persisted.id} into ${tenantSchema}`);
+    return persisted;
+  }
+
+  /**
+   * 真查 PG
+   */
+  async listFromDb(tenantSchema: string): Promise<Teacher[]> {
+    if (!this.repo) {
+      throw new BadRequestException('TeacherRepository not available');
+    }
+    return this.repo.listActiveInTenant(tenantSchema);
   }
 
   /**

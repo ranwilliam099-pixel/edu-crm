@@ -18,10 +18,13 @@ import { CourseBalanceModule } from './modules/course-balance/course-balance.mod
 import { HomeworkModule } from './modules/homework/homework.module';
 import { AssessmentModule } from './modules/assessment/assessment.module';
 import { LearningProfileModule } from './modules/learning-profile/learning-profile.module';
+import { DbModule } from './modules/db/db.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
+    // USER-AUTH(2026-05-02): DbModule 真接 PG（pg.Pool + tenant schema worker + Repository）
+    DbModule,
     AuthModule,
     TenantModule,
     HealthModule,

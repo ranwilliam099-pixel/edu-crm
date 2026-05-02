@@ -66,6 +66,33 @@ export class TeacherController {
   }
 
   /**
+   * POST /api/teachers/db — 真 PG 持久化版（用户 2026-05-02「做啊」）
+   *
+   * Body: CreateTeacherDto + { tenantSchema: 'tenant_xxx' }
+   */
+  @Post('db')
+  @UseGuards(RbacGuard)
+  @Roles('admin', 'boss', 'hr')
+  @HttpCode(HttpStatus.CREATED)
+  async createTeacherInDb(
+    @Body() body: CreateTeacherDto & { tenantSchema: string },
+  ): Promise<Teacher> {
+    const { tenantSchema, ...dto } = body;
+    return this.service.createTeacherInDb(dto, tenantSchema);
+  }
+
+  /**
+   * POST /api/teachers/db/list — 真 PG 查询全部 active 教师
+   */
+  @Post('db/list')
+  @UseGuards(RbacGuard)
+  @Roles('admin', 'boss', 'hr', 'sales_manager', 'sales_director')
+  @HttpCode(HttpStatus.OK)
+  async listFromDb(@Body() body: { tenantSchema: string }): Promise<Teacher[]> {
+    return this.service.listFromDb(body.tenantSchema);
+  }
+
+  /**
    * GET /api/teachers/:id/profile-type — 判断老师类型（含登录账号 / 纯档案）
    *
    * 由调用方传入 teacher 对象（应用层接口），无 DB 查询
