@@ -260,6 +260,232 @@ export class FeedbackController {
     );
   }
 
+  // ==================== /db 真存盘版 ====================
+
+  // ----- LessonFeedback -----
+
+  @Post('db/lesson-feedbacks')
+  @HttpCode(HttpStatus.CREATED)
+  async submitFeedbackInDb(
+    @Body()
+    body: {
+      id: string;
+      scheduleId: string;
+      studentId: string;
+      teacherId: string;
+      attendanceStatus: AttendanceForFeedback;
+      classroomPerformance: ClassroomPerformance;
+      knowledgePoints?: Array<{ name: string; mastery: ClassroomPerformance }>;
+      homework?: string;
+      homeworkAttachments?: Array<{ url: string; type: string; filename: string }>;
+      teacherNote?: string;
+      teacherInternalNote?: string;
+      tenantSchema: string;
+    },
+  ): Promise<LessonFeedback> {
+    const { tenantSchema, ...rest } = body;
+    return this.feedback.submitInDb(rest, tenantSchema);
+  }
+
+  @Post('db/lesson-feedbacks/:id/find')
+  @HttpCode(HttpStatus.OK)
+  async findFeedbackInDb(
+    @Param('id') id: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<LessonFeedback> {
+    return this.feedback.findInDb(id, body.tenantSchema);
+  }
+
+  @Post('db/students/:studentId/feedbacks')
+  @HttpCode(HttpStatus.OK)
+  async listFeedbacksByStudentInDb(
+    @Param('studentId') studentId: string,
+    @Body() body: { tenantSchema: string; limit?: number; offset?: number },
+  ): Promise<LessonFeedback[]> {
+    return this.feedback.listByStudentInDb(studentId, body.tenantSchema, {
+      limit: body.limit,
+      offset: body.offset,
+    });
+  }
+
+  @Post('db/lesson-feedbacks/:id/update')
+  @HttpCode(HttpStatus.OK)
+  async updateFeedbackInDb(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      patch: {
+        attendanceStatus?: AttendanceForFeedback;
+        classroomPerformance?: ClassroomPerformance;
+        knowledgePoints?: Array<{ name: string; mastery: ClassroomPerformance }>;
+        homework?: string;
+        teacherNote?: string;
+        teacherInternalNote?: string;
+      };
+      tenantSchema: string;
+      nowMs?: number;
+    },
+  ): Promise<LessonFeedback> {
+    return this.feedback.updateInDb(
+      id,
+      body.patch,
+      body.tenantSchema,
+      body.nowMs ? new Date(body.nowMs) : new Date(),
+    );
+  }
+
+  @Post('db/lesson-feedbacks/:id/parent-read')
+  @HttpCode(HttpStatus.OK)
+  async markParentReadFeedbackInDb(
+    @Param('id') id: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<LessonFeedback> {
+    return this.feedback.markParentReadInDb(id, body.tenantSchema);
+  }
+
+  // ----- CourseConsumption -----
+
+  @Post('db/course-consumptions')
+  @HttpCode(HttpStatus.CREATED)
+  async createConsumptionInDb(
+    @Body()
+    body: {
+      id: string;
+      scheduleId: string;
+      studentId: string;
+      teacherId: string;
+      scheduleEndAtMs: number;
+      amountYuan?: number;
+      tenantSchema: string;
+    },
+  ): Promise<CourseConsumption> {
+    const { tenantSchema, scheduleEndAtMs, ...rest } = body;
+    return this.consumption.createConsumptionInDb(
+      { ...rest, scheduleEndAt: new Date(scheduleEndAtMs) },
+      tenantSchema,
+    );
+  }
+
+  @Post('db/course-consumptions/:id/confirm')
+  @HttpCode(HttpStatus.OK)
+  async confirmConsumptionInDb(
+    @Param('id') id: string,
+    @Body() body: { feedbackId: string; tenantSchema: string },
+  ): Promise<CourseConsumption> {
+    return this.consumption.confirmByFeedbackInDb(id, body.feedbackId, body.tenantSchema);
+  }
+
+  @Post('db/course-consumptions/scan-and-lock')
+  @HttpCode(HttpStatus.OK)
+  async scanAndLockInDb(
+    @Body() body: { tenantSchema: string; nowMs?: number },
+  ): Promise<{ locked: number; ids: string[] }> {
+    return this.consumption.scanAndLockInDb(
+      body.tenantSchema,
+      body.nowMs ? new Date(body.nowMs) : new Date(),
+    );
+  }
+
+  @Post('db/course-consumptions/:id/unlock-late')
+  @HttpCode(HttpStatus.OK)
+  async unlockLateInDb(
+    @Param('id') id: string,
+    @Body() body: { feedbackId: string; tenantSchema: string },
+  ): Promise<CourseConsumption> {
+    return this.consumption.unlockByLateFeedbackInDb(id, body.feedbackId, body.tenantSchema);
+  }
+
+  @Post('db/course-consumptions/:id/cancel')
+  @HttpCode(HttpStatus.OK)
+  async cancelConsumptionInDb(
+    @Param('id') id: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<CourseConsumption> {
+    return this.consumption.cancelInDb(id, body.tenantSchema);
+  }
+
+  @Post('db/teachers/:teacherId/payroll')
+  @HttpCode(HttpStatus.OK)
+  async teacherPayrollInDb(
+    @Param('teacherId') teacherId: string,
+    @Body() body: { rangeStartMs: number; rangeEndMs: number; tenantSchema: string },
+  ): Promise<{ teacherId: string; payrollYuan: number; count: number }> {
+    return this.consumption.sumPayrollForTeacherInDb(
+      teacherId,
+      new Date(body.rangeStartMs),
+      new Date(body.rangeEndMs),
+      body.tenantSchema,
+    );
+  }
+
+  // ----- MonthlyReport -----
+
+  @Post('db/monthly-reports/generate')
+  @HttpCode(HttpStatus.CREATED)
+  async generateReportInDb(
+    @Body()
+    body: {
+      id: string;
+      studentId: string;
+      teacherId: string;
+      monthMs: number;
+      tenantSchema: string;
+    },
+  ): Promise<MonthlyReport> {
+    const { tenantSchema, monthMs, ...rest } = body;
+    return this.report.generateInDb({ ...rest, month: new Date(monthMs) }, tenantSchema);
+  }
+
+  @Post('db/monthly-reports/:id/finalize')
+  @HttpCode(HttpStatus.OK)
+  async finalizeReportInDb(
+    @Param('id') id: string,
+    @Body()
+    body: { teacherBlessing: string; renewalSuggestion: string; tenantSchema: string },
+  ): Promise<MonthlyReport> {
+    return this.report.finalizeInDb(
+      id,
+      body.teacherBlessing,
+      body.renewalSuggestion,
+      body.tenantSchema,
+    );
+  }
+
+  @Post('db/monthly-reports/:id/find')
+  @HttpCode(HttpStatus.OK)
+  async findReportInDb(
+    @Param('id') id: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<MonthlyReport> {
+    return this.report.findInDb(id, body.tenantSchema);
+  }
+
+  @Post('db/students/:studentId/monthly-reports')
+  @HttpCode(HttpStatus.OK)
+  async listReportsByStudentInDb(
+    @Param('studentId') studentId: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<MonthlyReport[]> {
+    return this.report.listByStudentInDb(studentId, body.tenantSchema);
+  }
+
+  @Post('db/monthly-reports/pending-finalize')
+  @HttpCode(HttpStatus.OK)
+  async listPendingFinalizeInDb(
+    @Body() body: { tenantSchema: string; teacherId?: string },
+  ): Promise<MonthlyReport[]> {
+    return this.report.listPendingFinalizeInDb(body.tenantSchema, body.teacherId);
+  }
+
+  @Post('db/monthly-reports/:id/parent-read')
+  @HttpCode(HttpStatus.OK)
+  async markParentReadReportInDb(
+    @Param('id') id: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<MonthlyReport> {
+    return this.report.markParentReadInDb(id, body.tenantSchema);
+  }
+
   // -- helpers: JSON Date 反序列化 --
 
   private deserializeFeedback(f: LessonFeedback): LessonFeedback {

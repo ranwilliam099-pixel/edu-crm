@@ -61,6 +61,49 @@ export class LearningProfileController {
     return this.service.identifyStrengths(this.deserializeProfile(body.profile));
   }
 
+  // ================ /db 真存盘版 ================
+
+  @Post('db/students/:studentId/recompute')
+  @HttpCode(HttpStatus.OK)
+  async recomputeInDb(
+    @Param('studentId') studentId: string,
+    @Body() body: { tenantSchema: string; nowMs?: number },
+  ): Promise<StudentLearningProfile> {
+    return this.service.recomputeInDb(
+      studentId,
+      body.tenantSchema,
+      body.nowMs ? new Date(body.nowMs) : new Date(),
+    );
+  }
+
+  @Post('db/students/:studentId/profile')
+  @HttpCode(HttpStatus.OK)
+  async findInDb(
+    @Param('studentId') studentId: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<StudentLearningProfile> {
+    return this.service.findInDb(studentId, body.tenantSchema);
+  }
+
+  @Post('db/stale')
+  @HttpCode(HttpStatus.OK)
+  async listStaleInDb(
+    @Body() body: { tenantSchema: string; thresholdMs: number },
+  ): Promise<StudentLearningProfile[]> {
+    return this.service.listStaleInDb(body.tenantSchema, new Date(body.thresholdMs));
+  }
+
+  @Post('db/recompute-all')
+  @HttpCode(HttpStatus.OK)
+  async recomputeAllInDb(
+    @Body() body: { tenantSchema: string; nowMs?: number },
+  ): Promise<{ recomputed: number; failed: number }> {
+    return this.service.recomputeAllInDb(
+      body.tenantSchema,
+      body.nowMs ? new Date(body.nowMs) : new Date(),
+    );
+  }
+
   // -- helpers --
 
   private deserializeFeedback(f: LessonFeedback): LessonFeedback {

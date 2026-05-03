@@ -1,7 +1,11 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, Optional, NotFoundException } from '@nestjs/common';
 import { LessonFeedback, ClassroomPerformance } from '../feedback/lesson-feedback.service';
 import { HomeworkSubmission, Grade } from '../homework/homework.service';
 import { StudentAssessmentResult } from '../assessment/assessment.service';
+import { LearningProfileRepository } from '../db/learning-profile.repository';
+import { LessonFeedbackRepository } from '../db/lesson-feedback.repository';
+import { HomeworkRepository } from '../db/homework.repository';
+import { AssessmentRepository } from '../db/assessment.repository';
 
 /**
  * StudentLearningProfileService — V15 学员学情累计档案 BE-V15-1
@@ -53,6 +57,13 @@ const NUM_TO_GRADE: ReadonlyArray<{ min: number; grade: Grade }> = [
 @Injectable()
 export class StudentLearningProfileService {
   private readonly logger = new Logger(StudentLearningProfileService.name);
+
+  constructor(
+    @Optional() private readonly repo?: LearningProfileRepository,
+    @Optional() private readonly feedbackRepo?: LessonFeedbackRepository,
+    @Optional() private readonly homeworkRepo?: HomeworkRepository,
+    @Optional() private readonly assessmentRepo?: AssessmentRepository,
+  ) {}
 
   /**
    * 重算学员学情累计档案
@@ -178,5 +189,84 @@ export class StudentLearningProfileService {
    */
   identifyStrengths(profile: StudentLearningProfile): ReadonlyArray<KnowledgeMastery> {
     return profile.strengthPoints;
+  }
+
+  // ============= 真存盘版 =============
+
+  /**
+   * 重算并真存盘（cron 每天 0:00 调用）
+   */
+  async recomputeInDb(
+    studentId: string,
+    tenantSchema: string,
+    now: Date = new Date(),
+  ): Promise<StudentLearningProfile> {
+    if (!this.repo || !this.feedbackRepo || !this.homeworkRepo || !this.assessmentRepo) {
+      throw new BadRequestException('LearningProfile dependencies not all available');
+    }
+    if (!studentId || studentId.length !== 32) {
+      throw new BadRequestException('studentId must be 32-char ULID');
+    }
+    const [feedbacks, submissions, results] = await Promise.all([
+      this.feedbackRepo.listByStudent(tenantSchema, studentId, { limit: 1000 }),
+      this.homeworkRepo.listSubmissionsByStudent(tenantSchema, studentId),
+      this.assessmentRepo.listResultsByStudent(tenantSchema, studentId),
+    ]);
+    const memProfile = this.recompute({
+      studentId,
+      feedbacks,
+      homeworkSubmissions: submissions,
+      assessmentResults: results,
+      now,
+    });
+    return this.repo.upsert(tenantSchema, memProfile);
+  }
+
+  async findInDb(
+    studentId: string,
+    tenantSchema: string,
+  ): Promise<StudentLearningProfile> {
+    if (!this.repo) throw new BadRequestException('LearningProfileRepository not available');
+    const r = await this.repo.findByStudent(tenantSchema, studentId);
+    if (!r) throw new NotFoundException(`learning profile for ${studentId} not found`);
+    return r;
+  }
+
+  /**
+   * cron：列出 N 天前未更新的档案
+   */
+  async listStaleInDb(
+    tenantSchema: string,
+    threshold: Date,
+  ): Promise<StudentLearningProfile[]> {
+    if (!this.repo) throw new BadRequestException('LearningProfileRepository not available');
+    return this.repo.listStale(tenantSchema, threshold);
+  }
+
+  /**
+   * cron 全量批量重算 — 扫所有学员，每个跑一次 recomputeInDb
+   */
+  async recomputeAllInDb(
+    tenantSchema: string,
+    now: Date = new Date(),
+  ): Promise<{ recomputed: number; failed: number }> {
+    if (!this.repo) throw new BadRequestException('LearningProfileRepository not available');
+    const ids = await this.repo.listAllStudentIds(tenantSchema);
+    let recomputed = 0;
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await this.recomputeInDb(id, tenantSchema, now);
+        recomputed += 1;
+      } catch (e) {
+        failed += 1;
+        this.logger.warn(`[BE-V15-1 recomputeAllInDb] skip ${id}: ${(e as Error).message}`);
+      }
+    }
+    this.logger.log(
+      `[BE-V15-1 recomputeAllInDb] tenant=${tenantSchema} ` +
+        `recomputed=${recomputed} failed=${failed} total=${ids.length}`,
+    );
+    return { recomputed, failed };
   }
 }

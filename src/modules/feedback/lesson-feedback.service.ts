@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, Optional, NotFoundException } from '@nestjs/common';
+import { LessonFeedbackRepository } from '../db/lesson-feedback.repository';
 
 /**
  * LessonFeedbackService — V9 教学反馈 BE-V9-1
@@ -30,6 +31,8 @@ export interface LessonFeedback {
 @Injectable()
 export class LessonFeedbackService {
   private readonly logger = new Logger(LessonFeedbackService.name);
+
+  constructor(@Optional() private readonly repo?: LessonFeedbackRepository) {}
 
   /**
    * 老师提交反馈（schedule.completed 后 24h 内有效）
@@ -128,5 +131,64 @@ export class LessonFeedbackService {
       return feedback;
     }
     return { ...feedback, parentReadAt: now };
+  }
+
+  // ============= 真存盘版 =============
+
+  async submitInDb(
+    input: Parameters<LessonFeedbackService['submit']>[0],
+    tenantSchema: string,
+  ): Promise<LessonFeedback> {
+    if (!this.repo) throw new BadRequestException('LessonFeedbackRepository not available');
+    const memFeedback = this.submit(input);
+    return this.repo.insert(tenantSchema, memFeedback);
+  }
+
+  async findInDb(
+    id: string,
+    tenantSchema: string,
+  ): Promise<LessonFeedback> {
+    if (!this.repo) throw new BadRequestException('LessonFeedbackRepository not available');
+    const r = await this.repo.findById(tenantSchema, id);
+    if (!r) throw new NotFoundException(`feedback ${id} not found`);
+    return r;
+  }
+
+  async listByStudentInDb(
+    studentId: string,
+    tenantSchema: string,
+    options: { limit?: number; offset?: number } = {},
+  ): Promise<LessonFeedback[]> {
+    if (!this.repo) throw new BadRequestException('LessonFeedbackRepository not available');
+    return this.repo.listByStudent(tenantSchema, studentId, options);
+  }
+
+  async updateInDb(
+    id: string,
+    patch: {
+      attendanceStatus?: AttendanceForFeedback;
+      classroomPerformance?: ClassroomPerformance;
+      knowledgePoints?: ReadonlyArray<{ name: string; mastery: ClassroomPerformance }>;
+      homework?: string;
+      teacherNote?: string;
+      teacherInternalNote?: string;
+    },
+    tenantSchema: string,
+    now: Date = new Date(),
+  ): Promise<LessonFeedback> {
+    if (!this.repo) throw new BadRequestException('LessonFeedbackRepository not available');
+    const existing = await this.repo.findById(tenantSchema, id);
+    if (!existing) throw new NotFoundException(`feedback ${id} not found`);
+    // 24h 校验沿用纯逻辑
+    this.update(existing, patch, now);
+    return this.repo.update(tenantSchema, id, patch);
+  }
+
+  async markParentReadInDb(
+    id: string,
+    tenantSchema: string,
+  ): Promise<LessonFeedback> {
+    if (!this.repo) throw new BadRequestException('LessonFeedbackRepository not available');
+    return this.repo.markParentRead(tenantSchema, id);
   }
 }

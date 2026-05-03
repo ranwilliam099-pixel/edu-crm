@@ -1,5 +1,7 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, Optional, NotFoundException } from '@nestjs/common';
 import { LessonFeedback, ClassroomPerformance } from './lesson-feedback.service';
+import { MonthlyReportRepository } from '../db/monthly-report.repository';
+import { LessonFeedbackRepository } from '../db/lesson-feedback.repository';
 
 /**
  * MonthlyReportService — V9 月报 BE-V9-3
@@ -48,6 +50,11 @@ export interface MonthlyReport {
 @Injectable()
 export class MonthlyReportService {
   private readonly logger = new Logger(MonthlyReportService.name);
+
+  constructor(
+    @Optional() private readonly repo?: MonthlyReportRepository,
+    @Optional() private readonly feedbackRepo?: LessonFeedbackRepository,
+  ) {}
 
   /**
    * 月报自动生成（cron 每月 1 号 00:30 调用）
@@ -179,5 +186,74 @@ export class MonthlyReportService {
       return report; // 幂等
     }
     return { ...report, parentReadAt: now };
+  }
+
+  // ============= 真存盘版 =============
+
+  /**
+   * 自动生成月报（从 PG 拉本月反馈，UPSERT 月报）
+   */
+  async generateInDb(
+    input: { id: string; studentId: string; teacherId: string; month: Date },
+    tenantSchema: string,
+  ): Promise<MonthlyReport> {
+    if (!this.repo || !this.feedbackRepo) {
+      throw new BadRequestException('MonthlyReportRepository or LessonFeedbackRepository not available');
+    }
+    const monthStart = new Date(input.month.getFullYear(), input.month.getMonth(), 1);
+    const monthEnd = new Date(input.month.getFullYear(), input.month.getMonth() + 1, 1);
+    const feedbacks = await this.feedbackRepo.listByStudentTeacherInRange(
+      tenantSchema,
+      input.studentId,
+      input.teacherId,
+      monthStart,
+      monthEnd,
+    );
+    const memReport = this.generate({ ...input, month: monthStart, feedbacksInMonth: feedbacks });
+    return this.repo.insert(tenantSchema, memReport);
+  }
+
+  async finalizeInDb(
+    id: string,
+    teacherBlessing: string,
+    renewalSuggestion: string,
+    tenantSchema: string,
+  ): Promise<MonthlyReport> {
+    if (!this.repo) throw new BadRequestException('MonthlyReportRepository not available');
+    if (!teacherBlessing || teacherBlessing.trim().length === 0) {
+      throw new BadRequestException('teacherBlessing required');
+    }
+    if (!renewalSuggestion || renewalSuggestion.trim().length === 0) {
+      throw new BadRequestException('renewalSuggestion required');
+    }
+    return this.repo.finalize(tenantSchema, id, teacherBlessing, renewalSuggestion);
+  }
+
+  async findInDb(id: string, tenantSchema: string): Promise<MonthlyReport> {
+    if (!this.repo) throw new BadRequestException('MonthlyReportRepository not available');
+    const r = await this.repo.findById(tenantSchema, id);
+    if (!r) throw new NotFoundException(`report ${id} not found`);
+    return r;
+  }
+
+  async listByStudentInDb(
+    studentId: string,
+    tenantSchema: string,
+  ): Promise<MonthlyReport[]> {
+    if (!this.repo) throw new BadRequestException('MonthlyReportRepository not available');
+    return this.repo.listByStudent(tenantSchema, studentId);
+  }
+
+  async listPendingFinalizeInDb(
+    tenantSchema: string,
+    teacherId?: string,
+  ): Promise<MonthlyReport[]> {
+    if (!this.repo) throw new BadRequestException('MonthlyReportRepository not available');
+    return this.repo.listPendingFinalize(tenantSchema, teacherId);
+  }
+
+  async markParentReadInDb(id: string, tenantSchema: string): Promise<MonthlyReport> {
+    if (!this.repo) throw new BadRequestException('MonthlyReportRepository not available');
+    return this.repo.markParentRead(tenantSchema, id);
   }
 }

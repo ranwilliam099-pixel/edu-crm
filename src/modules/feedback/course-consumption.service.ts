@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, Optional, NotFoundException } from '@nestjs/common';
+import { CourseConsumptionRepository } from '../db/course-consumption.repository';
 
 /**
  * CourseConsumptionService — V9 课消候补 BE-V9-2
@@ -26,6 +27,8 @@ export interface CourseConsumption {
 @Injectable()
 export class CourseConsumptionService {
   private readonly logger = new Logger(CourseConsumptionService.name);
+
+  constructor(@Optional() private readonly repo?: CourseConsumptionRepository) {}
 
   /**
    * schedule.completed 时为每个 present/late 学员创建一条 course_consumptions
@@ -138,5 +141,77 @@ export class CourseConsumptionService {
     return consumptions
       .filter((c) => c.teacherId === teacherId && c.status === 'confirmed')
       .reduce((sum, c) => sum + (c.amountYuan ?? 0), 0);
+  }
+
+  // ============= 真存盘版 =============
+
+  async createConsumptionInDb(
+    input: Parameters<CourseConsumptionService['createConsumption']>[0],
+    tenantSchema: string,
+  ): Promise<CourseConsumption> {
+    if (!this.repo) throw new BadRequestException('CourseConsumptionRepository not available');
+    const memCC = this.createConsumption(input);
+    return this.repo.insert(tenantSchema, memCC);
+  }
+
+  async confirmByFeedbackInDb(
+    id: string,
+    feedbackId: string,
+    tenantSchema: string,
+  ): Promise<CourseConsumption> {
+    if (!this.repo) throw new BadRequestException('CourseConsumptionRepository not available');
+    return this.repo.confirmByFeedback(tenantSchema, id, feedbackId);
+  }
+
+  /**
+   * cron：扫超期未填反馈的 pending → locked
+   * 返回真锁定的条数
+   */
+  async scanAndLockInDb(
+    tenantSchema: string,
+    now: Date = new Date(),
+  ): Promise<{ locked: number; ids: string[] }> {
+    if (!this.repo) throw new BadRequestException('CourseConsumptionRepository not available');
+    const overdue = await this.repo.findOverdueForLock(tenantSchema, now);
+    const ids: string[] = [];
+    for (const c of overdue) {
+      try {
+        await this.repo.lock(tenantSchema, c.id);
+        ids.push(c.id);
+      } catch (e) {
+        this.logger.warn(`[BE-V9-2 scanAndLockInDb] skip ${c.id}: ${(e as Error).message}`);
+      }
+    }
+    this.logger.log(`[BE-V9-2 scanAndLockInDb] locked ${ids.length} consumption(s)`);
+    return { locked: ids.length, ids };
+  }
+
+  async unlockByLateFeedbackInDb(
+    id: string,
+    feedbackId: string,
+    tenantSchema: string,
+  ): Promise<CourseConsumption> {
+    if (!this.repo) throw new BadRequestException('CourseConsumptionRepository not available');
+    const existing = await this.repo.findById(tenantSchema, id);
+    if (!existing) throw new NotFoundException(`consumption ${id} not found`);
+    // 沿用纯逻辑校验 status=locked
+    this.unlockByLateFeedback(existing, feedbackId);
+    return this.repo.confirmByFeedback(tenantSchema, id, feedbackId);
+  }
+
+  async cancelInDb(id: string, tenantSchema: string): Promise<CourseConsumption> {
+    if (!this.repo) throw new BadRequestException('CourseConsumptionRepository not available');
+    return this.repo.cancel(tenantSchema, id);
+  }
+
+  async sumPayrollForTeacherInDb(
+    teacherId: string,
+    rangeStart: Date,
+    rangeEnd: Date,
+    tenantSchema: string,
+  ): Promise<{ teacherId: string; payrollYuan: number; count: number }> {
+    if (!this.repo) throw new BadRequestException('CourseConsumptionRepository not available');
+    const r = await this.repo.sumPayrollForTeacher(tenantSchema, teacherId, rangeStart, rangeEnd);
+    return { teacherId, payrollYuan: r.total, count: r.count };
   }
 }

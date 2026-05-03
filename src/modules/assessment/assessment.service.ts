@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, Logger, Optional, NotFoundException } from '@nestjs/common';
+import { AssessmentRepository } from '../db/assessment.repository';
 
 /**
  * AssessmentService — V14 测评/考试 BE-V14-1
@@ -43,6 +44,8 @@ export interface StudentAssessmentResult {
 @Injectable()
 export class AssessmentService {
   private readonly logger = new Logger(AssessmentService.name);
+
+  constructor(@Optional() private readonly repo?: AssessmentRepository) {}
 
   /**
    * 创建测评（默认 status=draft，老师录完所有成绩后 publish）
@@ -211,5 +214,99 @@ export class AssessmentService {
         (a, b) =>
           (b.result.recordedAt?.getTime() ?? 0) - (a.result.recordedAt?.getTime() ?? 0),
       );
+  }
+
+  // ============= 真存盘版 =============
+
+  async createAssessmentInDb(
+    input: Parameters<AssessmentService['createAssessment']>[0],
+    tenantSchema: string,
+  ): Promise<Assessment> {
+    if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
+    const memA = this.createAssessment(input);
+    return this.repo.insertAssessment(tenantSchema, memA);
+  }
+
+  async recordResultInDb(
+    input: {
+      id: string;
+      assessmentId: string;
+      studentId: string;
+      score: number;
+      knowledgeBreakdown?: ReadonlyArray<KnowledgePointScore>;
+      teacherComment?: string;
+      recordedByUserId: string;
+    },
+    tenantSchema: string,
+  ): Promise<StudentAssessmentResult> {
+    if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
+    const assessment = await this.repo.findAssessmentById(tenantSchema, input.assessmentId);
+    if (!assessment) throw new NotFoundException(`assessment ${input.assessmentId} not found`);
+    const existingResults = await this.repo.listResultsByAssessment(tenantSchema, input.assessmentId);
+    const memR = this.recordResult(input, assessment, existingResults);
+    return this.repo.insertResult(tenantSchema, memR);
+  }
+
+  async publishAssessmentInDb(
+    id: string,
+    tenantSchema: string,
+  ): Promise<Assessment> {
+    if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
+    const existing = await this.repo.findAssessmentById(tenantSchema, id);
+    if (!existing) throw new NotFoundException(`assessment ${id} not found`);
+    // 沿用纯逻辑校验
+    this.publishAssessment(existing);
+    // 发布前自动算排名
+    const results = await this.repo.listResultsByAssessment(tenantSchema, id);
+    const ranked = this.computeRanking(results);
+    await this.repo.updateRankings(
+      tenantSchema,
+      ranked
+        .filter((r): r is StudentAssessmentResult & { rankInClass: number } => r.rankInClass !== undefined)
+        .map((r) => ({ id: r.id, rankInClass: r.rankInClass })),
+    );
+    return this.repo.setAssessmentStatus(tenantSchema, id, 'published');
+  }
+
+  async closeAssessmentInDb(
+    id: string,
+    tenantSchema: string,
+  ): Promise<Assessment> {
+    if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
+    const existing = await this.repo.findAssessmentById(tenantSchema, id);
+    if (!existing) throw new NotFoundException(`assessment ${id} not found`);
+    this.closeAssessment(existing);
+    return this.repo.setAssessmentStatus(tenantSchema, id, 'closed');
+  }
+
+  async findAssessmentInDb(id: string, tenantSchema: string): Promise<Assessment> {
+    if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
+    const r = await this.repo.findAssessmentById(tenantSchema, id);
+    if (!r) throw new NotFoundException(`assessment ${id} not found`);
+    return r;
+  }
+
+  async listAssessmentsByTeacherInDb(
+    teacherId: string,
+    tenantSchema: string,
+  ): Promise<Assessment[]> {
+    if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
+    return this.repo.listAssessmentsByTeacher(tenantSchema, teacherId);
+  }
+
+  async listResultsByAssessmentInDb(
+    assessmentId: string,
+    tenantSchema: string,
+  ): Promise<StudentAssessmentResult[]> {
+    if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
+    return this.repo.listResultsByAssessment(tenantSchema, assessmentId);
+  }
+
+  async listResultsByStudentInDb(
+    studentId: string,
+    tenantSchema: string,
+  ): Promise<StudentAssessmentResult[]> {
+    if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
+    return this.repo.listResultsByStudent(tenantSchema, studentId);
   }
 }

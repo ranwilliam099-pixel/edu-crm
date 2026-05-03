@@ -141,6 +141,111 @@ export class CourseBalanceController {
     );
   }
 
+  // ================ /db 真存盘版 ================
+
+  @Post('db/packages')
+  @HttpCode(HttpStatus.CREATED)
+  async insertPackageInDb(
+    @Body()
+    body: {
+      package: CoursePackage;
+      operator: string;
+      tenantSchema: string;
+    },
+  ): Promise<CoursePackage> {
+    return this.service.insertPackageInDb(body.package, body.operator, body.tenantSchema);
+  }
+
+  @Post('db/packages/list')
+  @HttpCode(HttpStatus.OK)
+  async listPackagesInDb(
+    @Body() body: { tenantSchema: string; courseProductId?: string },
+  ): Promise<CoursePackage[]> {
+    return this.service.listActivePackagesInDb(body.tenantSchema, body.courseProductId);
+  }
+
+  @Post('db/activate')
+  @HttpCode(HttpStatus.CREATED)
+  async activateStudentPackageInDb(
+    @Body()
+    body: {
+      id: string;
+      studentId: string;
+      coursePackageId: string;
+      contractId?: string;
+      tenantSchema: string;
+    },
+  ): Promise<StudentCoursePackage> {
+    const { tenantSchema, ...rest } = body;
+    return this.service.activateStudentPackageInDb(rest, tenantSchema);
+  }
+
+  @Post('db/:packageId/deduct')
+  @HttpCode(HttpStatus.OK)
+  async deductInDb(
+    @Param('packageId') id: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<{ updated: StudentCoursePackage; lowBalanceAlertNow: boolean }> {
+    return this.service.deductOnConsumptionInDb(id, body.tenantSchema);
+  }
+
+  @Post('db/:packageId/refund')
+  @HttpCode(HttpStatus.OK)
+  async refundInDb(
+    @Param('packageId') id: string,
+    @Body() body: { count: number; tenantSchema: string },
+  ): Promise<StudentCoursePackage> {
+    return this.service.refundLessonsInDb(id, body.count, body.tenantSchema);
+  }
+
+  @Post('db/students/:studentId/packages')
+  @HttpCode(HttpStatus.OK)
+  async listActiveByStudentInDb(
+    @Param('studentId') studentId: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<StudentCoursePackage[]> {
+    return this.service.listActiveByStudentInDb(studentId, body.tenantSchema);
+  }
+
+  @Post('db/scan-expired')
+  @HttpCode(HttpStatus.OK)
+  async scanExpiredInDb(
+    @Body() body: { tenantSchema: string; nowMs?: number },
+  ): Promise<{ expired: number; ids: string[] }> {
+    return this.service.scanExpiredInDb(
+      body.tenantSchema,
+      body.nowMs ? new Date(body.nowMs) : new Date(),
+    );
+  }
+
+  @Post('db/scan-low-balance')
+  @HttpCode(HttpStatus.OK)
+  async scanLowBalanceInDb(
+    @Body() body: { tenantSchema: string },
+  ): Promise<StudentCoursePackage[]> {
+    return this.service.listPendingLowBalanceAlertsInDb(body.tenantSchema);
+  }
+
+  @Post('db/:packageId/freeze')
+  @HttpCode(HttpStatus.OK)
+  async freezeInDb(
+    @Param('packageId') id: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<StudentCoursePackage> {
+    return this.service.freezeInDb(id, body.tenantSchema);
+  }
+
+  @Post('db/:packageId/unfreeze')
+  @HttpCode(HttpStatus.OK)
+  async unfreezeInDb(
+    @Param('packageId') id: string,
+    @Body() body: { frozenDays: number; tenantSchema: string },
+  ): Promise<StudentCoursePackage> {
+    return this.service.unfreezeInDb(id, body.frozenDays, body.tenantSchema);
+  }
+
+  // ===== helpers =====
+
   private deserialize(scp: StudentCoursePackage): StudentCoursePackage {
     return {
       ...scp,

@@ -104,6 +104,96 @@ export class AssessmentController {
     );
   }
 
+  // ================ /db 真存盘版 ================
+
+  @Post('db')
+  @HttpCode(HttpStatus.CREATED)
+  async createInDb(
+    @Body()
+    body: {
+      id: string;
+      teacherId: string;
+      title: string;
+      subject: string;
+      assessmentType?: AssessmentType;
+      totalScore?: number;
+      scheduledAtMs?: number;
+      tenantSchema: string;
+    },
+  ): Promise<Assessment> {
+    const { tenantSchema, scheduledAtMs, ...rest } = body;
+    return this.service.createAssessmentInDb(
+      { ...rest, scheduledAt: scheduledAtMs ? new Date(scheduledAtMs) : undefined },
+      tenantSchema,
+    );
+  }
+
+  @Post('db/:id/results')
+  @HttpCode(HttpStatus.CREATED)
+  async recordResultInDb(
+    @Param('id') assessmentId: string,
+    @Body()
+    body: {
+      id: string;
+      studentId: string;
+      score: number;
+      knowledgeBreakdown?: KnowledgePointScore[];
+      teacherComment?: string;
+      recordedByUserId: string;
+      tenantSchema: string;
+    },
+  ): Promise<StudentAssessmentResult> {
+    const { tenantSchema, ...rest } = body;
+    return this.service.recordResultInDb({ ...rest, assessmentId }, tenantSchema);
+  }
+
+  @Post('db/:id/publish')
+  @HttpCode(HttpStatus.OK)
+  async publishInDb(
+    @Param('id') id: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<Assessment> {
+    return this.service.publishAssessmentInDb(id, body.tenantSchema);
+  }
+
+  @Post('db/:id/close')
+  @HttpCode(HttpStatus.OK)
+  async closeInDb(
+    @Param('id') id: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<Assessment> {
+    return this.service.closeAssessmentInDb(id, body.tenantSchema);
+  }
+
+  @Post('db/:id/results/list')
+  @HttpCode(HttpStatus.OK)
+  async listResultsByAssessmentInDb(
+    @Param('id') assessmentId: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<StudentAssessmentResult[]> {
+    return this.service.listResultsByAssessmentInDb(assessmentId, body.tenantSchema);
+  }
+
+  @Post('db/teachers/:teacherId/list')
+  @HttpCode(HttpStatus.OK)
+  async listByTeacherInDb(
+    @Param('teacherId') teacherId: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<Assessment[]> {
+    return this.service.listAssessmentsByTeacherInDb(teacherId, body.tenantSchema);
+  }
+
+  @Post('db/students/:studentId/results')
+  @HttpCode(HttpStatus.OK)
+  async listResultsByStudentInDb(
+    @Param('studentId') studentId: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<StudentAssessmentResult[]> {
+    return this.service.listResultsByStudentInDb(studentId, body.tenantSchema);
+  }
+
+  // ===== helpers =====
+
   private deserializeAssessment(a: Assessment): Assessment {
     return {
       ...a,

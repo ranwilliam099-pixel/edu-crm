@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, Logger, Optional, NotFoundException } from '@nestjs/common';
+import { CoursePackageRepository } from '../db/course-package.repository';
 
 /**
  * CourseBalanceService — V12 课时包 + 学员课时余额 BE-V12-1
@@ -51,6 +52,8 @@ export interface StudentCoursePackage {
 @Injectable()
 export class CourseBalanceService {
   private readonly logger = new Logger(CourseBalanceService.name);
+
+  constructor(@Optional() private readonly repo?: CoursePackageRepository) {}
 
   /**
    * 激活学员课时包（contract 签约后触发）
@@ -264,5 +267,138 @@ export class CourseBalanceService {
       scp.expiresAt.getTime() + frozenDays * 24 * 60 * 60 * 1000,
     );
     return { ...scp, status: 'active', expiresAt: newExpiresAt };
+  }
+
+  // ============= 真存盘版 =============
+
+  async insertPackageInDb(
+    pkg: CoursePackage,
+    operator: string,
+    tenantSchema: string,
+  ): Promise<CoursePackage> {
+    if (!this.repo) throw new BadRequestException('CoursePackageRepository not available');
+    if (!operator || operator.length !== 32) {
+      throw new BadRequestException('operator must be 32-char ULID');
+    }
+    return this.repo.insertPackage(tenantSchema, pkg, operator);
+  }
+
+  async listActivePackagesInDb(
+    tenantSchema: string,
+    courseProductId?: string,
+  ): Promise<CoursePackage[]> {
+    if (!this.repo) throw new BadRequestException('CoursePackageRepository not available');
+    return this.repo.listActivePackages(tenantSchema, courseProductId);
+  }
+
+  async activateStudentPackageInDb(
+    input: { id: string; studentId: string; coursePackageId: string; contractId?: string },
+    tenantSchema: string,
+  ): Promise<StudentCoursePackage> {
+    if (!this.repo) throw new BadRequestException('CoursePackageRepository not available');
+    const pkg = await this.repo.findPackageById(tenantSchema, input.coursePackageId);
+    if (!pkg) throw new NotFoundException(`course_package ${input.coursePackageId} not found`);
+    const memScp = this.activatePackage({
+      id: input.id,
+      studentId: input.studentId,
+      coursePackage: pkg,
+      contractId: input.contractId,
+    });
+    return this.repo.insertStudentPackage(tenantSchema, memScp);
+  }
+
+  async deductOnConsumptionInDb(
+    studentCoursePackageId: string,
+    tenantSchema: string,
+  ): Promise<{ updated: StudentCoursePackage; lowBalanceAlertNow: boolean }> {
+    if (!this.repo) throw new BadRequestException('CoursePackageRepository not available');
+    const updated = await this.repo.deductOneLesson(tenantSchema, studentCoursePackageId);
+    const lowBalanceAlertNow =
+      !updated.lowBalanceAlerted &&
+      updated.remainingLessons > 0 &&
+      updated.remainingLessons <= LOW_BALANCE_THRESHOLD;
+    if (lowBalanceAlertNow) {
+      await this.repo.markLowBalanceAlerted(tenantSchema, studentCoursePackageId);
+      return {
+        updated: { ...updated, lowBalanceAlerted: true },
+        lowBalanceAlertNow: true,
+      };
+    }
+    return { updated, lowBalanceAlertNow: false };
+  }
+
+  async refundLessonsInDb(
+    studentCoursePackageId: string,
+    count: number,
+    tenantSchema: string,
+  ): Promise<StudentCoursePackage> {
+    if (!this.repo) throw new BadRequestException('CoursePackageRepository not available');
+    if (count <= 0) throw new BadRequestException('refund count must be > 0');
+    return this.repo.refundLessons(tenantSchema, studentCoursePackageId, count);
+  }
+
+  async listActiveByStudentInDb(
+    studentId: string,
+    tenantSchema: string,
+  ): Promise<StudentCoursePackage[]> {
+    if (!this.repo) throw new BadRequestException('CoursePackageRepository not available');
+    return this.repo.listActiveByStudent(tenantSchema, studentId);
+  }
+
+  /**
+   * cron：扫到期 active 包 → expired
+   */
+  async scanExpiredInDb(
+    tenantSchema: string,
+    now: Date = new Date(),
+  ): Promise<{ expired: number; ids: string[] }> {
+    if (!this.repo) throw new BadRequestException('CoursePackageRepository not available');
+    const expired = await this.repo.findExpired(tenantSchema, now);
+    const ids: string[] = [];
+    for (const p of expired) {
+      try {
+        await this.repo.setStatus(tenantSchema, p.id, 'expired');
+        ids.push(p.id);
+      } catch (e) {
+        this.logger.warn(`[BE-V12-1 scanExpiredInDb] skip ${p.id}: ${(e as Error).message}`);
+      }
+    }
+    this.logger.log(`[BE-V12-1 scanExpiredInDb] expired ${ids.length} package(s)`);
+    return { expired: ids.length, ids };
+  }
+
+  /**
+   * cron：扫待发低余额提醒
+   */
+  async listPendingLowBalanceAlertsInDb(
+    tenantSchema: string,
+  ): Promise<StudentCoursePackage[]> {
+    if (!this.repo) throw new BadRequestException('CoursePackageRepository not available');
+    return this.repo.findPendingLowBalanceAlerts(tenantSchema, LOW_BALANCE_THRESHOLD);
+  }
+
+  async freezeInDb(
+    studentCoursePackageId: string,
+    tenantSchema: string,
+  ): Promise<StudentCoursePackage> {
+    if (!this.repo) throw new BadRequestException('CoursePackageRepository not available');
+    const existing = await this.repo.findStudentPackageById(tenantSchema, studentCoursePackageId);
+    if (!existing) throw new NotFoundException(`student_course_package ${studentCoursePackageId} not found`);
+    this.freeze(existing);
+    return this.repo.setStatus(tenantSchema, studentCoursePackageId, 'frozen');
+  }
+
+  async unfreezeInDb(
+    studentCoursePackageId: string,
+    frozenDays: number,
+    tenantSchema: string,
+  ): Promise<StudentCoursePackage> {
+    if (!this.repo) throw new BadRequestException('CoursePackageRepository not available');
+    if (frozenDays < 0) throw new BadRequestException('frozenDays must be >= 0');
+    const existing = await this.repo.findStudentPackageById(tenantSchema, studentCoursePackageId);
+    if (!existing) throw new NotFoundException(`student_course_package ${studentCoursePackageId} not found`);
+    this.unfreeze(existing, frozenDays);
+    await this.repo.extendExpiry(tenantSchema, studentCoursePackageId, frozenDays);
+    return this.repo.setStatus(tenantSchema, studentCoursePackageId, 'active');
   }
 }

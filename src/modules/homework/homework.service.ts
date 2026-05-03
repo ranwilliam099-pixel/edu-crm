@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, Logger, Optional, NotFoundException } from '@nestjs/common';
+import { HomeworkRepository } from '../db/homework.repository';
 
 /**
  * HomeworkService — V13 作业管理 BE-V13-1
@@ -48,6 +49,8 @@ export interface HomeworkSubmission {
 @Injectable()
 export class HomeworkService {
   private readonly logger = new Logger(HomeworkService.name);
+
+  constructor(@Optional() private readonly repo?: HomeworkRepository) {}
 
   /**
    * 老师布置作业（关联 schedule 或独立）
@@ -231,5 +234,92 @@ export class HomeworkService {
           (s) => s.assignmentId === a.id && s.studentId === studentId,
         ),
       }));
+  }
+
+  // ============= 真存盘版 =============
+
+  async publishInDb(
+    input: Parameters<HomeworkService['publish']>[0],
+    tenantSchema: string,
+  ): Promise<HomeworkAssignment> {
+    if (!this.repo) throw new BadRequestException('HomeworkRepository not available');
+    const memAsg = this.publish(input);
+    return this.repo.insertAssignmentWithRecipients(tenantSchema, memAsg);
+  }
+
+  async submitForStudentInDb(
+    input: {
+      id: string;
+      assignmentId: string;
+      studentId: string;
+      submittedByParentId?: string;
+      content?: string;
+      attachments?: ReadonlyArray<{ url: string; type: string; filename: string }>;
+    },
+    tenantSchema: string,
+  ): Promise<HomeworkSubmission> {
+    if (!this.repo) throw new BadRequestException('HomeworkRepository not available');
+    const assignment = await this.repo.findAssignmentById(tenantSchema, input.assignmentId);
+    if (!assignment) throw new NotFoundException(`assignment ${input.assignmentId} not found`);
+    const existing = await this.repo.findSubmissionByAssignmentStudent(
+      tenantSchema,
+      input.assignmentId,
+      input.studentId,
+    );
+    const memSub = this.submitForStudent(input, assignment, existing ? [existing] : []);
+    return this.repo.insertSubmission(tenantSchema, memSub);
+  }
+
+  async gradeInDb(
+    submissionId: string,
+    input: { grade: Grade; teacherComment?: string; gradedByUserId: string },
+    tenantSchema: string,
+  ): Promise<HomeworkSubmission> {
+    if (!this.repo) throw new BadRequestException('HomeworkRepository not available');
+    const existing = await this.repo.findSubmissionById(tenantSchema, submissionId);
+    if (!existing) throw new NotFoundException(`submission ${submissionId} not found`);
+    // 沿用纯逻辑校验
+    this.grade(existing, input);
+    return this.repo.grade(
+      tenantSchema,
+      submissionId,
+      input.grade,
+      input.teacherComment,
+      input.gradedByUserId,
+    );
+  }
+
+  async returnForRedoInDb(
+    submissionId: string,
+    teacherComment: string,
+    tenantSchema: string,
+  ): Promise<HomeworkSubmission> {
+    if (!this.repo) throw new BadRequestException('HomeworkRepository not available');
+    return this.repo.returnForRedo(tenantSchema, submissionId, teacherComment);
+  }
+
+  async listAssignmentsByTeacherInDb(
+    teacherId: string,
+    tenantSchema: string,
+    options: { limit?: number; offset?: number } = {},
+  ): Promise<HomeworkAssignment[]> {
+    if (!this.repo) throw new BadRequestException('HomeworkRepository not available');
+    return this.repo.listAssignmentsByTeacher(tenantSchema, teacherId, options);
+  }
+
+  async listAssignmentsByStudentInDb(
+    studentId: string,
+    tenantSchema: string,
+  ): Promise<HomeworkAssignment[]> {
+    if (!this.repo) throw new BadRequestException('HomeworkRepository not available');
+    return this.repo.listAssignmentsByStudent(tenantSchema, studentId);
+  }
+
+  async listPendingByTeacherInDb(
+    teacherId: string,
+    tenantSchema: string,
+  ): Promise<HomeworkSubmission[]> {
+    if (!this.repo) throw new BadRequestException('HomeworkRepository not available');
+    return this.repo.listPendingByTeacher(tenantSchema, teacherId);
   }
 }

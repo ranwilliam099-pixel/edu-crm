@@ -131,6 +131,114 @@ export class HomeworkController {
     );
   }
 
+  // ================ /db 真存盘版 ================
+
+  @Post('db/assignments')
+  @HttpCode(HttpStatus.CREATED)
+  async publishInDb(
+    @Body()
+    body: {
+      id: string;
+      teacherId: string;
+      title: string;
+      content?: string;
+      attachments?: Array<{ url: string; type: string; filename: string }>;
+      dueAtMs?: number;
+      difficulty?: Difficulty;
+      scheduleId?: string;
+      recipientStudentIds: string[];
+      tenantSchema: string;
+    },
+  ): Promise<HomeworkAssignment> {
+    const { tenantSchema, dueAtMs, ...rest } = body;
+    return this.service.publishInDb(
+      { ...rest, dueAt: dueAtMs ? new Date(dueAtMs) : undefined },
+      tenantSchema,
+    );
+  }
+
+  @Post('db/submissions')
+  @HttpCode(HttpStatus.CREATED)
+  async submitInDb(
+    @Body()
+    body: {
+      id: string;
+      assignmentId: string;
+      studentId: string;
+      submittedByParentId?: string;
+      content?: string;
+      attachments?: Array<{ url: string; type: string; filename: string }>;
+      tenantSchema: string;
+    },
+  ): Promise<HomeworkSubmission> {
+    const { tenantSchema, ...rest } = body;
+    return this.service.submitForStudentInDb(rest, tenantSchema);
+  }
+
+  @Post('db/submissions/:id/grade')
+  @HttpCode(HttpStatus.OK)
+  async gradeInDb(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      grade: Grade;
+      teacherComment?: string;
+      gradedByUserId: string;
+      tenantSchema: string;
+    },
+  ): Promise<HomeworkSubmission> {
+    return this.service.gradeInDb(
+      id,
+      {
+        grade: body.grade,
+        teacherComment: body.teacherComment,
+        gradedByUserId: body.gradedByUserId,
+      },
+      body.tenantSchema,
+    );
+  }
+
+  @Post('db/submissions/:id/return')
+  @HttpCode(HttpStatus.OK)
+  async returnForRedoInDb(
+    @Param('id') id: string,
+    @Body() body: { teacherComment: string; tenantSchema: string },
+  ): Promise<HomeworkSubmission> {
+    return this.service.returnForRedoInDb(id, body.teacherComment, body.tenantSchema);
+  }
+
+  @Post('db/teachers/:teacherId/assignments')
+  @HttpCode(HttpStatus.OK)
+  async listAssignmentsByTeacherInDb(
+    @Param('teacherId') teacherId: string,
+    @Body() body: { tenantSchema: string; limit?: number; offset?: number },
+  ): Promise<HomeworkAssignment[]> {
+    return this.service.listAssignmentsByTeacherInDb(teacherId, body.tenantSchema, {
+      limit: body.limit,
+      offset: body.offset,
+    });
+  }
+
+  @Post('db/students/:studentId/assignments')
+  @HttpCode(HttpStatus.OK)
+  async listAssignmentsByStudentInDb(
+    @Param('studentId') studentId: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<HomeworkAssignment[]> {
+    return this.service.listAssignmentsByStudentInDb(studentId, body.tenantSchema);
+  }
+
+  @Post('db/teachers/:teacherId/pending-grading')
+  @HttpCode(HttpStatus.OK)
+  async listPendingByTeacherInDb(
+    @Param('teacherId') teacherId: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<HomeworkSubmission[]> {
+    return this.service.listPendingByTeacherInDb(teacherId, body.tenantSchema);
+  }
+
+  // ===== helpers =====
+
   private deserializeAssignment(a: HomeworkAssignment): HomeworkAssignment {
     return {
       ...a,
