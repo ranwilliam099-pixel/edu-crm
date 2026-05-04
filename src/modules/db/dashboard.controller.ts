@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import {
   DashboardRepository,
@@ -14,6 +15,7 @@ import {
   TeacherLeaderboard,
   LeaderboardSortKey,
 } from './dashboard.repository';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
  * DashboardController — V19 KPI 看板 HTTP 暴露
@@ -25,6 +27,7 @@ import {
  *
  * 鉴权：x-tenant-schema header
  */
+@UseGuards(TenantScopeGuard)
 @Controller('db/dashboards')
 export class DashboardController {
   constructor(private readonly dashRepo: DashboardRepository) {}

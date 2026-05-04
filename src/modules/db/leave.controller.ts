@@ -7,8 +7,10 @@ import {
   HttpStatus,
   Param,
   Post,
+  UseGuards,
 } from '@nestjs/common';
 import { LeaveRepository, Leave, LeaveType } from './leave.repository';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
  * LeaveController — V16 请假/调课申请 HTTP 暴露
@@ -23,6 +25,7 @@ import { LeaveRepository, Leave, LeaveType } from './leave.repository';
  *
  * 业务规则：距上课 < 24h 提交时仍接受，但 response 加 warning='可能被驳回'
  */
+@UseGuards(TenantScopeGuard)
 @Controller('db')
 export class LeaveController {
   constructor(private readonly leaveRepo: LeaveRepository) {}

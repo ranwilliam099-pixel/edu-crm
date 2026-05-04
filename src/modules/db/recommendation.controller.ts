@@ -7,11 +7,13 @@ import {
   HttpStatus,
   Param,
   Post,
+  UseGuards,
 } from '@nestjs/common';
 import {
   RecommendationRepository,
   ParentRecommendation,
 } from './recommendation.repository';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
  * RecommendationController — V17 家长推荐 HTTP 暴露
@@ -24,6 +26,7 @@ import {
  *
  * 鉴权：x-tenant-schema header
  */
+@UseGuards(TenantScopeGuard)
 @Controller('db')
 export class RecommendationController {
   constructor(private readonly recRepo: RecommendationRepository) {}

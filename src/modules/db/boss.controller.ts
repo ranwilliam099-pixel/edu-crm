@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  UseGuards,
   Query,
 } from '@nestjs/common';
 import { CampusRepository, Campus } from './campus.repository';
@@ -15,6 +16,7 @@ import {
   Subscription,
   PlanTier,
 } from './subscription.repository';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
  * BossController — V19 Boss 视角校区 + 订阅管理 HTTP 暴露
@@ -28,6 +30,7 @@ import {
  *
  * 鉴权：tenantId 通过 body / query 传（不走 x-tenant-schema header — public 表）
  */
+@UseGuards(TenantScopeGuard)
 @Controller('db/boss')
 export class BossController {
   constructor(

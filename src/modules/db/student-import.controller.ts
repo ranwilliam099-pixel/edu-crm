@@ -6,12 +6,14 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  UseGuards,
 } from '@nestjs/common';
 import {
   StudentImportRepository,
   StudentImportRow,
   StudentImportResult,
 } from './student-import.repository';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
  * StudentImportController — 学员批量导入
@@ -24,6 +26,7 @@ import {
  * Body：
  *   { rows: StudentImportRow[] (≤500), operatorUserId, campusId }
  */
+@UseGuards(TenantScopeGuard)
 @Controller('db/students')
 export class StudentImportController {
   constructor(private readonly importRepo: StudentImportRepository) {}
