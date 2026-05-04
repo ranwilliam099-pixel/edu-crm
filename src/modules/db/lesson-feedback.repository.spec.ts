@@ -65,6 +65,64 @@ describe('LessonFeedbackRepository', () => {
       expect(params[0]).toBe(SAMPLE.id);
       expect(params[6]).toBe(JSON.stringify(SAMPLE.knowledgePoints)); // JSONB stringify
     });
+
+    // V18 5 fields
+    it('serializes V18 knowledge_matrix / dim_ratings / homework_deadline / homework_difficulty / next_preview', async () => {
+      const sampleWithV18: LessonFeedback = {
+        ...SAMPLE,
+        knowledgeMatrix: [{ name: '因式分解', mastery: 'mastered' }],
+        dimRatings: { focus: 4, engage: 5, think: 4, homework: 4 },
+        homeworkDeadline: new Date('2026-05-04T22:00:00Z'),
+        homeworkDifficulty: 'medium',
+        nextPreview: '下次预习平方差',
+      };
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          ...ROW,
+          knowledge_matrix: JSON.stringify(sampleWithV18.knowledgeMatrix),
+          dim_ratings: JSON.stringify(sampleWithV18.dimRatings),
+          homework_deadline: sampleWithV18.homeworkDeadline,
+          homework_difficulty: 'medium',
+          next_preview: '下次预习平方差',
+        },
+      ]);
+      const result = await repo.insert(TENANT, sampleWithV18);
+      const params = pg.tenantQuery.mock.calls[0][2];
+      expect(params[11]).toBe(JSON.stringify(sampleWithV18.knowledgeMatrix));
+      expect(params[12]).toBe(JSON.stringify(sampleWithV18.dimRatings));
+      expect(params[13]).toEqual(sampleWithV18.homeworkDeadline);
+      expect(params[14]).toBe('medium');
+      expect(params[15]).toBe('下次预习平方差');
+      expect(result.knowledgeMatrix).toEqual([{ name: '因式分解', mastery: 'mastered' }]);
+      expect(result.dimRatings).toEqual({ focus: 4, engage: 5, think: 4, homework: 4 });
+      expect(result.homeworkDifficulty).toBe('medium');
+      expect(result.nextPreview).toBe('下次预习平方差');
+    });
+  });
+
+  describe('update with V18 fields', () => {
+    it('updates V18 5 fields when provided', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          ...ROW,
+          knowledge_matrix: JSON.stringify([{ name: '函数', mastery: 'mastered' }]),
+          dim_ratings: JSON.stringify({ focus: 5 }),
+          homework_difficulty: 'hard',
+          next_preview: '复习',
+        },
+      ]);
+      await repo.update(TENANT, SAMPLE.id, {
+        knowledgeMatrix: [{ name: '函数', mastery: 'mastered' }],
+        dimRatings: { focus: 5 },
+        homeworkDifficulty: 'hard',
+        nextPreview: '复习',
+      });
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('knowledge_matrix =');
+      expect(sql).toContain('dim_ratings =');
+      expect(sql).toContain('homework_difficulty =');
+      expect(sql).toContain('next_preview =');
+    });
   });
 
   describe('findById', () => {

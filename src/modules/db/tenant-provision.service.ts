@@ -30,6 +30,9 @@ const TENANT_MIGRATIONS = [
   'V13__homework_in_tenant_schema.sql',
   'V14__assessments_in_tenant_schema.sql',
   'V15__student_learning_profile_in_tenant_schema.sql',
+  'V16__leaves_in_tenant_schema.sql',
+  'V17__parent_recommendations_in_tenant_schema.sql',
+  'V18__lesson_feedbacks_extended_fields.sql',
 ];
 
 @Injectable()

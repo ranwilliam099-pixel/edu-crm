@@ -12,6 +12,7 @@ import {
   LessonFeedback,
   AttendanceForFeedback,
   ClassroomPerformance,
+  HomeworkDifficulty,
 } from './lesson-feedback.service';
 import {
   CourseConsumptionService,
@@ -280,11 +281,23 @@ export class FeedbackController {
       homeworkAttachments?: Array<{ url: string; type: string; filename: string }>;
       teacherNote?: string;
       teacherInternalNote?: string;
+      // V18 5 fields
+      knowledgeMatrix?: Array<{ name: string; mastery: string }>;
+      dimRatings?: { focus?: number; engage?: number; think?: number; homework?: number };
+      homeworkDeadlineMs?: number;
+      homeworkDifficulty?: HomeworkDifficulty;
+      nextPreview?: string;
       tenantSchema: string;
     },
   ): Promise<LessonFeedback> {
-    const { tenantSchema, ...rest } = body;
-    return this.feedback.submitInDb(rest, tenantSchema);
+    const { tenantSchema, homeworkDeadlineMs, ...rest } = body;
+    return this.feedback.submitInDb(
+      {
+        ...rest,
+        homeworkDeadline: homeworkDeadlineMs ? new Date(homeworkDeadlineMs) : undefined,
+      },
+      tenantSchema,
+    );
   }
 
   @Post('db/lesson-feedbacks/:id/find')
@@ -321,14 +334,24 @@ export class FeedbackController {
         homework?: string;
         teacherNote?: string;
         teacherInternalNote?: string;
+        // V18 5 fields
+        knowledgeMatrix?: Array<{ name: string; mastery: string }>;
+        dimRatings?: { focus?: number; engage?: number; think?: number; homework?: number };
+        homeworkDeadlineMs?: number;
+        homeworkDifficulty?: HomeworkDifficulty;
+        nextPreview?: string;
       };
       tenantSchema: string;
       nowMs?: number;
     },
   ): Promise<LessonFeedback> {
+    const { homeworkDeadlineMs, ...patchRest } = body.patch;
     return this.feedback.updateInDb(
       id,
-      body.patch,
+      {
+        ...patchRest,
+        homeworkDeadline: homeworkDeadlineMs ? new Date(homeworkDeadlineMs) : undefined,
+      },
       body.tenantSchema,
       body.nowMs ? new Date(body.nowMs) : new Date(),
     );

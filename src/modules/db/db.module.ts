@@ -12,7 +12,20 @@ import { CoursePackageRepository } from './course-package.repository';
 import { HomeworkRepository } from './homework.repository';
 import { AssessmentRepository } from './assessment.repository';
 import { LearningProfileRepository } from './learning-profile.repository';
+import { TeacherShowcaseRepository } from './teacher-showcase.repository';
+import { LeaveRepository } from './leave.repository';
+import { RecommendationRepository } from './recommendation.repository';
+import { StudentImportRepository } from './student-import.repository';
+import { CampusRepository } from './campus.repository';
+import { SubscriptionRepository } from './subscription.repository';
+import { DashboardRepository } from './dashboard.repository';
 import { OnboardingController } from './onboarding.controller';
+import { TeacherShowcaseController } from './teacher-showcase.controller';
+import { LeaveController } from './leave.controller';
+import { RecommendationController } from './recommendation.controller';
+import { StudentImportController } from './student-import.controller';
+import { BossController } from './boss.controller';
+import { DashboardController } from './dashboard.controller';
 
 /**
  * DbModule — 全局 PG 接入 + 租户开通 + Repository 层
@@ -21,7 +34,15 @@ import { OnboardingController } from './onboarding.controller';
  */
 @Global()
 @Module({
-  controllers: [OnboardingController],
+  controllers: [
+    OnboardingController,
+    TeacherShowcaseController,
+    LeaveController,
+    RecommendationController,
+    StudentImportController,
+    BossController,
+    DashboardController,
+  ],
   providers: [
     PgPoolService,
     TenantProvisionService,
@@ -36,6 +57,13 @@ import { OnboardingController } from './onboarding.controller';
     HomeworkRepository,
     AssessmentRepository,
     LearningProfileRepository,
+    TeacherShowcaseRepository,
+    LeaveRepository,
+    RecommendationRepository,
+    StudentImportRepository,
+    CampusRepository,
+    SubscriptionRepository,
+    DashboardRepository,
   ],
   exports: [
     PgPoolService,
@@ -51,6 +79,13 @@ import { OnboardingController } from './onboarding.controller';
     HomeworkRepository,
     AssessmentRepository,
     LearningProfileRepository,
+    TeacherShowcaseRepository,
+    LeaveRepository,
+    RecommendationRepository,
+    StudentImportRepository,
+    CampusRepository,
+    SubscriptionRepository,
+    DashboardRepository,
   ],
 })
 export class DbModule {}

@@ -23,11 +23,13 @@ export class LessonFeedbackRepository {
          attendance_status, classroom_performance,
          knowledge_points, homework, homework_attachments,
          teacher_note, teacher_internal_note,
+         knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
          submitted_at, updated_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING id, schedule_id, student_id, teacher_id, attendance_status,
                  classroom_performance, knowledge_points, homework,
                  homework_attachments, teacher_note, teacher_internal_note,
+                 knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
                  parent_read_at, submitted_at, updated_at`,
       [
         feedback.id,
@@ -41,6 +43,11 @@ export class LessonFeedbackRepository {
         feedback.homeworkAttachments ? JSON.stringify(feedback.homeworkAttachments) : null,
         feedback.teacherNote || null,
         feedback.teacherInternalNote || null,
+        feedback.knowledgeMatrix ? JSON.stringify(feedback.knowledgeMatrix) : null,
+        feedback.dimRatings ? JSON.stringify(feedback.dimRatings) : null,
+        feedback.homeworkDeadline || null,
+        feedback.homeworkDifficulty || null,
+        feedback.nextPreview || null,
         feedback.submittedAt,
         feedback.updatedAt,
       ],
@@ -57,6 +64,7 @@ export class LessonFeedbackRepository {
       `SELECT id, schedule_id, student_id, teacher_id, attendance_status,
               classroom_performance, knowledge_points, homework,
               homework_attachments, teacher_note, teacher_internal_note,
+              knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
               parent_read_at, submitted_at, updated_at
        FROM lesson_feedbacks WHERE id = $1`,
       [id],
@@ -74,6 +82,7 @@ export class LessonFeedbackRepository {
       `SELECT id, schedule_id, student_id, teacher_id, attendance_status,
               classroom_performance, knowledge_points, homework,
               homework_attachments, teacher_note, teacher_internal_note,
+              knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
               parent_read_at, submitted_at, updated_at
        FROM lesson_feedbacks
        WHERE schedule_id = $1 AND student_id = $2`,
@@ -94,6 +103,7 @@ export class LessonFeedbackRepository {
       `SELECT id, schedule_id, student_id, teacher_id, attendance_status,
               classroom_performance, knowledge_points, homework,
               homework_attachments, teacher_note, teacher_internal_note,
+              knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
               parent_read_at, submitted_at, updated_at
        FROM lesson_feedbacks
        WHERE student_id = $1
@@ -119,6 +129,7 @@ export class LessonFeedbackRepository {
       `SELECT id, schedule_id, student_id, teacher_id, attendance_status,
               classroom_performance, knowledge_points, homework,
               homework_attachments, teacher_note, teacher_internal_note,
+              knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
               parent_read_at, submitted_at, updated_at
        FROM lesson_feedbacks
        WHERE student_id = $1 AND teacher_id = $2
@@ -139,6 +150,12 @@ export class LessonFeedbackRepository {
       homework?: string;
       teacherNote?: string;
       teacherInternalNote?: string;
+      // V18 5 fields
+      knowledgeMatrix?: ReadonlyArray<{ name: string; mastery: string }>;
+      dimRatings?: { focus?: number; engage?: number; think?: number; homework?: number };
+      homeworkDeadline?: Date;
+      homeworkDifficulty?: string;
+      nextPreview?: string;
     },
   ): Promise<LessonFeedback> {
     const sets: string[] = [];
@@ -168,6 +185,26 @@ export class LessonFeedbackRepository {
       sets.push(`teacher_internal_note = $${idx++}`);
       params.push(patch.teacherInternalNote);
     }
+    if (patch.knowledgeMatrix !== undefined) {
+      sets.push(`knowledge_matrix = $${idx++}`);
+      params.push(JSON.stringify(patch.knowledgeMatrix));
+    }
+    if (patch.dimRatings !== undefined) {
+      sets.push(`dim_ratings = $${idx++}`);
+      params.push(JSON.stringify(patch.dimRatings));
+    }
+    if (patch.homeworkDeadline !== undefined) {
+      sets.push(`homework_deadline = $${idx++}`);
+      params.push(patch.homeworkDeadline);
+    }
+    if (patch.homeworkDifficulty !== undefined) {
+      sets.push(`homework_difficulty = $${idx++}`);
+      params.push(patch.homeworkDifficulty);
+    }
+    if (patch.nextPreview !== undefined) {
+      sets.push(`next_preview = $${idx++}`);
+      params.push(patch.nextPreview);
+    }
     sets.push(`updated_at = NOW()`);
     params.push(id);
     const rows = await this.pg.tenantQuery<any>(
@@ -176,6 +213,7 @@ export class LessonFeedbackRepository {
        RETURNING id, schedule_id, student_id, teacher_id, attendance_status,
                  classroom_performance, knowledge_points, homework,
                  homework_attachments, teacher_note, teacher_internal_note,
+                 knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
                  parent_read_at, submitted_at, updated_at`,
       params,
     );
@@ -195,6 +233,7 @@ export class LessonFeedbackRepository {
        RETURNING id, schedule_id, student_id, teacher_id, attendance_status,
                  classroom_performance, knowledge_points, homework,
                  homework_attachments, teacher_note, teacher_internal_note,
+                 knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
                  parent_read_at, submitted_at, updated_at`,
       [id],
     );
@@ -240,6 +279,21 @@ export class LessonFeedbackRepository {
           : undefined,
       teacherNote: row.teacher_note || undefined,
       teacherInternalNote: row.teacher_internal_note || undefined,
+      knowledgeMatrix:
+        row.knowledge_matrix
+          ? typeof row.knowledge_matrix === 'string'
+            ? JSON.parse(row.knowledge_matrix)
+            : row.knowledge_matrix
+          : undefined,
+      dimRatings:
+        row.dim_ratings
+          ? typeof row.dim_ratings === 'string'
+            ? JSON.parse(row.dim_ratings)
+            : row.dim_ratings
+          : undefined,
+      homeworkDeadline: row.homework_deadline || undefined,
+      homeworkDifficulty: row.homework_difficulty || undefined,
+      nextPreview: row.next_preview || undefined,
       parentReadAt: row.parent_read_at || undefined,
       submittedAt: row.submitted_at,
       updatedAt: row.updated_at,

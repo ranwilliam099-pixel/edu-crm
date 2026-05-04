@@ -11,6 +11,8 @@ import { LessonFeedbackRepository } from '../db/lesson-feedback.repository';
 export type AttendanceForFeedback = '出勤' | '迟到' | '缺席' | '请假';
 export type ClassroomPerformance = '优秀' | '良好' | '合格' | '需努力' | '需关注';
 
+export type HomeworkDifficulty = 'basic' | 'medium' | 'hard';
+
 export interface LessonFeedback {
   id: string;
   scheduleId: string;
@@ -23,6 +25,12 @@ export interface LessonFeedback {
   homeworkAttachments?: ReadonlyArray<{ url: string; type: string; filename: string }>;
   teacherNote?: string;
   teacherInternalNote?: string;
+  // V18 5 fields（pages/b/feedback/new 前端已记录，V18 后端持久化）
+  knowledgeMatrix?: ReadonlyArray<{ name: string; mastery: string }>;
+  dimRatings?: { focus?: number; engage?: number; think?: number; homework?: number };
+  homeworkDeadline?: Date;
+  homeworkDifficulty?: HomeworkDifficulty;
+  nextPreview?: string;
   parentReadAt?: Date;
   submittedAt: Date;
   updatedAt: Date;
@@ -51,6 +59,12 @@ export class LessonFeedbackService {
     homeworkAttachments?: ReadonlyArray<{ url: string; type: string; filename: string }>;
     teacherNote?: string;
     teacherInternalNote?: string;
+    // V18 5 fields
+    knowledgeMatrix?: ReadonlyArray<{ name: string; mastery: string }>;
+    dimRatings?: { focus?: number; engage?: number; think?: number; homework?: number };
+    homeworkDeadline?: Date;
+    homeworkDifficulty?: HomeworkDifficulty;
+    nextPreview?: string;
   }): LessonFeedback {
     if (!input.id || input.id.length !== 32) {
       throw new BadRequestException('feedback id must be 32-char ULID');
@@ -92,6 +106,11 @@ export class LessonFeedbackService {
       homeworkAttachments: input.homeworkAttachments,
       teacherNote: input.teacherNote,
       teacherInternalNote: input.teacherInternalNote,
+      knowledgeMatrix: input.knowledgeMatrix,
+      dimRatings: input.dimRatings,
+      homeworkDeadline: input.homeworkDeadline,
+      homeworkDifficulty: input.homeworkDifficulty,
+      nextPreview: input.nextPreview,
       submittedAt: now,
       updatedAt: now,
     };
@@ -111,6 +130,11 @@ export class LessonFeedbackService {
       homework: string;
       teacherNote: string;
       teacherInternalNote: string;
+      knowledgeMatrix: ReadonlyArray<{ name: string; mastery: string }>;
+      dimRatings: { focus?: number; engage?: number; think?: number; homework?: number };
+      homeworkDeadline: Date;
+      homeworkDifficulty: HomeworkDifficulty;
+      nextPreview: string;
     }>,
     now: Date = new Date(),
   ): LessonFeedback {
@@ -172,6 +196,11 @@ export class LessonFeedbackService {
       homework?: string;
       teacherNote?: string;
       teacherInternalNote?: string;
+      knowledgeMatrix?: ReadonlyArray<{ name: string; mastery: string }>;
+      dimRatings?: { focus?: number; engage?: number; think?: number; homework?: number };
+      homeworkDeadline?: Date;
+      homeworkDifficulty?: HomeworkDifficulty;
+      nextPreview?: string;
     },
     tenantSchema: string,
     now: Date = new Date(),
