@@ -19,7 +19,8 @@
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "migrate:up": "node-pg-migrate up -m migrations -d postgresql://eduapp:eduapp@localhost:5432/edudb",
-    "migrate:down": "node-pg-migrate down -m migrations -d postgresql://eduapp:eduapp@localhost:5432/edudb"
+    "migrate:down": "node-pg-migrate down -m migrations -d postgresql://eduapp:eduapp@localhost:5432/edudb",
+    "backfill:tenants": "ts-node -P tsconfig.json scripts/backfill-tenants-v16-v18.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.0",
