@@ -37,6 +37,10 @@ const TENANT_MIGRATIONS = [
   'V24__teacher_ratings_and_monthly_aggregates.sql',
   'V25__sales_customers_pool_and_followup.sql',
   'V26__opportunities_contracts_campus_id.sql',
+  'V27__user_offboard_handover.sql',
+  'V28__students_owner_and_teacher.sql',
+  'V29__contracts_self_filled_fields.sql',
+  'V30__opportunities_course_product_nullable.sql',
 ];
 
 @Injectable()
@@ -65,7 +69,20 @@ export class TenantProvisionService {
     tenantId: string;
     name: string;
     sku: 'trial' | 'standard_1999' | 'school_pro' | 'growth';
-  }): Promise<{ tenantId: string; tenantSchema: string; ranMigrations: string[] }> {
+    // V29 R5 多校区开通（OOUX：Tenant 1:N Campus）
+    // 每个 campus 包含 id（前端生成 32-char ULID）+ name + 可选 address / courseLines
+    campuses?: Array<{
+      id: string;
+      name: string;
+      address?: string;
+      courseLines?: string;  // 逗号分隔，用于 wizard 用户首签课程线
+    }>;
+  }): Promise<{
+    tenantId: string;
+    tenantSchema: string;
+    ranMigrations: string[];
+    campusIds?: string[];
+  }> {
     if (!input.tenantId || input.tenantId.length !== 32) {
       throw new BadRequestException('tenantId must be 32-char ULID');
     }
@@ -142,9 +159,44 @@ export class TenantProvisionService {
       [input.tenantId, input.name, version],
     );
 
+    // V29 R5 多校区开通：INSERT 每个 campus 到 tenant schema 的 campuses 表
+    // 至少建 1 个「主校区」（默认用 input.name）；如 input.campuses 提供则全建
+    const campuses = (input.campuses && input.campuses.length > 0)
+      ? input.campuses
+      : [{ id: this.simpleUlid(), name: input.name + ' 主校区', address: '', courseLines: '' }];
+    const campusIds: string[] = [];
+    for (const c of campuses) {
+      if (!c.id || c.id.length !== 32) {
+        throw new BadRequestException(`campus id must be 32-char ULID（got ${c.id}）`);
+      }
+      if (!c.name) {
+        throw new BadRequestException('campus name required');
+      }
+      // V2 campuses 仅有 id/name/address/status/created_at/updated_at/created_by/updated_by
+      await this.pg.withClient(async (client) => {
+        await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
+        await client.query(
+          `INSERT INTO campuses (id, name, address, status, created_by, updated_by)
+           VALUES ($1, $2, $3, '启用', 'wizard', 'wizard')
+           ON CONFLICT (id) DO NOTHING`,
+          [c.id, c.name, c.address || null],
+        );
+      });
+      campusIds.push(c.id);
+    }
+    this.logger.log(`[TenantProvision] ✅ ${campusIds.length} campuses created for ${input.tenantId}`);
+
     this.logger.log(`[TenantProvision] ✅ tenant ${input.tenantId} provisioned (${ranMigrations.length} migrations)`);
 
-    return { tenantId: input.tenantId, tenantSchema, ranMigrations };
+    return { tenantId: input.tenantId, tenantSchema, ranMigrations, campusIds };
+  }
+
+  /** V29 R5 后端兜底 ULID 生成（前端不传 campus.id 时） */
+  private simpleUlid(): string {
+    const t = Date.now().toString(36).padStart(10, '0');
+    let rand = '';
+    while (rand.length < 22) rand += Math.random().toString(36).slice(2);
+    return (t + rand).slice(0, 32);
   }
 
   /**

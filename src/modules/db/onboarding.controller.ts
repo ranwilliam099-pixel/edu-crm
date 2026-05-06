@@ -51,8 +51,20 @@ export class OnboardingController {
       tenantId: string;
       name: string;
       sku: 'trial' | 'standard_1999' | 'school_pro' | 'growth';
+      // V29 R5 多校区开通（OOUX：Tenant 1:N Campus）
+      campuses?: Array<{
+        id: string;
+        name: string;
+        address?: string;
+        courseLines?: string;
+      }>;
     },
-  ): Promise<{ tenantId: string; tenantSchema: string; ranMigrations: string[] }> {
+  ): Promise<{
+    tenantId: string;
+    tenantSchema: string;
+    ranMigrations: string[];
+    campusIds?: string[];
+  }> {
     return this.provision.provisionTenant(body);
   }
 
