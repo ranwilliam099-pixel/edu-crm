@@ -193,6 +193,42 @@ describe('ContractRepository', () => {
     });
   });
 
+  describe('listByStudent (V29 R3 学员视角)', () => {
+    it('返回该学员所有合同 + DESC 排序 + soft-delete 过滤', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([ROW, ROW]);
+      const r = await repo.listByStudent(TENANT, STUDENT_ID);
+      expect(r).toHaveLength(2);
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(sql).toContain('student_id = $1');
+      expect(sql).toContain('deleted_at IS NULL');
+      expect(sql).toContain('ORDER BY signed_at DESC NULLS LAST');
+      expect(params[0]).toBe(STUDENT_ID);
+    });
+
+    it('limit/offset 默认 50/0', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listByStudent(TENANT, STUDENT_ID);
+      const params = pg.tenantQuery.mock.calls[0][2];
+      expect(params[1]).toBe(50);
+      expect(params[2]).toBe(0);
+    });
+
+    it('limit/offset 可定制', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listByStudent(TENANT, STUDENT_ID, { limit: 10, offset: 20 });
+      const params = pg.tenantQuery.mock.calls[0][2];
+      expect(params[1]).toBe(10);
+      expect(params[2]).toBe(20);
+    });
+
+    it('不过滤 status（学员视角看全部历史含 cancelled/expired）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listByStudent(TENANT, STUDENT_ID);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).not.toMatch(/status\s*IN/);
+    });
+  });
+
   describe('listByOwner', () => {
     it('with status filter', async () => {
       pg.tenantQuery.mockResolvedValueOnce([ROW]);

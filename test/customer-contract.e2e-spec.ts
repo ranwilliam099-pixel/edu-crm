@@ -70,5 +70,10 @@ describe('V25 Customer + Contract (e2e)', () => {
     it('POST /db/contracts/:id/activate', async () => {
       await request(app.getHttpServer()).post('/api/db/contracts/abc/activate').send({}).expect(401);
     });
+    it('GET /db/contracts/by-student/:studentId (V29 R3)', async () => {
+      await request(app.getHttpServer())
+        .get('/api/db/contracts/by-student/abc')
+        .expect(401);
+    });
   });
 });

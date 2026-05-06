@@ -110,6 +110,33 @@ export class ContractController {
     return c;
   }
 
+  /**
+   * V29 R3 学员视角：列该学员所有合同（OOUX student → contracts[]）
+   *
+   * 用户 2026-05-07「合同也在学员里面」
+   * 学员详情页 Section 6 真接此 endpoint。
+   *
+   * RBAC：本租户内任何 role 可看（家长视角合同也透过此读，但前端不暴露给 C 端）
+   */
+  @Get('by-student/:studentId')
+  @HttpCode(HttpStatus.OK)
+  async listByStudent(
+    @Param('studentId') studentId: string,
+    @Query('tenantSchema') tenantSchema: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ): Promise<{ items: Contract[] }> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!studentId || studentId.length !== 32) {
+      throw new BadRequestException('studentId must be 32-char ULID');
+    }
+    const items = await this.repo.listByStudent(tenantSchema, studentId, {
+      limit: limit ? Math.min(parseInt(limit, 10), 200) : 50,
+      offset: offset ? parseInt(offset, 10) : 0,
+    });
+    return { items };
+  }
+
   @Post()
   @HttpCode(HttpStatus.CREATED)
   async create(

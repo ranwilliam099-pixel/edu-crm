@@ -245,6 +245,33 @@ export class ContractRepository {
     return ContractRepository.mapRow(rows[0]);
   }
 
+  /**
+   * V29 R3 学员视角：列该学员所有合同（OOUX student → contracts[] 关系）
+   *
+   * 来源：用户 2026-05-07「合同也在学员里面」
+   * 用于：学员详情页 Section 6「续费 / 购课记录」真接（替代 mock）
+   *
+   * 排序：signed_at DESC NULLS LAST + created_at DESC
+   * 不过滤 status — 学员视角看全部历史合同（含 cancelled / expired）
+   */
+  async listByStudent(
+    tenantSchema: string,
+    studentId: string,
+    options: { limit?: number; offset?: number } = {},
+  ): Promise<Contract[]> {
+    const limit = options.limit ?? 50;
+    const offset = options.offset ?? 0;
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT * FROM contracts
+         WHERE student_id = $1 AND deleted_at IS NULL
+         ORDER BY signed_at DESC NULLS LAST, created_at DESC
+         LIMIT $2 OFFSET $3`,
+      [studentId, limit, offset],
+    );
+    return rows.map((r) => ContractRepository.mapRow(r));
+  }
+
   async findById(tenantSchema: string, id: string): Promise<Contract | null> {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
