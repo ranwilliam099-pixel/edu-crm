@@ -9,7 +9,7 @@ import {
 
 describe('AssessmentRepository', () => {
   let repo: AssessmentRepository;
-  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock };
+  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock; transaction: jest.Mock };
 
   const TENANT = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const ASMT: Assessment = {
@@ -55,7 +55,7 @@ describe('AssessmentRepository', () => {
   };
 
   beforeEach(async () => {
-    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn() };
+    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn(), transaction: jest.fn() };
     const m = await Test.createTestingModule({
       providers: [AssessmentRepository, { provide: PgPoolService, useValue: pg }],
     }).compile();
@@ -110,7 +110,7 @@ describe('AssessmentRepository', () => {
 
   it('updateRankings runs in transaction; counts updated rows', async () => {
     let updateCount = 0;
-    pg.withClient.mockImplementationOnce(async (fn: any) => {
+    pg.transaction.mockImplementationOnce(async (fn: any) => {
       const client = {
         query: jest.fn(async (sql: string) => {
           if (sql.includes('UPDATE student_assessment_results')) {
@@ -133,15 +133,13 @@ describe('AssessmentRepository', () => {
   it('updateRankings returns 0 for empty input without DB call', async () => {
     const c = await repo.updateRankings(TENANT, []);
     expect(c).toBe(0);
-    expect(pg.withClient).not.toHaveBeenCalled();
+    expect(pg.transaction).not.toHaveBeenCalled();
   });
 
-  it('updateRankings rollbacks on error', async () => {
-    let rolledBack = false;
-    pg.withClient.mockImplementationOnce(async (fn: any) => {
+  it('updateRankings propagates error so transaction helper rolls back', async () => {
+    pg.transaction.mockImplementationOnce(async (fn: any) => {
       const client = {
         query: jest.fn(async (sql: string) => {
-          if (sql === 'ROLLBACK') rolledBack = true;
           if (sql.includes('UPDATE student_assessment_results')) throw new Error('boom');
           return { rows: [], rowCount: 0 };
         }),
@@ -151,6 +149,5 @@ describe('AssessmentRepository', () => {
     await expect(
       repo.updateRankings(TENANT, [{ id: 'a', rankInClass: 1 }]),
     ).rejects.toThrow('boom');
-    expect(rolledBack).toBe(true);
   });
 });

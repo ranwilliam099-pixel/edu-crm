@@ -58,9 +58,58 @@ describe('JwtStrategy (W1 BE-W1-3 real)', () => {
       expect(() => strategy.parse(token)).toThrow(/tenantId/);
     });
 
-    it('rejects tenant-role token without campusId (A08)', () => {
+    it('rejects single-campus tenant role (sales) without campusId (A08)', () => {
       const token = jwt.sign({ sub: ULID_32, tenantId: ULID_32_B, role: 'sales', campusId: null });
-      expect(() => strategy.parse(token)).toThrow(/campusId.*A08/);
+      expect(() => strategy.parse(token)).toThrow(/single-campus.*sales.*campusId/);
+    });
+
+    it('rejects boss (校长 / single-campus) without campusId — V10 单校强校验', () => {
+      const token = jwt.sign({ sub: ULID_32, tenantId: ULID_32_B, role: 'boss', campusId: null });
+      expect(() => strategy.parse(token)).toThrow(/single-campus.*boss.*campusId/);
+    });
+
+    it('accepts admin (老板 / cross-campus) with campusId=null — V10 跨校', () => {
+      const token = jwt.sign({ sub: ULID_32, tenantId: ULID_32_B, role: 'admin', campusId: null });
+      const result = strategy.parse(token);
+      expect(result.role).toBe('admin');
+      expect(result.campusId).toBeNull();
+    });
+
+    it('accepts sales_director (大区经理 / cross-campus) with campusId=null', () => {
+      const token = jwt.sign({
+        sub: ULID_32,
+        tenantId: ULID_32_B,
+        role: 'sales_director',
+        campusId: null,
+      });
+      expect(strategy.parse(token).campusId).toBeNull();
+    });
+
+    it('accepts hr (cross-campus) with campusId=null', () => {
+      const token = jwt.sign({ sub: ULID_32, tenantId: ULID_32_B, role: 'hr', campusId: null });
+      expect(strategy.parse(token).campusId).toBeNull();
+    });
+
+    it('accepts cross-campus admin with explicit 32-char campusId (主校区视角)', () => {
+      const token = jwt.sign({
+        sub: ULID_32,
+        tenantId: ULID_32_B,
+        role: 'admin',
+        campusId: ULID_32_C,
+      });
+      const result = strategy.parse(token);
+      expect(result.role).toBe('admin');
+      expect(result.campusId).toBe(ULID_32_C);
+    });
+
+    it('rejects cross-campus admin with malformed campusId (non-32 length)', () => {
+      const token = jwt.sign({
+        sub: ULID_32,
+        tenantId: ULID_32_B,
+        role: 'admin',
+        campusId: 'too-short',
+      });
+      expect(() => strategy.parse(token)).toThrow(/cross-campus.*null.*32/);
     });
 
     it('accepts platform_admin with tenantId=null (A11)', () => {

@@ -1,6 +1,7 @@
 import { Body, Controller, Post, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ParentJwtStrategy } from './parent-jwt.strategy';
+import { isCrossCampusRole, TenantRole } from './jwt-payload.interface';
 
 /**
  * AuthController — 联调收尾 Q-FE-2 + 待补 B 端 /auth/login
@@ -40,7 +41,7 @@ export class AuthController {
       password?: string; // mock 不校验
       tenantId: string;
       role: string;
-      campusId: string;
+      campusId?: string | null; // 跨校 role 可空
       userId: string;
     },
   ) {
@@ -67,11 +68,30 @@ export class AuthController {
       throw new BadRequestException(`role must be one of ${validRoles.join('/')}`);
     }
 
+    // V10 拍板：跨校组（admin/sales_director/hr）campusId 可空；
+    // 单校组（boss/sales/sales_manager/marketing/finance）必须 32 字符 ULID
+    let campusId: string | null;
+    if (isCrossCampusRole(body.role)) {
+      if (body.campusId && body.campusId.length !== 32) {
+        throw new BadRequestException(
+          'cross-campus role campusId must be null/omitted or 32-char ULID',
+        );
+      }
+      campusId = body.campusId || null;
+    } else {
+      if (!body.campusId || body.campusId.length !== 32) {
+        throw new BadRequestException(
+          `single-campus role (${body.role}) must have 32-char campusId`,
+        );
+      }
+      campusId = body.campusId;
+    }
+
     const payload = {
       sub: body.userId,
       tenantId: body.tenantId,
-      role: body.role,
-      campusId: body.campusId,
+      role: body.role as TenantRole,
+      campusId,
     };
     const token = this.jwt.sign(payload);
     return {

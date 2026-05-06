@@ -17,22 +17,21 @@ describe('DashboardRepository', () => {
   });
 
   describe('getAdminKpi', () => {
-    it('aggregates new signups + revenue + active students', async () => {
+    it('aggregates new signups + revenue + active students + low balance', async () => {
       pg.tenantQuery
-        .mockResolvedValueOnce([{ new_signups: '12', revenue_cents: '88000' }])
+        .mockResolvedValueOnce([{ new_signups: '12', revenue_yuan: '88000' }])
         .mockResolvedValueOnce([{ active: '32' }])
-        .mockResolvedValueOnce([{ count: '120' }]);
+        .mockResolvedValueOnce([{ count: '120' }])
+        .mockResolvedValueOnce([{ count: '7' }]); // low balance count
       const k = await repo.getAdminKpi(TENANT);
       expect(k.thisMonth.newSignups).toBe(12);
       expect(k.thisMonth.revenueYuan).toBe(88000);
       expect(k.thisMonth.activeStudents).toBe(32);
       expect(k.studentsTotal).toBe(120);
-      // conversionRate = active / total = 32/120 ≈ 27%
       expect(k.thisMonth.conversionRate).toBeGreaterThan(20);
       expect(k.thisMonth.conversionRate).toBeLessThan(35);
-      // mock todoCount/lowBalanceCount
-      expect(k.todoCount).toBe(0);
-      expect(k.lowBalanceCount).toBe(0);
+      expect(k.lowBalanceCount).toBe(7);
+      expect(k.todoCount).toBe(7);
     });
 
     it('returns 0s when tables missing (graceful)', async () => {
@@ -81,12 +80,39 @@ describe('DashboardRepository', () => {
       expect(f.lossReasons[0].reason).toBe('价格高');
     });
 
-    it('falls back to mock when opportunities table missing', async () => {
+    it('returns zero stages + empty loss reasons when opportunities table missing', async () => {
       pg.tenantQuery.mockRejectedValue(new Error('no table'));
       const f = await repo.getSalesFunnel(TENANT);
       expect(f.stages).toHaveLength(5);
       expect(f.stages.every((s) => s.count === 0)).toBe(true);
-      expect(f.lossReasons.length).toBeGreaterThan(0); // mock 硬编码 3 条
+      expect(f.lossReasons).toEqual([]);
+    });
+
+    it('V26 campusId 过滤 → SQL where campus_id = $1 + params 带 campusId（funnel + lossReasons 都过滤）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ stage: '已报名', count: '5' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ reason: '价格', count: '2' }]);
+      const CAMPUS = 'campus0000000000000000000000A001';
+      await repo.getSalesFunnel(TENANT, { campusId: CAMPUS });
+      // 第一次 query: stage 聚合
+      const stageCall = pg.tenantQuery.mock.calls[0];
+      expect(stageCall[1]).toContain('WHERE campus_id = $1');
+      expect(stageCall[2]).toEqual([CAMPUS]);
+      // 第二次 query: loss reasons
+      const lossCall = pg.tenantQuery.mock.calls[1];
+      expect(lossCall[1]).toContain('AND campus_id = $1');
+      expect(lossCall[2]).toEqual([CAMPUS]);
+    });
+
+    it('V26 campusId 不传 → SQL 无 WHERE 校区子句 + params 空（admin 全机构视角）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ stage: '已报名', count: '5' }]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.getSalesFunnel(TENANT);
+      const stageCall = pg.tenantQuery.mock.calls[0];
+      expect(stageCall[1]).not.toContain('WHERE campus_id');
+      expect(stageCall[2]).toEqual([]);
+      const lossCall = pg.tenantQuery.mock.calls[1];
+      expect(lossCall[1]).not.toContain('AND campus_id');
+      expect(lossCall[2]).toEqual([]);
     });
   });
 

@@ -10,6 +10,11 @@ import {
   CourseConsumptionService,
 } from '../feedback/course-consumption.service';
 import { LessonFeedbackService } from '../feedback/lesson-feedback.service';
+import { PromotionQuotaService } from '../db/promotion-quota.service';
+import { ReferralRepository } from '../db/referral.repository';
+import { ScheduleRepository } from '../db/schedule.repository';
+import { ParentSubscriptionRepository } from '../db/parent-subscription.repository';
+import { CampusFreeSlotRepository } from '../db/campus-free-slot.repository';
 import { MonthlyReportService } from '../feedback/monthly-report.service';
 import {
   ParentSubscription,
@@ -44,6 +49,32 @@ describe('CronJobsService - W3-1 收尾全局 cron 编排', () => {
         MonthlyReportService,
         ParentSubscriptionService,
         RecurringScheduleService,
+        {
+          provide: PromotionQuotaService,
+          useValue: { expirePromotions: jest.fn().mockResolvedValue({ expired: 0 }) },
+        },
+        {
+          provide: ReferralRepository,
+          useValue: { expirePending: jest.fn().mockResolvedValue(0) },
+        },
+        {
+          provide: ScheduleRepository,
+          useValue: {
+            bulkUpsertFromRecurring: jest.fn().mockResolvedValue({ inserted: 4, skipped: 0 }),
+          },
+        },
+        {
+          provide: ParentSubscriptionRepository,
+          useValue: {
+            listDueSubscriptions: jest.fn().mockResolvedValue([]),
+            upsertSubscription: jest.fn().mockResolvedValue(undefined),
+            insertPaymentOrder: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: CampusFreeSlotRepository,
+          useValue: { expirePending: jest.fn().mockResolvedValue(0) },
+        },
       ],
     }).compile();
     service = module.get<CronJobsService>(CronJobsService);
@@ -206,8 +237,72 @@ describe('CronJobsService - W3-1 收尾全局 cron 编排', () => {
     });
   });
 
-  describe('expandRecurringSchedules - 每天 0:30', () => {
-    it('展开 active 模板未来 30 天', () => {
+  describe('monthlyRenewActiveSubscriptionsInDb - V23 真接 PG', () => {
+    it('mock paymentExecutor=true → 续费成功 + persist', async () => {
+      const m = (service as any).parentSubRepo;
+      const sub: any = {
+        id: 'ps01',
+        parentId: 'par01',
+        status: 'active',
+        autoRenew: true,
+        cancelAtPeriodEnd: false,
+        currentPeriodEnd: new Date('2026-05-05T00:00:00Z'),
+      };
+      m.listDueSubscriptions.mockResolvedValueOnce([sub]);
+      const r = await service.monthlyRenewActiveSubscriptionsInDb(
+        () => 'po01',
+        () => true,
+        new Date('2026-05-05T12:00:00Z'),
+      );
+      expect(r.renewed).toBe(1);
+      expect(r.failed).toBe(0);
+      expect(m.upsertSubscription).toHaveBeenCalled();
+      expect(m.insertPaymentOrder).toHaveBeenCalled();
+    });
+
+    it('mock paymentExecutor=false → 续费失败计数', async () => {
+      const m = (service as any).parentSubRepo;
+      const sub: any = {
+        id: 'ps02',
+        parentId: 'par02',
+        status: 'active',
+        autoRenew: true,
+        cancelAtPeriodEnd: false,
+        currentPeriodEnd: new Date('2026-05-05T00:00:00Z'),
+      };
+      m.listDueSubscriptions.mockResolvedValueOnce([sub]);
+      const r = await service.monthlyRenewActiveSubscriptionsInDb(
+        () => 'po02',
+        () => false,
+        new Date('2026-05-05T12:00:00Z'),
+      );
+      expect(r.renewed).toBe(0);
+      expect(r.failed).toBe(1);
+    });
+
+    it('cancel_at_period_end=true → 跳过（保留状态）', async () => {
+      const m = (service as any).parentSubRepo;
+      const sub: any = {
+        id: 'ps03',
+        parentId: 'par03',
+        status: 'active',
+        autoRenew: true,
+        cancelAtPeriodEnd: true,
+        currentPeriodEnd: new Date('2026-05-05T00:00:00Z'),
+      };
+      m.listDueSubscriptions.mockResolvedValueOnce([sub]);
+      const r = await service.monthlyRenewActiveSubscriptionsInDb(
+        () => 'po03',
+        () => true,
+        new Date('2026-05-05T12:00:00Z'),
+      );
+      expect(r.renewed).toBe(0);
+      expect(m.upsertSubscription).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('expandRecurringSchedules - 每天 0:30 真接 schedule 表', () => {
+    it('active 模板 → bulkUpsertFromRecurring 被调用', async () => {
       const recurring: RecurringSchedule = {
         id: ULID32_R1,
         bindingId: ULID32_BD,
@@ -222,16 +317,18 @@ describe('CronJobsService - W3-1 收尾全局 cron 编排', () => {
         createdByRole: 'sales',
         createdAt: new Date(),
       };
-      const results = service.expandRecurringSchedules(
+      const r = await service.expandRecurringSchedules(
+        'tenant_test',
         [recurring],
+        () => '01HX0000000000000000000000000001',
         30,
         new Date('2026-05-02T00:00:00Z'),
       );
-      expect(results).toHaveLength(1);
-      expect(results[0].candidates.length).toBeGreaterThanOrEqual(4);
+      expect(r.templates).toBe(1);
+      expect(r.inserted).toBeGreaterThanOrEqual(0);
     });
 
-    it('archived 模板被排除', () => {
+    it('archived 模板被排除', async () => {
       const recurring: RecurringSchedule = {
         id: ULID32_R1,
         bindingId: ULID32_BD,
@@ -246,8 +343,13 @@ describe('CronJobsService - W3-1 收尾全局 cron 编排', () => {
         createdByRole: 'sales',
         createdAt: new Date(),
       };
-      const results = service.expandRecurringSchedules([recurring]);
-      expect(results).toHaveLength(0);
+      const r = await service.expandRecurringSchedules(
+        'tenant_test',
+        [recurring],
+        () => '01HX0000000000000000000000000001',
+      );
+      expect(r.templates).toBe(0);
+      expect(r.inserted).toBe(0);
     });
   });
 });

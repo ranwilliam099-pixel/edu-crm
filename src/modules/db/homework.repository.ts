@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 import {
   HomeworkAssignment,
   HomeworkSubmission,
@@ -26,44 +26,34 @@ export class HomeworkRepository {
     tenantSchema: string,
     assignment: HomeworkAssignment,
   ): Promise<HomeworkAssignment> {
-    return this.pg.withClient(async (client) => {
-      try {
-        await client.query('BEGIN');
-        await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
+    return this.pg.transaction(async (client) => {
+      await client.query(
+        `INSERT INTO homework_assignments (
+           id, schedule_id, teacher_id, title, content,
+           attachments, due_at, difficulty, status, created_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [
+          assignment.id,
+          assignment.scheduleId || null,
+          assignment.teacherId,
+          assignment.title,
+          assignment.content || null,
+          assignment.attachments ? JSON.stringify(assignment.attachments) : null,
+          assignment.dueAt || null,
+          assignment.difficulty || null,
+          assignment.status,
+          assignment.createdAt,
+        ],
+      );
 
+      for (const sid of assignment.recipientStudentIds) {
         await client.query(
-          `INSERT INTO homework_assignments (
-             id, schedule_id, teacher_id, title, content,
-             attachments, due_at, difficulty, status, created_at
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-          [
-            assignment.id,
-            assignment.scheduleId || null,
-            assignment.teacherId,
-            assignment.title,
-            assignment.content || null,
-            assignment.attachments ? JSON.stringify(assignment.attachments) : null,
-            assignment.dueAt || null,
-            assignment.difficulty || null,
-            assignment.status,
-            assignment.createdAt,
-          ],
+          `INSERT INTO assignment_recipients (assignment_id, student_id) VALUES ($1, $2)`,
+          [assignment.id, sid],
         );
-
-        for (const sid of assignment.recipientStudentIds) {
-          await client.query(
-            `INSERT INTO assignment_recipients (assignment_id, student_id) VALUES ($1, $2)`,
-            [assignment.id, sid],
-          );
-        }
-
-        await client.query('COMMIT');
-        return assignment;
-      } catch (e) {
-        await client.query('ROLLBACK');
-        throw e;
       }
-    });
+      return assignment;
+    }, { tenantSchema });
   }
 
   async findAssignmentById(
@@ -309,7 +299,7 @@ export class HomeworkRepository {
 
   // ===== helpers =====
 
-  private mapAssignmentRow(row: any): HomeworkAssignment {
+  private mapAssignmentRow(row: PgRow): HomeworkAssignment {
     return {
       id: row.id,
       scheduleId: row.schedule_id || undefined,
@@ -330,7 +320,7 @@ export class HomeworkRepository {
     };
   }
 
-  private mapSubmissionRow(row: any): HomeworkSubmission {
+  private mapSubmissionRow(row: PgRow): HomeworkSubmission {
     return {
       id: row.id,
       assignmentId: row.assignment_id,

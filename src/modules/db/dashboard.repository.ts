@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PgPoolService } from './pg-pool.service';
 
 /**
@@ -19,8 +19,8 @@ export interface AdminKpi {
     activeStudents: number;   // 在管学员
     conversionRate: number;   // parent_subscriptions(active|trial) / parents 总数
   };
-  todoCount: number;          // TODO(EXT-04): 待办聚合（合同到期/低余额/未批改作业）
-  lowBalanceCount: number;    // TODO(EXT-04): 低课时余额学员数
+  todoCount: number;          // 待办聚合（当前=低余额；后续合同到期 + 未批改作业可加）
+  lowBalanceCount: number;    // 低课时余额学员数（remaining_lessons ≤ 5）
   studentsTotal: number;
 }
 
@@ -58,6 +58,7 @@ export type LeaderboardSortKey = 'payroll' | 'lessons' | 'rating' | 'feedbackRat
 
 @Injectable()
 export class DashboardRepository {
+  private readonly logger = new Logger(DashboardRepository.name);
   constructor(private readonly pg: PgPoolService) {}
 
   // ===================== Admin KPI =====================
@@ -67,33 +68,32 @@ export class DashboardRepository {
     let activeStudents = 0;
     let studentsTotal = 0;
     let conversionRate = 0;
+    let lowBalanceCount = 0;
 
-    // course_packages 本月激活 → 新签 + 收入
+    // 本月新签 + 收入：student_course_packages 本月激活 join course_packages 取 total_price_yuan
     try {
       const rows = await this.pg.tenantQuery<{
         new_signups: string;
-        revenue_cents: string;
+        revenue_yuan: string;
       }>(
         tenantSchema,
         `SELECT
            COUNT(*) FILTER (
-             WHERE activated_at >= date_trunc('month', NOW())
-           ) as new_signups,
-           COALESCE(SUM(paid_amount) FILTER (
-             WHERE activated_at >= date_trunc('month', NOW())
-           ), 0) as revenue_cents
-         FROM course_packages`,
+             WHERE scp.activated_at >= date_trunc('month', NOW())
+           ) AS new_signups,
+           COALESCE(SUM(cp.total_price_yuan) FILTER (
+             WHERE scp.activated_at >= date_trunc('month', NOW())
+           ), 0) AS revenue_yuan
+         FROM student_course_packages scp
+         JOIN course_packages cp ON cp.id = scp.course_package_id`,
       );
       newSignups = parseInt(rows[0]?.new_signups || '0', 10);
-      // 表的 paid_amount 单位假设是分；如果是元则不除 100。
-      // 此处统一按"元"返回（schema 内若为分则在 SQL 中 /100）
-      // TODO(EXT-04): 与 V12 字段单位严格对齐（当前按 元 直接返回）
-      revenueYuan = Number(rows[0]?.revenue_cents || 0);
+      revenueYuan = Math.round(Number(rows[0]?.revenue_yuan || 0));
     } catch (e) {
-      // 表不存在 → 保留 0
+      this.logger.debug(`[KPI-revenue] ${tenantSchema}: ${(e as Error).message}`);
     }
 
-    // student_course_packages 在管学员
+    // 在管学员（active student_course_packages 去重）
     try {
       const rows = await this.pg.tenantQuery<{ active: string }>(
         tenantSchema,
@@ -103,10 +103,10 @@ export class DashboardRepository {
       );
       activeStudents = parseInt(rows[0]?.active || '0', 10);
     } catch (e) {
-      // 表不存在 → 保留 0
+      this.logger.debug(`[KPI-activeStudents] ${tenantSchema}: ${(e as Error).message}`);
     }
 
-    // students 总数
+    // 学员总数
     try {
       const rows = await this.pg.tenantQuery<{ count: string }>(
         tenantSchema,
@@ -114,11 +114,24 @@ export class DashboardRepository {
       );
       studentsTotal = parseInt(rows[0]?.count || '0', 10);
     } catch (e) {
-      // 保留 0
+      this.logger.debug(`[KPI-studentsTotal] ${tenantSchema}: ${(e as Error).message}`);
     }
 
-    // conversionRate = parent_subscriptions(active|trial) / parents 总数（public）
-    // TODO(EXT-04): 跨 schema 聚合。当前用近似：active subscriptions / 学员总数
+    // 低余额学员：剩余课时 ≤ 5（V12 student_course_packages.remaining_lessons）
+    try {
+      const rows = await this.pg.tenantQuery<{ count: string }>(
+        tenantSchema,
+        `SELECT COUNT(DISTINCT student_id) as count
+         FROM student_course_packages
+         WHERE status = 'active' AND remaining_lessons <= 5`,
+      );
+      lowBalanceCount = parseInt(rows[0]?.count || '0', 10);
+    } catch (e) {
+      this.logger.debug(`[KPI-lowBalance] ${tenantSchema}: ${(e as Error).message}`);
+    }
+
+    // 转化率：active 学员 / 总学员（近似）。
+    // 严格意义需 join public.parent_subscriptions 跨 schema 聚合 — 后续 V22 加专表
     if (studentsTotal > 0 && activeStudents > 0) {
       conversionRate = Math.round((activeStudents * 100) / studentsTotal);
     }
@@ -130,18 +143,38 @@ export class DashboardRepository {
         activeStudents,
         conversionRate,
       },
-      // TODO(EXT-04): todoCount / lowBalanceCount 需要聚合多表（合同到期/低余额）
-      // 当前 mock 占位，待真实业务规则确认后实现
-      todoCount: 0,
-      lowBalanceCount: 0,
+      // todoCount = 待批改作业 + 低余额学员（简化：仅低余额，待批改需 V13 join）
+      todoCount: lowBalanceCount,
+      lowBalanceCount,
       studentsTotal,
     };
   }
 
   // ===================== Sales Funnel =====================
-  async getSalesFunnel(tenantSchema: string): Promise<SalesFunnel> {
-    // V2 opportunities 表已有 stage 字段（8 阶段）：初步接触/需求诊断/已预约试听/已试听待转化/已出方案/谈单中/已报名/已失单
-    // 用户要求 5 阶段聚合
+  /**
+   * 销售漏斗聚合 — V2 opportunities 表 8 阶段折叠为 5 阶段展示
+   *
+   * 数据来源（必须真接 V2）：
+   *   tenant_xxx.opportunities (PRIMARY KEY id, stage, lost_reason, ...)
+   *   stage 8 枚举值（V2 业务定义）：
+   *     初步接触 / 需求诊断 / 已预约试听 / 已试听待转化 /
+   *     已出方案 / 谈单中 / 已报名 / 已失单
+   *
+   * UI 5 阶段映射：
+   *   consult   = 初步接触 + 需求诊断
+   *   contacted = 已预约试听
+   *   trial     = 已试听待转化
+   *   quoted    = 已出方案 + 谈单中
+   *   paid      = 已报名
+   *
+   * 错误兜底：
+   *   - 表存在但无数据 → 返回 5 阶段全 0
+   *   - 表不存在（旧租户 schema 缺迁移）→ 返回 5 阶段全 0 + lossReasons 空数组
+   */
+  async getSalesFunnel(
+    tenantSchema: string,
+    options: { campusId?: string } = {},
+  ): Promise<SalesFunnel> {
     const STAGE_MAP: Array<{ key: string; label: string; pgStages: string[] }> = [
       { key: 'consult',   label: '咨询',   pgStages: ['初步接触', '需求诊断'] },
       { key: 'contacted', label: '已联系', pgStages: ['已预约试听'] },
@@ -153,6 +186,10 @@ export class DashboardRepository {
     let stages: SalesFunnelStage[] = [];
     let overallConversion = 0;
 
+    // V26 老板视角校区切换：campusId 提供时按校区过滤；undefined = 全机构
+    const where = options.campusId ? `WHERE campus_id = $1` : '';
+    const params: any[] = options.campusId ? [options.campusId] : [];
+
     try {
       const rows = await this.pg.tenantQuery<{
         stage: string;
@@ -161,7 +198,9 @@ export class DashboardRepository {
         tenantSchema,
         `SELECT stage, COUNT(*) as count
          FROM opportunities
+         ${where}
          GROUP BY stage`,
+        params,
       );
       const stageCounts = new Map<string, number>();
       for (const r of rows) {
@@ -188,8 +227,8 @@ export class DashboardRepository {
       });
       overallConversion = top === 0 ? 0 : Math.round((last * 100) / top);
     } catch (e) {
-      // opportunities 表不存在 → mock 数据
-      // TODO(EXT-04): 移除 mock，要求 opportunities 表存在
+      // opportunities 表不存在 → 返回零值（新租户尚未启用销售漏斗）
+      this.logger.debug(`[FUNNEL] ${tenantSchema}: ${(e as Error).message}`);
       stages = [
         { key: 'consult',   label: '咨询',   count: 0, conversionPct: 0 },
         { key: 'contacted', label: '已联系', count: 0, conversionPct: 0 },
@@ -199,9 +238,12 @@ export class DashboardRepository {
       ];
     }
 
-    // 流失原因 Top3（基于 opportunities.lost_reason）
+    // 流失原因 Top3（基于 opportunities.lost_reason，V26 同样按 campusId 过滤）
     let lossReasons: Array<{ reason: string; pct: number }> = [];
     try {
+      const lossWhere = options.campusId
+        ? `WHERE stage = '已失单' AND lost_reason IS NOT NULL AND campus_id = $1`
+        : `WHERE stage = '已失单' AND lost_reason IS NOT NULL`;
       const rows = await this.pg.tenantQuery<{
         reason: string;
         count: string;
@@ -209,10 +251,11 @@ export class DashboardRepository {
         tenantSchema,
         `SELECT lost_reason as reason, COUNT(*) as count
          FROM opportunities
-         WHERE stage = '已失单' AND lost_reason IS NOT NULL
+         ${lossWhere}
          GROUP BY lost_reason
          ORDER BY count DESC
          LIMIT 3`,
+        params,
       );
       const total = rows.reduce((s, r) => s + parseInt(r.count, 10), 0);
       lossReasons = rows.map((r) => ({
@@ -220,13 +263,9 @@ export class DashboardRepository {
         pct: total === 0 ? 0 : Math.round((parseInt(r.count, 10) * 100) / total),
       }));
     } catch (e) {
-      // opportunities 表不存在 → mock 硬编码
-      // TODO(EXT-04): 真接业务后移除 mock
-      lossReasons = [
-        { reason: '价格高', pct: 40 },
-        { reason: '时间不合适', pct: 30 },
-        { reason: '竞品成交', pct: 20 },
-      ];
+      // opportunities 表不存在 → 不展示流失原因
+      this.logger.debug(`[FUNNEL-LOSS] ${tenantSchema}: ${(e as Error).message}`);
+      lossReasons = [];
     }
 
     return { stages, overallConversion, lossReasons };
@@ -306,6 +345,49 @@ export class DashboardRepository {
         fbRateMap.set(fr.teacher_id, cc === 0 ? 0 : Math.round((fb * 100) / cc));
       }
 
+      // V24: rating 真接 teacher_ratings
+      const ratingMap = new Map<string, number>();
+      try {
+        const ratingRows = await this.pg.tenantQuery<{ teacher_id: string; avg_stars: string | null }>(
+          tenantSchema,
+          `SELECT teacher_id, avg_stars FROM teacher_ratings`,
+        );
+        for (const r of ratingRows) {
+          if (r.avg_stars !== null) ratingMap.set(r.teacher_id, Number(r.avg_stars));
+        }
+      } catch (e) {
+        this.logger.debug(`[V24-rating] ${tenantSchema}: ${(e as Error).message}`);
+      }
+
+      // V24: trend 真接 monthly_aggregates 上月对比
+      const trendMap = new Map<string, 'up' | 'down' | 'flat'>();
+      try {
+        const lastMonthStart = new Date(monthStart);
+        lastMonthStart.setUTCMonth(lastMonthStart.getUTCMonth() - 1);
+        const trendRows = await this.pg.tenantQuery<{
+          entity_id: string;
+          payroll_yuan: string | null;
+        }>(
+          tenantSchema,
+          `SELECT entity_id, payroll_yuan
+             FROM monthly_aggregates
+            WHERE entity_type = 'teacher' AND month = $1`,
+          [lastMonthStart],
+        );
+        for (const tr of trendRows) {
+          const prevPayroll = Number(tr.payroll_yuan || 0);
+          const curPayroll = Number(
+            rows.find((r) => r.id === tr.entity_id)?.payroll || 0,
+          );
+          if (prevPayroll === 0 && curPayroll === 0) trendMap.set(tr.entity_id, 'flat');
+          else if (curPayroll > prevPayroll * 1.05) trendMap.set(tr.entity_id, 'up');
+          else if (curPayroll < prevPayroll * 0.95) trendMap.set(tr.entity_id, 'down');
+          else trendMap.set(tr.entity_id, 'flat');
+        }
+      } catch (e) {
+        this.logger.debug(`[V24-trend] ${tenantSchema}: ${(e as Error).message}`);
+      }
+
       teachers = rows.map((r, idx) => ({
         rank: idx + 1,
         id: r.id,
@@ -314,11 +396,9 @@ export class DashboardRepository {
         avatar: r.avatar || undefined,
         payroll: Number(r.payroll || 0),
         lessons: Number(r.lessons || 0),
-        // TODO(EXT-04): rating 暂返 null（需 teacher_ratings 表 V20 待建）
-        rating: null,
+        rating: ratingMap.get(r.id) ?? null,
         feedbackRate: fbRateMap.get(r.id) ?? 0,
-        // TODO(EXT-04): trend 需要环比上月数据，当前默认 flat
-        trend: 'flat',
+        trend: trendMap.get(r.id) ?? 'flat',
       }));
 
       // 排序：按 sortBy 重新排
@@ -332,7 +412,7 @@ export class DashboardRepository {
       teachers = teachers.map((t, idx) => ({ ...t, rank: idx + 1 }));
     } catch (e) {
       // 表不存在或字段缺 → 空 leaderboard
-      // TODO(EXT-04): 真接业务后移除兜底
+      this.logger.debug(`[LEADERBOARD] ${tenantSchema}: ${(e as Error).message}`);
       teachers = [];
     }
 

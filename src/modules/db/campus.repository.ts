@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 
 /**
  * CampusRepository — V19 SaaS 平台层校区列表（public schema）
@@ -134,7 +134,7 @@ export class CampusRepository {
   }
 
   // ===== helpers =====
-  private mapRow(row: any): Campus {
+  private mapRow(row: PgRow): Campus {
     return {
       id: row.id,
       tenantId: row.tenant_id,

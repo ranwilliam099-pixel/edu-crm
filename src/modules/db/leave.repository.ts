@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 
 /**
  * LeaveRepository — V16 请假/调课申请持久化层（tenant schema）
@@ -147,7 +147,7 @@ export class LeaveRepository {
   }
 
   // ===== helpers =====
-  private mapRow(row: any): Leave {
+  private mapRow(row: PgRow): Leave {
     return {
       id: row.id,
       studentId: row.student_id,

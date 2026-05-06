@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 import { StudentLearningProfile } from '../learning-profile/student-learning-profile.service';
 
 /**
@@ -102,7 +102,7 @@ export class LearningProfileRepository {
   }
 
   // ===== helpers =====
-  private mapRow(row: any): StudentLearningProfile {
+  private mapRow(row: PgRow): StudentLearningProfile {
     return {
       studentId: row.student_id,
       totalLessons: row.total_lessons,

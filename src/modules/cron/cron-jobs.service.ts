@@ -2,8 +2,17 @@ import { Injectable, Logger } from '@nestjs/common';
 import { CourseConsumptionService, CourseConsumption } from '../feedback/course-consumption.service';
 import { LessonFeedback, LessonFeedbackService } from '../feedback/lesson-feedback.service';
 import { MonthlyReportService, MonthlyReport } from '../feedback/monthly-report.service';
-import { ParentSubscriptionService, ParentSubscription } from '../parent/parent-subscription.service';
+import {
+  ParentSubscriptionService,
+  ParentSubscription,
+  ParentPaymentOrder,
+} from '../parent/parent-subscription.service';
 import { RecurringScheduleService, RecurringSchedule } from '../schedule/recurring-schedule.service';
+import { PromotionQuotaService } from '../db/promotion-quota.service';
+import { ReferralRepository } from '../db/referral.repository';
+import { ScheduleRepository } from '../db/schedule.repository';
+import { ParentSubscriptionRepository } from '../db/parent-subscription.repository';
+import { CampusFreeSlotRepository } from '../db/campus-free-slot.repository';
 
 /**
  * CronJobsService — 全局定时任务编排（W3-1 收尾）
@@ -34,7 +43,100 @@ export class CronJobsService {
     private readonly report: MonthlyReportService,
     private readonly subscription: ParentSubscriptionService,
     private readonly recurring: RecurringScheduleService,
+    private readonly promoQuota: PromotionQuotaService,
+    private readonly referrals: ReferralRepository,
+    private readonly scheduleRepo: ScheduleRepository,
+    private readonly parentSubRepo: ParentSubscriptionRepository,
+    private readonly freeSlotRepo: CampusFreeSlotRepository,
   ) {}
+
+  /**
+   * cron: '0 4 * * *'（每天 04:00 UTC）
+   * V23 巡检：occupied 超 3 月 → expired
+   */
+  async expireFreeSlots(): Promise<{ expired: number }> {
+    const expired = await this.freeSlotRepo.expirePending();
+    if (expired > 0) {
+      this.logger.log(`[CRON] expireFreeSlots: ${expired} 条 occupied → expired`);
+    }
+    return { expired };
+  }
+
+  /**
+   * V10/V11/V23 月度续费 — 真接 PG + mock 微信支付（待 EXT-01）
+   *
+   * 流程：
+   *   1. 拉所有 currentPeriodEnd <= NOW + 1d 的 active 订阅
+   *   2. 逐个调用 monthlyRenew + 真扣费（mock：返回 true 模拟成功）
+   *   3. 持久化 subscription 状态 + payment_order
+   *
+   * @param paymentExecutor 真扣费函数；prod 替换为微信支付 SDK 调用
+   */
+  async monthlyRenewActiveSubscriptionsInDb(
+    paymentOrderIdGenerator: (parentId: string) => string,
+    paymentExecutor: (sub: ParentSubscription) => Promise<boolean> | boolean,
+    now: Date = new Date(),
+  ): Promise<{ renewed: number; failed: number }> {
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const due = await this.parentSubRepo.listDueSubscriptions(tomorrow);
+    let renewed = 0;
+    let failed = 0;
+    for (const sub of due) {
+      if (!sub.autoRenew || sub.cancelAtPeriodEnd || sub.status !== 'active') continue;
+      try {
+        const succeeded = await paymentExecutor(sub);
+        const result = this.subscription.monthlyRenew({
+          subscription: sub,
+          paymentOrderId: paymentOrderIdGenerator(sub.parentId),
+          paymentSucceeded: succeeded,
+          now,
+        });
+        await this.parentSubRepo.upsertSubscription(result.subscription);
+        await this.parentSubRepo.insertPaymentOrder(result.paymentOrder);
+        if (succeeded) renewed++;
+        else failed++;
+      } catch (e) {
+        this.logger.warn(
+          `[CRON-RENEW] sub=${sub.id} parent=${sub.parentId} failed: ${(e as Error).message}`,
+        );
+        failed++;
+      }
+    }
+    this.logger.log(`[CRON] monthlyRenewActiveSubscriptionsInDb: ${renewed} 成功, ${failed} 失败`);
+    return { renewed, failed };
+  }
+
+  /**
+   * cron: '0 3 * * *'（每天 03:00 UTC）
+   * V22 巡检：created 推荐超 30 天 → expired
+   * @param tenantSchemas 当前所有活跃租户的 schema（外部 worker 传入）
+   */
+  async expirePendingReferrals(tenantSchemas: ReadonlyArray<string>): Promise<{ expired: number }> {
+    let total = 0;
+    for (const schema of tenantSchemas) {
+      try {
+        total += await this.referrals.expirePending(schema);
+      } catch (e) {
+        this.logger.warn(`[CRON-REFERRAL-EXPIRE] schema=${schema} failed: ${(e as Error).message}`);
+      }
+    }
+    if (total > 0) {
+      this.logger.log(`[CRON] expirePendingReferrals: ${total} referrals 转 expired`);
+    }
+    return { expired: total };
+  }
+
+  /**
+   * cron: '0 2 * * *'（每天 02:00 UTC）
+   * V20 巡检：committed 锁定超过 applies_years → expired
+   */
+  async expirePromotions(now: Date = new Date()): Promise<{ expired: number }> {
+    const r = await this.promoQuota.expirePromotions(now);
+    if (r.expired > 0) {
+      this.logger.log(`[CRON] expirePromotions: ${r.expired} 条 committed → expired`);
+    }
+    return r;
+  }
 
   /**
    * cron: '*​/10 * * * *' （每 10 分钟）
@@ -57,7 +159,7 @@ export class CronJobsService {
     subscriptions: ReadonlyArray<ParentSubscription>,
     paymentOrderIdGenerator: (sub: ParentSubscription) => string,
     now: Date = new Date(),
-  ): Array<{ subscription: ParentSubscription; paymentOrder: any }> {
+  ): Array<{ subscription: ParentSubscription; paymentOrder: ParentPaymentOrder }> {
     const expired = subscriptions.filter(
       (s) =>
         s.status === 'trialing' &&
@@ -86,7 +188,7 @@ export class CronJobsService {
     paymentOrderIdGenerator: (sub: ParentSubscription) => string,
     paymentExecutor: (sub: ParentSubscription) => boolean,
     now: Date = new Date(),
-  ): Array<{ subscription: ParentSubscription; paymentOrder: any }> {
+  ): Array<{ subscription: ParentSubscription; paymentOrder: ParentPaymentOrder }> {
     const due = subscriptions.filter(
       (s) =>
         s.status === 'active' &&
@@ -135,34 +237,74 @@ export class CronJobsService {
 
   /**
    * cron: '30 0 * * *' （每天 0:30）
-   * 周期性课表展开：active recurring → 展开未来 30 天到 schedules 实表
+   * 周期性课表展开：active recurring → 展开未来 N 天到 schedules 实表（幂等 upsert）
    *
-   * 返回应展开的候选时段；外部按 uniq 索引幂等 upsert
+   * @param tenantSchema 租户 schema
+   * @param activeRecurrings 该租户当前 active 的 recurring schedules
+   * @param idGenerator 给每节展开的排课生成 32-char ULID
    */
-  expandRecurringSchedules(
+  async expandRecurringSchedules(
+    tenantSchema: string,
     activeRecurrings: ReadonlyArray<RecurringSchedule>,
+    idGenerator: () => string,
     rangeDays: number = 30,
     now: Date = new Date(),
-  ): Array<{ recurringId: string; candidates: Array<{ startAt: Date; endAt: Date }> }> {
-    const result = activeRecurrings
-      .filter((r) => r.status === 'active')
-      .map((r) => ({
-        recurringId: r.id,
-        candidates: this.recurring.expandToCandidates(
-          r.byDay,
-          r.startMinutes,
-          r.durationMin,
-          r.startDate,
-          r.endDate,
-          rangeDays,
-          now,
-        ),
-      }));
-    const totalSlots = result.reduce((sum, r) => sum + r.candidates.length, 0);
+  ): Promise<{
+    templates: number;
+    inserted: number;
+    skipped: number;
+    perTemplate: Array<{ recurringId: string; inserted: number; skipped: number }>;
+  }> {
+    const perTemplate: Array<{ recurringId: string; inserted: number; skipped: number }> = [];
+    let totalInserted = 0;
+    let totalSkipped = 0;
+    const active = activeRecurrings.filter((r) => r.status === 'active');
+
+    for (const r of active) {
+      const candidates = this.recurring.expandToCandidates(
+        r.byDay,
+        r.startMinutes,
+        r.durationMin,
+        r.startDate,
+        r.endDate,
+        rangeDays,
+        now,
+      );
+      try {
+        const result = await this.scheduleRepo.bulkUpsertFromRecurring(
+          tenantSchema,
+          {
+            id: r.id,
+            teacherId: r.teacherId,
+            studentId: r.studentId,
+            durationMin: r.durationMin,
+            createdByUserId: r.createdByUserId,
+            createdByRole: r.createdByRole,
+            courseProductId: r.courseProductId,
+          },
+          candidates,
+          () => idGenerator(),
+        );
+        perTemplate.push({ recurringId: r.id, ...result });
+        totalInserted += result.inserted;
+        totalSkipped += result.skipped;
+      } catch (e) {
+        this.logger.warn(
+          `[CRON-EXPAND] recurring=${r.id} schema=${tenantSchema} failed: ${(e as Error).message}`,
+        );
+        perTemplate.push({ recurringId: r.id, inserted: 0, skipped: 0 });
+      }
+    }
     this.logger.log(
-      `[CRON] expandRecurringSchedules: ${result.length} 模板，展开 ${totalSlots} 时段`,
+      `[CRON] expandRecurringSchedules schema=${tenantSchema}: ${active.length} 模板, ` +
+        `inserted ${totalInserted} skipped ${totalSkipped}`,
     );
-    return result;
+    return {
+      templates: active.length,
+      inserted: totalInserted,
+      skipped: totalSkipped,
+      perTemplate,
+    };
   }
 
   // 标记反馈已读统计 / 老师工资周期等更复杂的 cron 后续可按此模式扩展

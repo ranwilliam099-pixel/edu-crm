@@ -9,7 +9,7 @@ import {
 
 describe('CoursePackageRepository', () => {
   let repo: CoursePackageRepository;
-  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock };
+  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock; transaction: jest.Mock };
 
   const TENANT = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const PKG: CoursePackage = {
@@ -62,7 +62,7 @@ describe('CoursePackageRepository', () => {
   };
 
   beforeEach(async () => {
-    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn() };
+    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn(), transaction: jest.fn() };
     const m = await Test.createTestingModule({
       providers: [
         CoursePackageRepository,
@@ -151,12 +151,10 @@ describe('CoursePackageRepository', () => {
   });
 
   describe('deductOneLesson (transactional)', () => {
-    it('runs BEGIN/COMMIT and returns updated row', async () => {
-      const calls: string[] = [];
-      pg.withClient.mockImplementationOnce(async (fn: any) => {
+    it('runs in transaction and returns updated row', async () => {
+      pg.transaction.mockImplementationOnce(async (fn: any) => {
         const client = {
           query: jest.fn(async (sql: string) => {
-            calls.push(typeof sql === 'string' ? sql.split(/\s+/)[0] : 'QUERY');
             if (sql.includes('UPDATE student_course_packages') && sql.includes('+ 1')) {
               return { rows: [{ ...SCP_ROW, used_lessons: 1, remaining_lessons: 29 }], rowCount: 1 };
             }
@@ -168,32 +166,24 @@ describe('CoursePackageRepository', () => {
       const r = await repo.deductOneLesson(TENANT, SCP.id);
       expect(r.usedLessons).toBe(1);
       expect(r.remainingLessons).toBe(29);
-      expect(calls).toContain('BEGIN');
-      expect(calls).toContain('COMMIT');
+      // 注：BEGIN/COMMIT 由 PgPoolService.transaction helper 负责
+      expect(pg.transaction).toHaveBeenCalledTimes(1);
     });
 
-    it('rolls back when 0 rows updated', async () => {
-      const calls: string[] = [];
-      pg.withClient.mockImplementationOnce(async (fn: any) => {
+    it('throws NotFoundException when 0 rows updated (helper rolls back)', async () => {
+      pg.transaction.mockImplementationOnce(async (fn: any) => {
         const client = {
-          query: jest.fn(async (sql: string) => {
-            calls.push(typeof sql === 'string' ? sql.split(/\s+/)[0] : 'QUERY');
-            if (sql.includes('UPDATE student_course_packages') && sql.includes('+ 1')) {
-              return { rows: [], rowCount: 0 };
-            }
-            return { rows: [], rowCount: 0 };
-          }),
+          query: jest.fn(async () => ({ rows: [], rowCount: 0 })),
         };
         return fn(client);
       });
       await expect(repo.deductOneLesson(TENANT, SCP.id)).rejects.toThrow(
         NotFoundException,
       );
-      expect(calls).toContain('ROLLBACK');
     });
 
     it('auto sets depleted when remaining hits 0', async () => {
-      pg.withClient.mockImplementationOnce(async (fn: any) => {
+      pg.transaction.mockImplementationOnce(async (fn: any) => {
         const client = {
           query: jest.fn(async (sql: string) => {
             if (sql.includes('UPDATE student_course_packages') && sql.includes('+ 1')) {

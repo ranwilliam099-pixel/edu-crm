@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 import { Teacher } from '../teacher/teacher.service';
 
 /**
@@ -128,7 +128,7 @@ export class TeacherRepository {
   }
 
   // ---- helpers ----
-  private mapRow(row: any): Teacher {
+  private mapRow(row: PgRow): Teacher {
     return {
       id: row.id,
       campusId: row.campus_id,

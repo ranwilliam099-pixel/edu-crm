@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 import {
   Assessment,
   StudentAssessmentResult,
@@ -193,30 +193,22 @@ export class AssessmentRepository {
     rankings: ReadonlyArray<{ id: string; rankInClass: number }>,
   ): Promise<number> {
     if (rankings.length === 0) return 0;
-    return this.pg.withClient(async (client) => {
-      try {
-        await client.query('BEGIN');
-        await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
-        let count = 0;
-        for (const r of rankings) {
-          const res = await client.query(
-            `UPDATE student_assessment_results SET rank_in_class = $1 WHERE id = $2`,
-            [r.rankInClass, r.id],
-          );
-          count += res.rowCount ?? 0;
-        }
-        await client.query('COMMIT');
-        return count;
-      } catch (e) {
-        await client.query('ROLLBACK');
-        throw e;
+    return this.pg.transaction(async (client) => {
+      let count = 0;
+      for (const r of rankings) {
+        const res = await client.query(
+          `UPDATE student_assessment_results SET rank_in_class = $1 WHERE id = $2`,
+          [r.rankInClass, r.id],
+        );
+        count += res.rowCount ?? 0;
       }
-    });
+      return count;
+    }, { tenantSchema });
   }
 
   // ===== helpers =====
 
-  private mapAssessmentRow(row: any): Assessment {
+  private mapAssessmentRow(row: PgRow): Assessment {
     return {
       id: row.id,
       teacherId: row.teacher_id,
@@ -230,7 +222,7 @@ export class AssessmentRepository {
     };
   }
 
-  private mapResultRow(row: any): StudentAssessmentResult {
+  private mapResultRow(row: PgRow): StudentAssessmentResult {
     return {
       id: row.id,
       assessmentId: row.assessment_id,

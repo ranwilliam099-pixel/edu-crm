@@ -3,6 +3,17 @@ import { ConfigService } from '@nestjs/config';
 import { Pool, PoolClient } from 'pg';
 
 /**
+ * PgRow — PG 查询返回行的共享类型别名
+ *
+ * 用途：在 repository.mapRow 之类的边界处替换 `: any`，
+ *      表达「PG 行是动态键值结构，类型在 mapper 内部 narrow」
+ *
+ * 不收紧到 Record<string, unknown>，因为这会强制每个字段访问加类型断言，
+ * 对边界 mapper 收益小、改动量大。当前以「命名 + 文档」表达意图为主。
+ */
+export type PgRow = Record<string, any>;
+
+/**
  * PgPoolService — 全局 PG 连接池（最小持久化层）
  *
  * 来源：
@@ -81,6 +92,42 @@ export class PgPoolService implements OnModuleDestroy {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * 事务封装 — BEGIN / try fn / COMMIT / catch ROLLBACK
+   *
+   * 替代散落 8 处的手写 BEGIN/COMMIT/ROLLBACK 模板。
+   *
+   * 用法：
+   *   await pg.transaction(async (client) => {
+   *     await client.query('UPDATE x SET y = $1', [val]);
+   *     return result;
+   *   });
+   *
+   * 可选 tenantSchema：自动 SET LOCAL search_path（事务级，自动还原）
+   */
+  async transaction<T>(
+    fn: (client: PoolClient) => Promise<T>,
+    options: { tenantSchema?: string } = {},
+  ): Promise<T> {
+    return this.withClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        if (options.tenantSchema) {
+          if (!/^tenant_[a-z0-9_]+$/.test(options.tenantSchema)) {
+            throw new Error(`Invalid tenantSchema: ${options.tenantSchema}`);
+          }
+          await client.query(`SET LOCAL search_path TO ${options.tenantSchema}, public`);
+        }
+        const result = await fn(client);
+        await client.query('COMMIT');
+        return result;
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      }
+    });
   }
 
   /**

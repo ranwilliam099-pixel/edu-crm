@@ -160,6 +160,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
         },
         30,
         [], // 无现有排课
+        now,
       );
       expect(recurring.status).toBe('active');
       expect(recurring.byDay).toEqual(['MO']);
@@ -189,6 +190,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
           },
           30,
           [conflictingSchedule],
+          now,
         ),
       ).toThrow(ConflictException);
     });
@@ -216,6 +218,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
         },
         30,
         [cancelledSchedule],
+        now,
       );
       expect(recurring.status).toBe('active');
     });

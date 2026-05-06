@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 import {
   CoursePackage,
   StudentCoursePackage,
@@ -180,44 +180,29 @@ export class CoursePackageRepository {
     tenantSchema: string,
     id: string,
   ): Promise<StudentCoursePackage> {
-    return this.pg.withClient(async (client) => {
-      try {
-        await client.query('BEGIN');
-        await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
-
-        const updRes = await client.query(
-          `UPDATE student_course_packages
-           SET used_lessons = used_lessons + 1, updated_at = NOW()
-           WHERE id = $1 AND status = 'active' AND total_lessons - used_lessons - refunded_lessons > 0
-           RETURNING id, student_id, course_package_id, contract_id,
-                     total_lessons, used_lessons, refunded_lessons, remaining_lessons,
-                     activated_at, expires_at, status, low_balance_alerted`,
+    return this.pg.transaction(async (client) => {
+      const updRes = await client.query(
+        `UPDATE student_course_packages
+         SET used_lessons = used_lessons + 1, updated_at = NOW()
+         WHERE id = $1 AND status = 'active' AND total_lessons - used_lessons - refunded_lessons > 0
+         RETURNING id, student_id, course_package_id, contract_id,
+                   total_lessons, used_lessons, refunded_lessons, remaining_lessons,
+                   activated_at, expires_at, status, low_balance_alerted`,
+        [id],
+      );
+      if (updRes.rowCount === 0) {
+        throw new NotFoundException(`student_course_package ${id} not deductible`);
+      }
+      const row = updRes.rows[0];
+      if (row.remaining_lessons === 0) {
+        await client.query(
+          `UPDATE student_course_packages SET status = 'depleted' WHERE id = $1`,
           [id],
         );
-        if (updRes.rowCount === 0) {
-          await client.query('ROLLBACK');
-          throw new NotFoundException(`student_course_package ${id} not deductible`);
-        }
-        const row = updRes.rows[0];
-        // 余额归零自动 depleted
-        if (row.remaining_lessons === 0) {
-          await client.query(
-            `UPDATE student_course_packages SET status = 'depleted' WHERE id = $1`,
-            [id],
-          );
-          row.status = 'depleted';
-        }
-        await client.query('COMMIT');
-        return this.mapStudentPackageRow(row);
-      } catch (e) {
-        try {
-          await client.query('ROLLBACK');
-        } catch {
-          /* ignore */
-        }
-        throw e;
+        row.status = 'depleted';
       }
-    });
+      return this.mapStudentPackageRow(row);
+    }, { tenantSchema });
   }
 
   async refundLessons(
@@ -340,7 +325,7 @@ export class CoursePackageRepository {
 
   // ===== helpers =====
 
-  private mapPackageRow(row: any): CoursePackage {
+  private mapPackageRow(row: PgRow): CoursePackage {
     return {
       id: row.id,
       courseProductId: row.course_product_id,
@@ -353,7 +338,7 @@ export class CoursePackageRepository {
     };
   }
 
-  private mapStudentPackageRow(row: any): StudentCoursePackage {
+  private mapStudentPackageRow(row: PgRow): StudentCoursePackage {
     return {
       id: row.id,
       studentId: row.student_id,

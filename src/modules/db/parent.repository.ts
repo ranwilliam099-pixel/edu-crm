@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 import { Parent, ParentStudentBinding, Relationship } from '../parent/parent.service';
 
 /**
@@ -113,7 +113,7 @@ export class ParentRepository {
 
   // ===== helpers =====
 
-  private mapParentRow(row: any): Parent {
+  private mapParentRow(row: PgRow): Parent {
     return {
       id: row.id,
       phone: row.phone,
@@ -125,7 +125,7 @@ export class ParentRepository {
     };
   }
 
-  private mapBindingRow(row: any): ParentStudentBinding {
+  private mapBindingRow(row: PgRow): ParentStudentBinding {
     return {
       id: row.id,
       parentId: row.parent_id,

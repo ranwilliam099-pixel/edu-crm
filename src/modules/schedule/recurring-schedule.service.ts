@@ -130,11 +130,12 @@ export class RecurringScheduleService {
       endAt: Date;
       status: string;
     }>,
+    now: Date = new Date(),
   ): RecurringSchedule {
     // 输入校验
     this.assertRecurringInputs(input);
 
-    // 展开未来 N 天的所有候选时段
+    // 展开未来 N 天的所有候选时段（now 可注入便于测试时间稳定）
     const candidates = this.expandToCandidates(
       input.byDay,
       input.startMinutes,
@@ -142,6 +143,7 @@ export class RecurringScheduleService {
       input.startDate,
       input.endDate,
       expandRangeDays,
+      now,
     );
 
     // 检测每个候选时段是否冲突

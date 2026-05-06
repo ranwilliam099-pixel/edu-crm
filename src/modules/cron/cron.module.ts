@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CronJobsService } from './cron-jobs.service';
+import { CronController } from './cron.controller';
 import { FeedbackModule } from '../feedback/feedback.module';
 import { ParentModule } from '../parent/parent.module';
 import { ScheduleModule } from '../schedule/schedule.module';
@@ -14,6 +15,7 @@ import { ScheduleModule } from '../schedule/schedule.module';
  */
 @Module({
   imports: [FeedbackModule, ParentModule, ScheduleModule],
+  controllers: [CronController],
   providers: [CronJobsService],
   exports: [CronJobsService],
 })

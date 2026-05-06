@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 import {
   ParentSubscription,
   ParentPaymentOrder,
@@ -117,7 +117,7 @@ export class ParentSubscriptionRepository {
 
   // ===== helpers =====
 
-  private mapRow(row: any): ParentSubscription {
+  private mapRow(row: PgRow): ParentSubscription {
     return {
       id: row.id,
       parentId: row.parent_id,
@@ -130,7 +130,7 @@ export class ParentSubscriptionRepository {
     };
   }
 
-  private mapOrderRow(row: any): ParentPaymentOrder {
+  private mapOrderRow(row: PgRow): ParentPaymentOrder {
     return {
       id: row.id,
       parentId: row.parent_id,

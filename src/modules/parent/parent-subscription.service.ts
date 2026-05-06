@@ -25,6 +25,11 @@ export type PaymentOrderStatus = 'pending' | 'paid' | 'failed' | 'refunded';
 export const PARENT_MONTHLY_SKU = 'parent_monthly_9_9';
 export const PARENT_MONTHLY_PRICE_YUAN = 9.9;
 export const TRIAL_DURATION_DAYS = 7;
+// V23 季度集采（V10 策略：8 折，仅集采才有 8 折）
+export const PARENT_QUARTERLY_SKU = 'parent_quarterly_23_76';
+export const PARENT_QUARTERLY_PRICE_YUAN = 23.76; // 9.9 × 3 × 0.8
+export const QUARTERLY_DISCOUNT_PCT = 80; // 8 折
+export const FREE_SLOT_DEFAULT_MONTHS = 3;
 
 export interface ParentSubscription {
   id: string;
@@ -201,6 +206,85 @@ export class ParentSubscriptionService {
         paymentOrder,
       };
     }
+  }
+
+  /**
+   * V23 季度集采续费 — 8 折 ¥23.76（V10 策略：仅集采才有 8 折）
+   *
+   * 与 monthlyRenew 区别：
+   *   - sku=parent_quarterly_23_76
+   *   - 周期 90 天而不是 30 天
+   *   - 调用方应是「校区集采系统」批量提交，而不是单家长触发
+   */
+  quarterlyRenew(input: {
+    subscription: ParentSubscription;
+    paymentOrderId: string;
+    paymentSucceeded: boolean;
+    now?: Date;
+  }): { subscription: ParentSubscription; paymentOrder: ParentPaymentOrder } {
+    if (input.subscription.status !== 'active' && input.subscription.status !== 'trialing') {
+      throw new BadRequestException('only active or trialing subscription can quarterly renew');
+    }
+    const now = input.now ?? new Date();
+
+    const paymentOrder: ParentPaymentOrder = {
+      id: input.paymentOrderId,
+      parentId: input.subscription.parentId,
+      subscriptionId: input.subscription.id,
+      amountYuan: PARENT_QUARTERLY_PRICE_YUAN,
+      sku: PARENT_QUARTERLY_SKU,
+      status: input.paymentSucceeded ? 'paid' : 'failed',
+      paidAt: input.paymentSucceeded ? now : undefined,
+      failureReason: input.paymentSucceeded ? undefined : 'wxpay deduct failed',
+    };
+
+    if (input.paymentSucceeded) {
+      const newPeriodEnd = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
+      return {
+        subscription: {
+          ...input.subscription,
+          status: 'active',
+          currentPeriodEnd: newPeriodEnd,
+          lastPaymentId: input.paymentOrderId,
+        },
+        paymentOrder,
+      };
+    }
+    return {
+      subscription: { ...input.subscription, status: 'past_due' },
+      paymentOrder,
+    };
+  }
+
+  /**
+   * V23 应用免费 slot — 校区赠送 3 月免费
+   * 调用方传入已被 CampusFreeSlotRepository.claim 抢到的 slotId
+   */
+  applyFreeSlot(input: {
+    subscriptionId: string;
+    parentId: string;
+    slotId: number;
+    grantedAt?: Date;
+    durationMonths?: number;
+  }): ParentSubscription {
+    const grantedAt = input.grantedAt ?? new Date();
+    const months = input.durationMonths ?? FREE_SLOT_DEFAULT_MONTHS;
+    const expiresAt = new Date(grantedAt);
+    expiresAt.setUTCMonth(expiresAt.getUTCMonth() + months);
+
+    this.logger.log(
+      `[BE-V23] applyFreeSlot subscription=${input.subscriptionId} parent=${input.parentId} ` +
+        `slotId=${input.slotId} expires=${expiresAt.toISOString()}`,
+    );
+
+    return {
+      id: input.subscriptionId,
+      parentId: input.parentId,
+      status: 'active', // free slot 直接转 active（绕过 trial）
+      currentPeriodEnd: expiresAt,
+      autoRenew: false, // 校区 slot 不自动续费
+      cancelAtPeriodEnd: false,
+    };
   }
 
   /**

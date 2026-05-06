@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 import { LessonFeedback } from '../feedback/lesson-feedback.service';
 
 /**
@@ -256,7 +256,7 @@ export class LessonFeedbackRepository {
   }
 
   // ===== helpers =====
-  private mapRow(row: any): LessonFeedback {
+  private mapRow(row: PgRow): LessonFeedback {
     return {
       id: row.id,
       scheduleId: row.schedule_id,

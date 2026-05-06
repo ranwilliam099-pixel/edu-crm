@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 import { Schedule, ScheduleStudent, ScheduleStatus, AttendanceStatus } from '../schedule/schedule.service';
 
 /**
@@ -12,6 +12,82 @@ export class ScheduleRepository {
   constructor(private readonly pg: PgPoolService) {}
 
   /**
+   * V8 周期模板展开 → 幂等 upsert 多条排课 + 学员绑定
+   *
+   * 用 UNIQUE INDEX `uniq_recurring_expansion(recurring_schedule_id, start_at)`
+   * 实现幂等：同一 recurring + start_at 重复展开 ON CONFLICT DO NOTHING
+   *
+   * @returns inserted（新插入的）+ skipped（已存在的）
+   */
+  async bulkUpsertFromRecurring(
+    tenantSchema: string,
+    recurring: {
+      id: string;
+      teacherId: string;
+      studentId: string;
+      durationMin: number;
+      createdByUserId: string;
+      createdByRole: 'teacher' | 'sales';
+      courseProductId?: string;
+    },
+    candidates: ReadonlyArray<{ startAt: Date; endAt: Date }>,
+    idGenerator: (i: number) => string,
+  ): Promise<{ inserted: number; skipped: number }> {
+    if (candidates.length === 0) return { inserted: 0, skipped: 0 };
+
+    return this.pg.transaction(
+      async (client) => {
+        let inserted = 0;
+        let skipped = 0;
+
+        for (let i = 0; i < candidates.length; i++) {
+          const c = candidates[i];
+          const scheduleId = idGenerator(i);
+
+          const r = await client.query(
+            `INSERT INTO schedules (
+               id, course_product_id, teacher_id, start_at, duration_min, end_at,
+               status, source, recurring_schedule_id, created_by_user_id, created_by_role
+             ) VALUES ($1, $2, $3, $4, $5, $6, '已排课', 'recurring_expansion', $7, $8, $9)
+             ON CONFLICT (recurring_schedule_id, start_at)
+             WHERE source = 'recurring_expansion'
+             DO NOTHING
+             RETURNING id`,
+            [
+              scheduleId,
+              recurring.courseProductId || null,
+              recurring.teacherId,
+              c.startAt,
+              recurring.durationMin,
+              c.endAt,
+              recurring.id,
+              recurring.createdByUserId,
+              recurring.createdByRole,
+            ],
+          );
+
+          if (r.rowCount === 0) {
+            skipped++;
+            continue;
+          }
+          inserted++;
+
+          // 绑定学员到这节排课
+          await client.query(
+            `INSERT INTO schedule_students (schedule_id, student_id, attendance_status, joined_at)
+             VALUES ($1, $2, '待出勤', NOW())
+             ON CONFLICT DO NOTHING`,
+            [scheduleId, recurring.studentId],
+          );
+        }
+
+        return { inserted, skipped };
+      },
+      { tenantSchema },
+    );
+  }
+
+  /**
    * 在事务内同时 INSERT schedule + 多条 schedule_students
    */
   async insertWithStudents(
@@ -19,55 +95,46 @@ export class ScheduleRepository {
     schedule: Schedule,
     studentIds: ReadonlyArray<string>,
   ): Promise<{ schedule: Schedule; students: ScheduleStudent[] }> {
-    return this.pg.withClient(async (client) => {
-      try {
-        await client.query('BEGIN');
-        await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
+    return this.pg.transaction(async (client) => {
+      await client.query(
+        `INSERT INTO schedules (
+           id, course_product_id, teacher_id, start_at, duration_min, end_at,
+           status, source, recurring_schedule_id, created_by_user_id, created_by_role, notes
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          schedule.id,
+          schedule.courseProductId || null,
+          schedule.teacherId,
+          schedule.startAt,
+          schedule.durationMin,
+          schedule.endAt,
+          schedule.status,
+          schedule.source,
+          schedule.recurringScheduleId || null,
+          schedule.createdByUserId,
+          schedule.createdByRole,
+          schedule.notes || null,
+        ],
+      );
 
+      const students: ScheduleStudent[] = [];
+      for (const sid of studentIds) {
+        const joinedAt = new Date();
         await client.query(
-          `INSERT INTO schedules (
-             id, course_product_id, teacher_id, start_at, duration_min, end_at,
-             status, source, recurring_schedule_id, created_by_user_id, created_by_role, notes
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [
-            schedule.id,
-            schedule.courseProductId || null,
-            schedule.teacherId,
-            schedule.startAt,
-            schedule.durationMin,
-            schedule.endAt,
-            schedule.status,
-            schedule.source,
-            schedule.recurringScheduleId || null,
-            schedule.createdByUserId,
-            schedule.createdByRole,
-            schedule.notes || null,
-          ],
+          `INSERT INTO schedule_students (schedule_id, student_id, attendance_status, joined_at)
+           VALUES ($1, $2, '待出勤', $3)`,
+          [schedule.id, sid, joinedAt],
         );
-
-        const students: ScheduleStudent[] = [];
-        for (const sid of studentIds) {
-          const joinedAt = new Date();
-          await client.query(
-            `INSERT INTO schedule_students (schedule_id, student_id, attendance_status, joined_at)
-             VALUES ($1, $2, '待出勤', $3)`,
-            [schedule.id, sid, joinedAt],
-          );
-          students.push({
-            scheduleId: schedule.id,
-            studentId: sid,
-            attendanceStatus: '待出勤',
-            joinedAt,
-          });
-        }
-
-        await client.query('COMMIT');
-        return { schedule, students };
-      } catch (e) {
-        await client.query('ROLLBACK');
-        throw e;
+        students.push({
+          scheduleId: schedule.id,
+          studentId: sid,
+          attendanceStatus: '待出勤',
+          joinedAt,
+        });
       }
-    });
+
+      return { schedule, students };
+    }, { tenantSchema });
   }
 
   /**
@@ -186,7 +253,7 @@ export class ScheduleRepository {
     };
   }
 
-  private mapRow(row: any): Schedule {
+  private mapRow(row: PgRow): Schedule {
     return {
       id: row.id,
       courseProductId: row.course_product_id || undefined,

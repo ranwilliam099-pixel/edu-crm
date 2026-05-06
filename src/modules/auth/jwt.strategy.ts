@@ -1,7 +1,11 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, TokenExpiredError, JsonWebTokenError } from '@nestjs/jwt';
-import { JwtPayload, isPlatformRole } from './jwt-payload.interface';
+import {
+  JwtPayload,
+  isPlatformRole,
+  isCrossCampusRole,
+} from './jwt-payload.interface';
 
 /**
  * JWT 解析与校验（接口清单 V1 §6.1）— BE-W1-3 真接入版
@@ -71,12 +75,24 @@ export class JwtStrategy {
       if (payload.tenantId !== null) {
         throw new UnauthorizedException('platform role must have tenantId=null (A11)');
       }
-    } else {
-      if (!payload.tenantId || payload.tenantId.length !== 32) {
-        throw new UnauthorizedException('tenant role must have 32-char tenantId');
+      return;
+    }
+    if (!payload.tenantId || payload.tenantId.length !== 32) {
+      throw new UnauthorizedException('tenant role must have 32-char tenantId');
+    }
+    // V10 拍板：跨校组（admin / sales_director / hr）campusId 可空（业务上无单一校区）
+    // 单校组（含 boss 校长 / sales / sales_manager / marketing / finance）必须 32 字符
+    if (isCrossCampusRole(payload.role)) {
+      if (payload.campusId !== null && payload.campusId.length !== 32) {
+        throw new UnauthorizedException(
+          'cross-campus role campusId must be null or 32-char ULID',
+        );
       }
+    } else {
       if (!payload.campusId || payload.campusId.length !== 32) {
-        throw new UnauthorizedException('tenant role must have 32-char campusId (A08)');
+        throw new UnauthorizedException(
+          `single-campus role (${payload.role}) must have 32-char campusId (A08)`,
+        );
       }
     }
   }

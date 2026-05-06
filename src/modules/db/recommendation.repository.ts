@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { PgPoolService } from './pg-pool.service';
+import { PgPoolService, PgRow } from './pg-pool.service';
 
 /**
  * RecommendationRepository — V17 家长推荐持久化层（tenant schema）
@@ -139,7 +139,7 @@ export class RecommendationRepository {
   }
 
   // ===== helpers =====
-  private mapRow(row: any): ParentRecommendation {
+  private mapRow(row: PgRow): ParentRecommendation {
     return {
       id: row.id,
       teacherId: row.teacher_id,

@@ -79,6 +79,116 @@ describe('AuthController - 登录接口', () => {
         }),
       ).toThrow(BadRequestException);
     });
+
+    it('admin (跨校 / 老板) 不传 campusId → 接受，payload.campusId=null', () => {
+      const result = controller.login({
+        phone: '13800001111',
+        tenantId: ULID32_T,
+        role: 'admin',
+        userId: ULID32,
+      });
+      expect(result.payload.campusId).toBeNull();
+      expect(result.payload.role).toBe('admin');
+    });
+
+    it('admin 显式给 32 字符 campusId（主校区视角）→ 接受', () => {
+      const result = controller.login({
+        phone: '13800001111',
+        tenantId: ULID32_T,
+        role: 'admin',
+        campusId: ULID32_C,
+        userId: ULID32,
+      });
+      expect(result.payload.campusId).toBe(ULID32_C);
+    });
+
+    it('admin 给非 32 字符 campusId → BadRequestException', () => {
+      expect(() =>
+        controller.login({
+          phone: '13800001111',
+          tenantId: ULID32_T,
+          role: 'admin',
+          campusId: 'short',
+          userId: ULID32,
+        }),
+      ).toThrow(/cross-campus.*null.*32-char/);
+    });
+
+    it('sales_director (跨校 / 大区经理) 不传 campusId → 接受', () => {
+      const result = controller.login({
+        phone: '13800001111',
+        tenantId: ULID32_T,
+        role: 'sales_director',
+        userId: ULID32,
+      });
+      expect(result.payload.campusId).toBeNull();
+    });
+
+    it('hr (跨校) 不传 campusId → 接受', () => {
+      const result = controller.login({
+        phone: '13800001111',
+        tenantId: ULID32_T,
+        role: 'hr',
+        userId: ULID32,
+      });
+      expect(result.payload.campusId).toBeNull();
+    });
+
+    it('boss (单校 / 校长) 不传 campusId → BadRequestException — V10 单校强校验', () => {
+      expect(() =>
+        controller.login({
+          phone: '13800001111',
+          tenantId: ULID32_T,
+          role: 'boss',
+          userId: ULID32,
+        }),
+      ).toThrow(/single-campus.*boss.*32-char campusId/);
+    });
+
+    it('boss 给非 32 字符 campusId → BadRequestException', () => {
+      expect(() =>
+        controller.login({
+          phone: '13800001111',
+          tenantId: ULID32_T,
+          role: 'boss',
+          campusId: 'short',
+          userId: ULID32,
+        }),
+      ).toThrow(/single-campus.*boss/);
+    });
+
+    it('sales (单校) 不传 campusId → BadRequestException', () => {
+      expect(() =>
+        controller.login({
+          phone: '13800001111',
+          tenantId: ULID32_T,
+          role: 'sales',
+          userId: ULID32,
+        }),
+      ).toThrow(/single-campus.*sales/);
+    });
+
+    it('marketing (单校) 不传 campusId → BadRequestException', () => {
+      expect(() =>
+        controller.login({
+          phone: '13800001111',
+          tenantId: ULID32_T,
+          role: 'marketing',
+          userId: ULID32,
+        }),
+      ).toThrow(/single-campus.*marketing/);
+    });
+
+    it('finance (单校) 不传 campusId → BadRequestException', () => {
+      expect(() =>
+        controller.login({
+          phone: '13800001111',
+          tenantId: ULID32_T,
+          role: 'finance',
+          userId: ULID32,
+        }),
+      ).toThrow(/single-campus.*finance/);
+    });
   });
 
   describe('wechatLogin - C 端家长微信登录', () => {

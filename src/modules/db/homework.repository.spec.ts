@@ -9,7 +9,7 @@ import {
 
 describe('HomeworkRepository', () => {
   let repo: HomeworkRepository;
-  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock };
+  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock; transaction: jest.Mock };
 
   const TENANT = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const ASSIGNMENT: HomeworkAssignment = {
@@ -63,7 +63,7 @@ describe('HomeworkRepository', () => {
   };
 
   beforeEach(async () => {
-    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn() };
+    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn(), transaction: jest.fn() };
     const m = await Test.createTestingModule({
       providers: [HomeworkRepository, { provide: PgPoolService, useValue: pg }],
     }).compile();
@@ -73,7 +73,7 @@ describe('HomeworkRepository', () => {
   describe('insertAssignmentWithRecipients', () => {
     it('runs in transaction with INSERT + N recipients', async () => {
       const calls: { sql: string; params?: any[] }[] = [];
-      pg.withClient.mockImplementationOnce(async (fn: any) => {
+      pg.transaction.mockImplementationOnce(async (fn: any) => {
         const client = {
           query: jest.fn(async (sql: string, params?: any[]) => {
             calls.push({ sql, params });
@@ -84,18 +84,17 @@ describe('HomeworkRepository', () => {
       });
       const r = await repo.insertAssignmentWithRecipients(TENANT, ASSIGNMENT);
       expect(r.id).toBe(ASSIGNMENT.id);
-      expect(calls.some((c) => c.sql.startsWith('BEGIN'))).toBe(true);
-      expect(calls.some((c) => c.sql.startsWith('COMMIT'))).toBe(true);
+      // 注：BEGIN/COMMIT 由 PgPoolService.transaction helper 负责，不在 repo 内
+      expect(pg.transaction).toHaveBeenCalledTimes(1);
+      expect(calls.some((c) => c.sql.includes('INSERT INTO homework_assignments'))).toBe(true);
       expect(calls.filter((c) => c.sql.includes('INSERT INTO assignment_recipients'))).toHaveLength(2);
     });
 
-    it('rolls back on error', async () => {
-      let rolledBack = false;
-      pg.withClient.mockImplementationOnce(async (fn: any) => {
+    it('propagates error so transaction helper rolls back', async () => {
+      pg.transaction.mockImplementationOnce(async (fn: any) => {
         const client = {
           query: jest.fn(async (sql: string) => {
             if (sql.includes('INSERT INTO homework_assignments')) throw new Error('boom');
-            if (sql === 'ROLLBACK') rolledBack = true;
             return { rows: [], rowCount: 1 };
           }),
         };
@@ -104,7 +103,6 @@ describe('HomeworkRepository', () => {
       await expect(
         repo.insertAssignmentWithRecipients(TENANT, ASSIGNMENT),
       ).rejects.toThrow('boom');
-      expect(rolledBack).toBe(true);
     });
   });
 

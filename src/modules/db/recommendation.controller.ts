@@ -13,6 +13,7 @@ import {
   RecommendationRepository,
   ParentRecommendation,
 } from './recommendation.repository';
+import { ReferralRepository } from './referral.repository';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
@@ -29,7 +30,10 @@ import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 @UseGuards(TenantScopeGuard)
 @Controller('db')
 export class RecommendationController {
-  constructor(private readonly recRepo: RecommendationRepository) {}
+  constructor(
+    private readonly recRepo: RecommendationRepository,
+    private readonly referrals: ReferralRepository,
+  ) {}
 
   @Post('recommendations')
   @HttpCode(HttpStatus.CREATED)
@@ -56,7 +60,7 @@ export class RecommendationController {
     if (typeof body.stars !== 'number' || body.stars < 1 || body.stars > 5) {
       throw new BadRequestException('stars must be 1-5');
     }
-    return this.recRepo.insert(tenantSchema, {
+    const created = await this.recRepo.insert(tenantSchema, {
       id: body.id,
       teacherId: body.teacherId,
       parentId: body.parentId,
@@ -69,6 +73,19 @@ export class RecommendationController {
       submittedAt: new Date(),
       createdAt: new Date(),
     });
+
+    // V22: 若该家长是 referral 的 referee 且 status=trialed → 触发计数 +1
+    // markRated 内部判断不存在则 no-op，所以失败也不阻塞主流程
+    try {
+      await this.referrals.markRated(tenantSchema, body.parentId, body.teacherId, {
+        id: body.id,
+        source: 'parent_recommendation',
+      });
+    } catch (e) {
+      // log 但不抛错（V22 推荐计数失败不阻塞家长评价）
+    }
+
+    return created;
   }
 
   @Post('recommendations/:id/toggle')

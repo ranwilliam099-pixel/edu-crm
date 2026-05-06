@@ -7,7 +7,7 @@ import { PgPoolService } from './pg-pool.service';
 
 describe('StudentImportRepository', () => {
   let repo: StudentImportRepository;
-  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock };
+  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock; transaction: jest.Mock };
 
   const TENANT = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const CAMPUS_ID = 'cam0000000000000000000000000A001';
@@ -23,7 +23,7 @@ describe('StudentImportRepository', () => {
   };
 
   beforeEach(async () => {
-    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn() };
+    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn(), transaction: jest.fn() };
     const m = await Test.createTestingModule({
       providers: [
         StudentImportRepository,
