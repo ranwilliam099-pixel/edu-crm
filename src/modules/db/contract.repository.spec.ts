@@ -17,6 +17,7 @@ describe('ContractRepository', () => {
     id: CONTRACT_ID,
     student_id: STUDENT_ID,
     course_product_id: COURSE_ID,
+    course_product_name: null,
     owner_user_id: OWNER_ID,
     opportunity_id: null,
     campus_id: CAMPUS_ID,
@@ -59,8 +60,8 @@ describe('ContractRepository', () => {
       expect(r.campusId).toBe(CAMPUS_ID);
       const [, sql, params] = pg.tenantQuery.mock.calls[0];
       expect(sql).toContain('campus_id');
-      // params order: id, student_id, course_product_id, owner_user_id, opportunity_id, campus_id, ...
-      expect(params[5]).toBe(CAMPUS_ID);
+      // V29 params order: id, student_id, course_product_id, course_product_name, owner_user_id, opportunity_id, campus_id, ...
+      expect(params[6]).toBe(CAMPUS_ID);
     });
 
     it('null campus_id when admin / cross-campus role does not pass it', async () => {
@@ -76,7 +77,7 @@ describe('ContractRepository', () => {
       });
       expect(r.campusId).toBeNull();
       const params = pg.tenantQuery.mock.calls[0][2];
-      expect(params[5]).toBeNull();
+      expect(params[6]).toBeNull();
     });
 
     it('rejects 32-char ULID id check', async () => {
@@ -105,6 +106,58 @@ describe('ContractRepository', () => {
           totalAmount: -1,
         }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('V29 销售自填：courseProductName 替代 courseProductId 也能签约（user 2026-05-07）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{
+        ...ROW,
+        course_product_id: null,
+        course_product_name: '英语 1v1 35 课时（销售自填）',
+      }]);
+      const r = await repo.create(TENANT, {
+        id: CONTRACT_ID,
+        studentId: STUDENT_ID,
+        courseProductName: '英语 1v1 35 课时（销售自填）',
+        ownerUserId: OWNER_ID,
+        lessonHours: 35,
+        standardPrice: 6500,
+        totalAmount: 6500,
+      });
+      expect(r.courseProductId).toBeNull();
+      expect(r.courseProductName).toBe('英语 1v1 35 课时（销售自填）');
+      const params = pg.tenantQuery.mock.calls[0][2];
+      expect(params[2]).toBeNull(); // courseProductId
+      expect(params[3]).toBe('英语 1v1 35 课时（销售自填）'); // courseProductName
+    });
+
+    it('V29 销售自填：courseProductId 与 courseProductName 都不传 → BadRequest', async () => {
+      await expect(
+        repo.create(TENANT, {
+          id: CONTRACT_ID,
+          studentId: STUDENT_ID,
+          ownerUserId: OWNER_ID,
+          lessonHours: 30,
+          standardPrice: 1999,
+          totalAmount: 1999,
+        }),
+      ).rejects.toThrow(/courseProductId.*courseProductName.*至少/);
+    });
+
+    it('V29 二选一兼容：传 courseProductId 时也能创建（保持向后兼容）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([ROW]);
+      const r = await repo.create(TENANT, {
+        id: CONTRACT_ID,
+        studentId: STUDENT_ID,
+        courseProductId: COURSE_ID,
+        ownerUserId: OWNER_ID,
+        lessonHours: 30,
+        standardPrice: 1999,
+        totalAmount: 1999,
+      });
+      expect(r.courseProductId).toBe(COURSE_ID);
+      const params = pg.tenantQuery.mock.calls[0][2];
+      expect(params[2]).toBe(COURSE_ID);
+      expect(params[3]).toBeNull();
     });
   });
 

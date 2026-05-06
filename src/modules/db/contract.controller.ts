@@ -119,7 +119,9 @@ export class ContractController {
       tenantSchema: string;
       id: string;
       studentId: string;
-      courseProductId: string;
+      // V29 销售自填：courseProductId 与 courseProductName 二选一（至少一个）
+      courseProductId?: string;
+      courseProductName?: string;
       opportunityId?: string;
       campusId?: string;
       classType?: string;
@@ -136,7 +138,11 @@ export class ContractController {
   ): Promise<Contract> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
     if (!body.studentId) throw new BadRequestException('studentId required');
-    if (!body.courseProductId) throw new BadRequestException('courseProductId required');
+    if (!body.courseProductId && !body.courseProductName) {
+      throw new BadRequestException(
+        'courseProductId 与 courseProductName 至少传一个（销售自填或选既有产品）',
+      );
+    }
     if (typeof body.totalAmount !== 'number') {
       throw new BadRequestException('totalAmount required');
     }
@@ -149,6 +155,7 @@ export class ContractController {
       id: body.id,
       studentId: body.studentId,
       courseProductId: body.courseProductId,
+      courseProductName: body.courseProductName,
       ownerUserId,
       opportunityId: body.opportunityId,
       campusId,

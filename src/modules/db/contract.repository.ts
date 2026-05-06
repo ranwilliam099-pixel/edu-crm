@@ -18,7 +18,9 @@ export type OrderType = '新签' | '续费' | '扩科' | '升班' | '转班';
 export interface Contract {
   id: string;
   studentId: string;
-  courseProductId: string;
+  // V29 NULLABLE — 销售可自填 courseProductName 而不绑既有 course_products
+  courseProductId: string | null;
+  courseProductName: string | null;
   ownerUserId: string | null;
   opportunityId: string | null;
   campusId: string | null;
@@ -53,6 +55,7 @@ export class ContractRepository {
       id: r.id,
       studentId: r.student_id,
       courseProductId: r.course_product_id,
+      courseProductName: r.course_product_name,
       ownerUserId: r.owner_user_id,
       opportunityId: r.opportunity_id,
       campusId: r.campus_id,
@@ -184,7 +187,9 @@ export class ContractRepository {
     payload: {
       id: string;
       studentId: string;
-      courseProductId: string;
+      // V29: courseProductId 与 courseProductName 二选一（至少有一个）
+      courseProductId?: string | null;
+      courseProductName?: string | null;
       ownerUserId: string;
       opportunityId?: string | null;
       campusId?: string | null;
@@ -205,18 +210,25 @@ export class ContractRepository {
     if (payload.totalAmount < 0) {
       throw new BadRequestException('totalAmount must be ≥ 0');
     }
+    // V29 销售自填检查：courseProductId 与 courseProductName 至少有一个
+    if (!payload.courseProductId && !payload.courseProductName) {
+      throw new BadRequestException(
+        'courseProductId 与 courseProductName 至少传一个（销售自填或选既有产品）',
+      );
+    }
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `INSERT INTO contracts
-         (id, student_id, course_product_id, owner_user_id, opportunity_id, campus_id,
+         (id, student_id, course_product_id, course_product_name, owner_user_id, opportunity_id, campus_id,
           class_type, lesson_hours, standard_price, discount_amount, gift_hours,
           total_amount, order_type, status, signed_at, created_by, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14,$4,$4)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending',$15,$5,$5)
        RETURNING *`,
       [
         payload.id,
         payload.studentId,
-        payload.courseProductId,
+        payload.courseProductId || null,
+        payload.courseProductName || null,
         payload.ownerUserId,
         payload.opportunityId || null,
         payload.campusId || null,
