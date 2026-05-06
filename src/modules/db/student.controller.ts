@@ -2,14 +2,16 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { StudentRepository, StudentTransferResult } from './student.repository';
+import { StudentRepository, StudentBrief, StudentTransferResult } from './student.repository';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { RbacGuard } from '../../guards/rbac.guard';
@@ -84,6 +86,32 @@ export class StudentController {
       assignedTeacherId: body.assignedTeacherId,
       operatorUserId,
     });
+  }
+
+  /**
+   * V29 R4 老师视角：列该老师主带学生（OOUX teacher → students[]）
+   *
+   * 用户 2026-05-07 OOUX 哲学 — 老师详情一站式
+   *
+   * RBAC：本租户内 teacher / admin / boss / hr / sales 等都可看（学生归属是公开数据）
+   */
+  @Get('by-teacher/:teacherId')
+  @HttpCode(HttpStatus.OK)
+  async listByTeacher(
+    @Param('teacherId') teacherId: string,
+    @Query('tenantSchema') tenantSchema: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ): Promise<{ items: StudentBrief[] }> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!teacherId || teacherId.length !== 32) {
+      throw new BadRequestException('teacherId must be 32-char ULID');
+    }
+    const items = await this.repo.listByTeacher(tenantSchema, teacherId, {
+      limit: limit ? Math.min(parseInt(limit, 10), 200) : 100,
+      offset: offset ? parseInt(offset, 10) : 0,
+    });
+    return { items };
   }
 
   @Post(':id/transfer-sales')

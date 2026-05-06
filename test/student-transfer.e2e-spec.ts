@@ -65,4 +65,12 @@ describe('V28 Student transfer + Teacher archive (e2e)', () => {
         .expect(401);
     });
   });
+
+  describe('V29 R4 OOUX teacher → students[] 一站式', () => {
+    it('GET /db/students/by-teacher/:teacherId 无 token → 401', async () => {
+      await request(app.getHttpServer())
+        .get('/api/db/students/by-teacher/abc')
+        .expect(401);
+    });
+  });
 });

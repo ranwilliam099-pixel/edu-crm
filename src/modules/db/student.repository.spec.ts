@@ -161,6 +161,34 @@ describe('StudentRepository (V28)', () => {
     });
   });
 
+  describe('listByTeacher (V29 R4 老师视角)', () => {
+    it('SQL 包含 WHERE assigned_teacher_id = $1 + 默认 limit 100', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listByTeacher(TENANT, TEACHER_A);
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(sql).toContain('WHERE assigned_teacher_id = $1');
+      expect(sql).toContain('ORDER BY created_at DESC');
+      expect(params[0]).toBe(TEACHER_A);
+      expect(params[1]).toBe(100);
+      expect(params[2]).toBe(0);
+    });
+
+    it('limit/offset 可定制', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listByTeacher(TENANT, TEACHER_A, { limit: 30, offset: 60 });
+      const params = pg.tenantQuery.mock.calls[0][2];
+      expect(params[1]).toBe(30);
+      expect(params[2]).toBe(60);
+    });
+
+    it('返回 StudentBrief 数组', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([studentRow(), studentRow()]);
+      const r = await repo.listByTeacher(TENANT, TEACHER_A);
+      expect(r).toHaveLength(2);
+      expect(r[0].assignedTeacherId).toBe(TEACHER_A);
+    });
+  });
+
   describe('findBrief', () => {
     it('返回 brief 含 V28 字段', async () => {
       pg.tenantQuery.mockResolvedValueOnce([studentRow()]);

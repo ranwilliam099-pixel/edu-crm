@@ -103,6 +103,32 @@ export class StudentRepository {
     return StudentRepository.mapBrief(rows[0]);
   }
 
+  /**
+   * V29 R4 老师视角：列该老师主带学生（OOUX teacher → students[] 关系）
+   *
+   * 来源：用户 2026-05-07 OOUX 哲学 — 老师详情一站式
+   * 用于：老师详情页「主带学生」section
+   */
+  async listByTeacher(
+    tenantSchema: string,
+    teacherId: string,
+    options: { limit?: number; offset?: number } = {},
+  ): Promise<StudentBrief[]> {
+    const limit = options.limit ?? 100;
+    const offset = options.offset ?? 0;
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT id, student_name, customer_id, owner_sales_id, assigned_teacher_id,
+              owner_changed_at, owner_change_reason
+         FROM students
+         WHERE assigned_teacher_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2 OFFSET $3`,
+      [teacherId, limit, offset],
+    );
+    return rows.map((r) => StudentRepository.mapBrief(r));
+  }
+
   async findBrief(tenantSchema: string, id: string): Promise<StudentBrief | null> {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
