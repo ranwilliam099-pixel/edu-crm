@@ -492,16 +492,33 @@ describe('UserRepository (V27)', () => {
   });
 
   describe('listInactiveWithPending', () => {
-    it('只返回 status=停用 且 (pendingOpps + pendingContracts) > 0 的用户', async () => {
+    it('只返回 status=停用 且 (pendingOpps + pendingContracts + pendingStudents) > 0 的用户', async () => {
       pg.tenantQuery.mockResolvedValueOnce([
-        { ...userRow({ id: SALES_ID, status: '停用' }), pending_opps: '5', pending_contracts: '2' },
-        { ...userRow({ id: BOSS_A_ID, status: '停用' }), pending_opps: '0', pending_contracts: '0' },
+        { ...userRow({ id: SALES_ID, status: '停用' }), pending_opps: '5', pending_contracts: '2', pending_students: '0' },
+        { ...userRow({ id: BOSS_A_ID, status: '停用' }), pending_opps: '0', pending_contracts: '0', pending_students: '0' },
       ]);
       const items = await repo.listInactiveWithPending(TENANT);
       expect(items).toHaveLength(1);
       expect(items[0].user.id).toBe(SALES_ID);
       expect(items[0].pendingOpportunities).toBe(5);
       expect(items[0].pendingContracts).toBe(2);
+      expect(items[0].pendingStudents).toBe(0);
+    });
+
+    it('V28 R4：只有 pendingStudents > 0 的用户也要列出（防止漏看仅持有学生的离职销售）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...userRow({ id: SALES_ID, status: '停用' }), pending_opps: '0', pending_contracts: '0', pending_students: '3' },
+      ]);
+      const items = await repo.listInactiveWithPending(TENANT);
+      expect(items).toHaveLength(1);
+      expect(items[0].pendingStudents).toBe(3);
+    });
+
+    it('SQL 包含 students 子查询', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listInactiveWithPending(TENANT);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toMatch(/FROM students s WHERE s\.owner_sales_id = u\.id/);
     });
   });
 
@@ -542,15 +559,33 @@ describe('UserRepository (V27)', () => {
   });
 
   describe('listActiveWithData', () => {
-    it('只返回 active 且名下有 opps/contracts > 0 的用户', async () => {
+    it('只返回 active 且名下有 (opps + contracts + students) > 0 的用户', async () => {
       pg.tenantQuery.mockResolvedValueOnce([
-        { ...userRow({ id: SALES_ID, status: '启用' }), pending_opps: '8', pending_contracts: '1' },
-        { ...userRow({ id: BOSS_A_ID, status: '启用' }), pending_opps: '0', pending_contracts: '0' },
+        { ...userRow({ id: SALES_ID, status: '启用' }), pending_opps: '8', pending_contracts: '1', pending_students: '12' },
+        { ...userRow({ id: BOSS_A_ID, status: '启用' }), pending_opps: '0', pending_contracts: '0', pending_students: '0' },
       ]);
       const items = await repo.listActiveWithData(TENANT);
       expect(items).toHaveLength(1);
       expect(items[0].user.id).toBe(SALES_ID);
       expect(items[0].pendingOpportunities).toBe(8);
+      expect(items[0].pendingStudents).toBe(12);
+    });
+
+    it('V28 R4：仅有 students 归属（无 opp/contract）的销售也要列出', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...userRow({ id: SALES_ID, status: '启用' }), pending_opps: '0', pending_contracts: '0', pending_students: '5' },
+      ]);
+      const items = await repo.listActiveWithData(TENANT);
+      expect(items).toHaveLength(1);
+      expect(items[0].pendingStudents).toBe(5);
+    });
+
+    it('全部为 0 → filter 掉', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...userRow({ id: SALES_ID, status: '启用' }), pending_opps: '0', pending_contracts: '0', pending_students: '0' },
+      ]);
+      const items = await repo.listActiveWithData(TENANT);
+      expect(items).toHaveLength(0);
     });
   });
 });

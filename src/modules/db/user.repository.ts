@@ -36,6 +36,7 @@ export interface InactiveWithPending {
   user: User;
   pendingOpportunities: number;
   pendingContracts: number;
+  pendingStudents: number;
 }
 
 export interface DeactivateResult {
@@ -188,7 +189,8 @@ export class UserRepository {
               (SELECT COUNT(*) FROM contracts c
                  WHERE c.owner_user_id = u.id
                    AND c.status IN ('pending','active')
-                   AND c.deleted_at IS NULL) AS pending_contracts
+                   AND c.deleted_at IS NULL) AS pending_contracts,
+              (SELECT COUNT(*) FROM students s WHERE s.owner_sales_id = u.id) AS pending_students
          FROM users u
          WHERE u.status = '启用'
          ORDER BY u.role, u.name`,
@@ -198,8 +200,9 @@ export class UserRepository {
         user: UserRepository.mapRow(r),
         pendingOpportunities: parseInt(r.pending_opps || '0', 10),
         pendingContracts: parseInt(r.pending_contracts || '0', 10),
+        pendingStudents: parseInt(r.pending_students || '0', 10),
       }))
-      .filter((x) => x.pendingOpportunities + x.pendingContracts > 0);
+      .filter((x) => x.pendingOpportunities + x.pendingContracts + x.pendingStudents > 0);
   }
 
   async findById(tenantSchema: string, id: string): Promise<User | null> {
@@ -226,7 +229,8 @@ export class UserRepository {
               (SELECT COUNT(*) FROM contracts c
                  WHERE c.owner_user_id = u.id
                    AND c.status IN ('pending','active')
-                   AND c.deleted_at IS NULL) AS pending_contracts
+                   AND c.deleted_at IS NULL) AS pending_contracts,
+              (SELECT COUNT(*) FROM students s WHERE s.owner_sales_id = u.id) AS pending_students
          FROM users u
          WHERE u.status = '停用'
          ORDER BY u.updated_at DESC`,
@@ -236,8 +240,9 @@ export class UserRepository {
         user: UserRepository.mapRow(r),
         pendingOpportunities: parseInt(r.pending_opps || '0', 10),
         pendingContracts: parseInt(r.pending_contracts || '0', 10),
+        pendingStudents: parseInt(r.pending_students || '0', 10),
       }))
-      .filter((x) => x.pendingOpportunities + x.pendingContracts > 0);
+      .filter((x) => x.pendingOpportunities + x.pendingContracts + x.pendingStudents > 0);
   }
 
   /**
