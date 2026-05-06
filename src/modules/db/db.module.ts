@@ -72,6 +72,10 @@ import { UserController } from './user.controller';
 import { StudentRepository } from './student.repository';
 import { StudentController } from './student.controller';
 
+// ===== V29 R6 课程产品库（校长/老板预设标准产品）=====
+import { CourseProductRepository } from './course-product.repository';
+import { CourseProductController } from './course-product.controller';
+
 // ===== 跨版本 =====
 import { StudentImportRepository } from './student-import.repository';
 import { StudentImportController } from './student-import.controller';
@@ -133,6 +137,7 @@ import { UploadController } from './upload.controller';
     ContractController,
     UserController,
     StudentController,
+    CourseProductController,
   ],
   providers: [
     // 基础设施
@@ -168,6 +173,7 @@ import { UploadController } from './upload.controller';
     ContractRepository,
     UserRepository,
     StudentRepository,
+    CourseProductRepository,
   ],
   exports: [
     PgPoolService,
@@ -200,6 +206,7 @@ import { UploadController } from './upload.controller';
     ContractRepository,
     UserRepository,
     StudentRepository,
+    CourseProductRepository,
   ],
 })
 export class DbModule {}
