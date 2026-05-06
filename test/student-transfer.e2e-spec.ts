@@ -42,6 +42,21 @@ describe('V28 Student transfer + Teacher archive (e2e)', () => {
     });
   });
 
+  describe('V29 R2 Student / Customer create 无 token → 401', () => {
+    it('POST /db/students (single create)', async () => {
+      await request(app.getHttpServer())
+        .post('/api/db/students')
+        .send({})
+        .expect(401);
+    });
+    it('POST /db/customers (self-built)', async () => {
+      await request(app.getHttpServer())
+        .post('/api/db/customers')
+        .send({})
+        .expect(401);
+    });
+  });
+
   describe('Teacher archive 1 endpoint 无 token → 401', () => {
     it('POST /api/teachers/db/:id/archive', async () => {
       await request(app.getHttpServer())

@@ -14,6 +14,7 @@ import {
 import {
   CustomerRepository,
   Customer,
+  CreateCustomerResult,
   FollowEntry,
   FollowType,
 } from './customer.repository';
@@ -43,6 +44,70 @@ import { RbacGuard } from '../../guards/rbac.guard';
 @UseGuards(TenantScopeGuard)
 export class CustomerController {
   constructor(private readonly repo: CustomerRepository) {}
+
+  /**
+   * V29 R2 销售即时建客户（家长 + opportunity + 可选 student 一并）
+   *
+   * 用户 2026-05-07「全做」— 销售自己开拓的客户能即时录入，不必等公共池
+   *
+   * Body:
+   *   customerId / opportunityId  32-char ULID（前端生成）
+   *   parentName / primaryMobile / campusId  必填
+   *   studentId / studentName     可选（提供则一并建学生）
+   *   gradeOrAge / intendedSubject / source / note 可选
+   *
+   * RBAC：sales / sales_manager / sales_director / boss / admin
+   * ownerSalesId 自动 = req.user.sub
+   */
+  @Post()
+  @UseGuards(RbacGuard)
+  @Roles('sales', 'sales_manager', 'sales_director', 'boss', 'admin')
+  @HttpCode(HttpStatus.CREATED)
+  async createSelfBuilt(
+    @Body()
+    body: {
+      tenantId: string;
+      tenantSchema: string;
+      customerId: string;
+      opportunityId: string;
+      parentName: string;
+      primaryMobile: string;
+      campusId?: string;
+      studentId?: string;
+      studentName?: string;
+      gradeOrAge?: string;
+      intendedSubject?: string;
+      source?: string;
+      note?: string;
+      stage?: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<CreateCustomerResult> {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    const operatorUserId = req.user?.sub;
+    if (!operatorUserId) throw new BadRequestException('user sub required');
+    const campusId = body.campusId || req.user?.campusId;
+    if (!campusId) {
+      throw new BadRequestException(
+        '跨校 role 必须显式传 campusId（admin/sales_director/hr 无单一 campus）',
+      );
+    }
+    return this.repo.createWithOpportunity(body.tenantSchema, {
+      customerId: body.customerId,
+      opportunityId: body.opportunityId,
+      parentName: body.parentName,
+      primaryMobile: body.primaryMobile,
+      campusId,
+      ownerSalesId: operatorUserId,
+      studentId: body.studentId,
+      studentName: body.studentName,
+      gradeOrAge: body.gradeOrAge,
+      intendedSubject: body.intendedSubject,
+      stage: body.stage,
+      source: body.source,
+      note: body.note,
+    });
+  }
 
   @Get('mine')
   @HttpCode(HttpStatus.OK)

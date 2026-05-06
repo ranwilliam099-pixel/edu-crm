@@ -68,9 +68,131 @@ const POOL_RESET_REASON = {
   salesQuit: 'sales_quit',
 };
 
+/**
+ * V29 R2 销售即时建客户结果（含 customer + opportunity + 可选 student）
+ */
+export interface CreateCustomerResult {
+  customerId: string;
+  opportunityId: string;
+  studentId: string | null;
+}
+
 @Injectable()
 export class CustomerRepository {
   constructor(private readonly pg: PgPoolService) {}
+
+  /**
+   * V29 R2 销售即时建客户（家长） + opportunity + 可选 student（一并）
+   *
+   * 来源：用户 2026-05-07「全做」— 销售自己开拓的客户能即时录入，不必等公共池
+   *
+   * 事务内：
+   *   1. INSERT customers（家长）
+   *   2. INSERT students（如 studentName 提供）
+   *   3. INSERT opportunities（owner_user_id = 销售自己，stage='初步接触'）
+   *
+   * RBAC：sales / sales_manager / sales_director / boss / admin（销售口可建）
+   */
+  async createWithOpportunity(
+    tenantSchema: string,
+    payload: {
+      customerId: string;
+      opportunityId: string;
+      parentName: string;
+      primaryMobile: string;
+      campusId: string;
+      ownerSalesId: string;
+      // student 可选 — 提供则一并建学生（关联 customer + opportunity）
+      studentId?: string;
+      studentName?: string;
+      gradeOrAge?: string;
+      intendedSubject?: string;
+      // opportunity 字段
+      stage?: string;
+      source?: string;
+      note?: string;
+    },
+  ): Promise<CreateCustomerResult> {
+    if (!payload.customerId || payload.customerId.length !== 32) {
+      throw new BadRequestException('customerId must be 32-char ULID');
+    }
+    if (!payload.opportunityId || payload.opportunityId.length !== 32) {
+      throw new BadRequestException('opportunityId must be 32-char ULID');
+    }
+    if (!payload.parentName) throw new BadRequestException('parentName required');
+    if (!payload.primaryMobile || !/^1[3-9]\d{9}$/.test(payload.primaryMobile)) {
+      throw new BadRequestException('primaryMobile must be 11-digit Chinese mobile');
+    }
+    if (!payload.campusId) throw new BadRequestException('campusId required');
+    if (!payload.ownerSalesId) throw new BadRequestException('ownerSalesId required');
+    if (payload.studentName && (!payload.studentId || payload.studentId.length !== 32)) {
+      throw new BadRequestException('当传 studentName 时必须传 32-char studentId');
+    }
+
+    return this.pg.transaction(
+      async (client) => {
+        // 1. customer（家长）
+        await client.query(
+          `INSERT INTO customers (id, parent_name, primary_mobile, campus_id, owner_id, created_by, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $5, $5)`,
+          [
+            payload.customerId,
+            payload.parentName,
+            payload.primaryMobile,
+            payload.campusId,
+            payload.ownerSalesId,
+          ],
+        );
+
+        // 2. student（可选）
+        let createdStudentId: string | null = null;
+        if (payload.studentName && payload.studentId) {
+          await client.query(
+            `INSERT INTO students
+               (id, student_name, customer_id, grade_or_age, intended_subject,
+                owner_sales_id, created_by, updated_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $6, $6)`,
+            [
+              payload.studentId,
+              payload.studentName,
+              payload.customerId,
+              payload.gradeOrAge || null,
+              payload.intendedSubject || null,
+              payload.ownerSalesId,
+            ],
+          );
+          createdStudentId = payload.studentId;
+        }
+
+        // 3. opportunity（销售线索 — 必须 student_id 已存在；如无 student 则跳过）
+        if (createdStudentId) {
+          await client.query(
+            `INSERT INTO opportunities
+               (id, student_id, course_product_id, stage, owner_user_id, campus_id,
+                source, phone, last_contact_at, note, created_by, updated_by)
+             VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, NOW(), $8, $4, $4)`,
+            [
+              payload.opportunityId,
+              createdStudentId,
+              payload.stage || '初步接触',
+              payload.ownerSalesId,
+              payload.campusId,
+              payload.source || '销售自建',
+              payload.primaryMobile,
+              payload.note || null,
+            ],
+          );
+        }
+
+        return {
+          customerId: payload.customerId,
+          opportunityId: createdStudentId ? payload.opportunityId : '',
+          studentId: createdStudentId,
+        };
+      },
+      { tenantSchema },
+    );
+  }
 
   static mapCustomerRow(r: PgRow): Customer {
     return {

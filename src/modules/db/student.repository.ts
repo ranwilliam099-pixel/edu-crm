@@ -47,6 +47,62 @@ export class StudentRepository {
     };
   }
 
+  /**
+   * V29 R2 销售即时建学生（替代仅 batch import 的限制）
+   *
+   * 来源：用户 2026-05-07「全做」— 销售签约前临时新增学员
+   *
+   * 必填：id（32-char ULID）/ studentName / customerId（FK customers，必须已存在）
+   * 可选：gradeOrAge / intendedSubject / ownerSalesId / assignedTeacherId / studentInfo
+   */
+  async create(
+    tenantSchema: string,
+    payload: {
+      id: string;
+      studentName: string;
+      customerId: string;
+      gradeOrAge?: string;
+      intendedSubject?: string;
+      schoolName?: string;
+      gender?: '男' | '女' | '未知';
+      ownerSalesId?: string | null;
+      assignedTeacherId?: string | null;
+      operatorUserId: string;
+    },
+  ): Promise<StudentBrief> {
+    if (!payload.id || payload.id.length !== 32) {
+      throw new BadRequestException('student id must be 32-char ULID');
+    }
+    if (!payload.studentName || payload.studentName.length > 32) {
+      throw new BadRequestException('studentName required and ≤ 32');
+    }
+    if (!payload.customerId || payload.customerId.length !== 32) {
+      throw new BadRequestException('customerId must be 32-char ULID');
+    }
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `INSERT INTO students
+         (id, student_name, customer_id, grade_or_age, intended_subject, school_name, gender,
+          owner_sales_id, assigned_teacher_id, created_by, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
+       RETURNING id, student_name, customer_id, owner_sales_id, assigned_teacher_id,
+                 owner_changed_at, owner_change_reason`,
+      [
+        payload.id,
+        payload.studentName,
+        payload.customerId,
+        payload.gradeOrAge || null,
+        payload.intendedSubject || null,
+        payload.schoolName || null,
+        payload.gender || null,
+        payload.ownerSalesId || null,
+        payload.assignedTeacherId || null,
+        payload.operatorUserId,
+      ],
+    );
+    return StudentRepository.mapBrief(rows[0]);
+  }
+
   async findBrief(tenantSchema: string, id: string): Promise<StudentBrief | null> {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,

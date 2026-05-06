@@ -99,6 +99,68 @@ describe('StudentRepository (V28)', () => {
     });
   });
 
+  describe('create (V29 R2 — 销售即时建学生)', () => {
+    it('成功创建：返回 brief + INSERT 写入 owner_sales_id', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: STUDENT_ID,
+          student_name: '王小明',
+          customer_id: 'cust00000000000000000000000A001C',
+          owner_sales_id: SALES_A,
+          assigned_teacher_id: TEACHER_A,
+          owner_changed_at: null,
+          owner_change_reason: null,
+        },
+      ]);
+      const r = await repo.create(TENANT, {
+        id: STUDENT_ID,
+        studentName: '王小明',
+        customerId: 'cust00000000000000000000000A001C',
+        ownerSalesId: SALES_A,
+        assignedTeacherId: TEACHER_A,
+        operatorUserId: SALES_A,
+      });
+      expect(r.studentName).toBe('王小明');
+      expect(r.ownerSalesId).toBe(SALES_A);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('INSERT INTO students');
+      expect(sql).toContain('owner_sales_id');
+    });
+
+    it('id 非 32 字符 → BadRequest', async () => {
+      await expect(
+        repo.create(TENANT, {
+          id: 'short',
+          studentName: '王小明',
+          customerId: 'cust00000000000000000000000A001C',
+          operatorUserId: SALES_A,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('customerId 非 32 字符 → BadRequest', async () => {
+      await expect(
+        repo.create(TENANT, {
+          id: STUDENT_ID,
+          studentName: '王小明',
+          customerId: 'short',
+          operatorUserId: SALES_A,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('studentName 空 → BadRequest', async () => {
+      await expect(
+        repo.create(TENANT, {
+          id: STUDENT_ID,
+          studentName: '',
+          customerId: 'cust00000000000000000000000A001C',
+          operatorUserId: SALES_A,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
   describe('findBrief', () => {
     it('返回 brief 含 V28 字段', async () => {
       pg.tenantQuery.mockResolvedValueOnce([studentRow()]);

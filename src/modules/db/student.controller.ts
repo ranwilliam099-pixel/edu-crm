@@ -35,6 +35,57 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 export class StudentController {
   constructor(private readonly repo: StudentRepository) {}
 
+  /**
+   * V29 R2 销售即时建学生（替代仅 batch import）
+   *
+   * 来源：用户 2026-05-07「全做」— 销售签约前临时新增学员
+   *
+   * Body:
+   *   id            32-char ULID（前端生成）
+   *   studentName   学员名 *
+   *   customerId    家长 customer.id *（FK，必须已存在）
+   *   gradeOrAge / intendedSubject / schoolName / gender / assignedTeacherId — 可选
+   *   ownerSalesId 自动 = req.user.sub（销售自己创建归自己）
+   *
+   * RBAC：sales / sales_manager / sales_director / boss / admin
+   */
+  @Post()
+  @UseGuards(RbacGuard)
+  @Roles('sales', 'sales_manager', 'sales_director', 'boss', 'admin')
+  @HttpCode(HttpStatus.CREATED)
+  async create(
+    @Body()
+    body: {
+      tenantId: string;
+      tenantSchema: string;
+      id: string;
+      studentName: string;
+      customerId: string;
+      gradeOrAge?: string;
+      intendedSubject?: string;
+      schoolName?: string;
+      gender?: '男' | '女' | '未知';
+      assignedTeacherId?: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    const operatorUserId = req.user?.sub;
+    if (!operatorUserId) throw new BadRequestException('user sub required');
+    return this.repo.create(body.tenantSchema, {
+      id: body.id,
+      studentName: body.studentName,
+      customerId: body.customerId,
+      gradeOrAge: body.gradeOrAge,
+      intendedSubject: body.intendedSubject,
+      schoolName: body.schoolName,
+      gender: body.gender,
+      ownerSalesId: operatorUserId, // 销售自建归自己
+      assignedTeacherId: body.assignedTeacherId,
+      operatorUserId,
+    });
+  }
+
   @Post(':id/transfer-sales')
   @UseGuards(RbacGuard)
   @Roles('admin', 'boss', 'sales', 'sales_manager', 'sales_director')
