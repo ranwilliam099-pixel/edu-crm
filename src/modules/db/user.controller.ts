@@ -128,13 +128,18 @@ export class UserController {
   ): Promise<DeactivateResult> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
     const operatorUserId = req.user?.sub;
-    if (!operatorUserId) throw new BadRequestException('user sub required');
+    const operatorRole = req.user?.role;
+    if (!operatorUserId || !operatorRole) {
+      throw new BadRequestException('user sub/role required');
+    }
     if (operatorUserId === userId) {
       throw new BadRequestException('不能自己离职自己');
     }
     return this.repo.deactivate(body.tenantSchema, userId, {
       userId: operatorUserId,
       label: body.operatorLabel || `操作员 ${operatorUserId.slice(0, 6)}`,
+      role: operatorRole,
+      campusId: req.user?.campusId ?? null,
     });
   }
 

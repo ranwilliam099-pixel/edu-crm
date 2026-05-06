@@ -111,4 +111,55 @@ describe('TeacherRepository (V28 archive)', () => {
       expect(candidateCall[2]).toEqual([CAMPUS_A, TEACHER_A]);
     });
   });
+
+  describe('archive RBAC 边界 (V28 R2)', () => {
+    const CAMPUS_OTHER = 'campus_OTHER000000000000000A099';
+
+    it('admin (跨校) → 任意 campus 老师：✓', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([teacherRow({ campus_id: CAMPUS_OTHER })]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      txClient.query
+        .mockResolvedValueOnce({ rowCount: 1, rows: [teacherRow({ status: '归档' })] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      await expect(
+        repo.archive(TENANT, TEACHER_A, 'admin01', { role: 'admin', campusId: null }),
+      ).resolves.toBeDefined();
+    });
+
+    it('boss → 同 campus 老师：✓', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([teacherRow({ campus_id: CAMPUS_A })]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      txClient.query
+        .mockResolvedValueOnce({ rowCount: 1, rows: [teacherRow({ status: '归档' })] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      await expect(
+        repo.archive(TENANT, TEACHER_A, 'boss01', { role: 'boss', campusId: CAMPUS_A }),
+      ).resolves.toBeDefined();
+    });
+
+    it('boss → 跨 campus 老师：✗ BadRequest', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([teacherRow({ campus_id: CAMPUS_OTHER })]);
+      await expect(
+        repo.archive(TENANT, TEACHER_A, 'boss01', { role: 'boss', campusId: CAMPUS_A }),
+      ).rejects.toThrow(/校长.*同校区老师/);
+    });
+
+    it('hr → 任意 campus 老师：✓', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([teacherRow({ campus_id: CAMPUS_OTHER })]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      txClient.query
+        .mockResolvedValueOnce({ rowCount: 1, rows: [teacherRow({ status: '归档' })] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      await expect(
+        repo.archive(TENANT, TEACHER_A, 'hr01', { role: 'hr', campusId: null }),
+      ).resolves.toBeDefined();
+    });
+
+    it('sales → 任意：✗ 无权', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([teacherRow()]);
+      await expect(
+        repo.archive(TENANT, TEACHER_A, 'sales01', { role: 'sales', campusId: CAMPUS_A }),
+      ).rejects.toThrow(/sales.*无老师归档权限/);
+    });
+  });
 });

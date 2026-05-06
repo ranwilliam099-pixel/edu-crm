@@ -140,6 +140,9 @@ export class TeacherController {
   ): Promise<TeacherArchiveResult> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
     const operator = req.user?.sub || 'system';
-    return this.repo.archive(body.tenantSchema, id, operator);
+    return this.repo.archive(body.tenantSchema, id, operator, {
+      role: req.user?.role || null,
+      campusId: req.user?.campusId ?? null,
+    });
   }
 }

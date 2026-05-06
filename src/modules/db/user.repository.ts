@@ -64,6 +64,62 @@ function isCrossCampus(role: TenantRole): boolean {
 }
 
 /**
+ * V28 R2 离职 RBAC 边界矩阵（用户 2026-05-07「老板也可以同样处理校长」+ 边界精化）
+ *
+ * | 操作者 | 可注销目标 |
+ * |---|---|
+ * | admin（老板）   | 任何 user（含 boss / 其他 admin / 跨校）|
+ * | boss（校长）    | 同 campus 的 sales / sales_manager / marketing / finance |
+ * | hr（人事）      | 同租户的 sales / sales_manager / marketing / finance / boss（不含 admin）|
+ * | 其他 role      | 不能调用 deactivate（controller 层 RBAC 已挡，本层兜底）|
+ *
+ * 任何人不能离职自己（controller 层已校验，本层兜底）。
+ *
+ * @throws BadRequestException 当操作越权
+ */
+function assertCanDeactivate(
+  operator: { userId: string; role: TenantRole | string; campusId: string | null },
+  target: User,
+): void {
+  if (operator.userId === target.id) {
+    throw new BadRequestException('不能自己离职自己');
+  }
+  switch (operator.role) {
+    case 'admin':
+      // 老板：任意目标
+      return;
+    case 'boss': {
+      const allowedTargets: TenantRole[] = ['sales', 'sales_manager', 'marketing', 'finance'];
+      if (!allowedTargets.includes(target.role)) {
+        throw new BadRequestException(
+          `校长（boss）仅能注销 sales/sales_manager/marketing/finance（target.role=${target.role}）`,
+        );
+      }
+      if (operator.campusId && target.campusId !== operator.campusId) {
+        throw new BadRequestException(
+          `校长（boss）仅能注销同校区员工（operator=${operator.campusId} / target=${target.campusId}）`,
+        );
+      }
+      return;
+    }
+    case 'hr': {
+      const allowedTargets: TenantRole[] = [
+        'sales', 'sales_manager', 'sales_director',
+        'marketing', 'finance', 'boss',
+      ];
+      if (!allowedTargets.includes(target.role)) {
+        throw new BadRequestException(
+          `人事（hr）不能注销 ${target.role}（admin / hr 等高管由老板决策）`,
+        );
+      }
+      return;
+    }
+    default:
+      throw new BadRequestException(`role=${operator.role} 无离职操作权限`);
+  }
+}
+
+/**
  * 32-char ULID 简单生成（不引第三方依赖；与项目其他位置一致风格）
  */
 function ulid32(): string {
@@ -261,13 +317,15 @@ export class UserRepository {
   async deactivate(
     tenantSchema: string,
     leaverUserId: string,
-    operator: { userId: string; label: string },
+    operator: { userId: string; label: string; role: TenantRole | string; campusId: string | null },
   ): Promise<DeactivateResult> {
     const leaver = await this.findById(tenantSchema, leaverUserId);
     if (!leaver) throw new NotFoundException(`user ${leaverUserId} not found`);
     if (leaver.status === '停用') {
       throw new BadRequestException(`user ${leaverUserId} 已离职 (status=停用)`);
     }
+    // V28 R2 RBAC 边界（admin 任意 / boss 同校单校组 / hr 单校组+boss）
+    assertCanDeactivate(operator, leaver);
     const target = await this.findTransferTarget(tenantSchema, leaver);
     const targetId = target ? target.id : null;
     const targetLabel = target ? `${target.name}（${target.role === 'boss' ? '校长' : target.role === 'admin' ? '老板' : target.role}）` : '无人接（待认领）';
@@ -373,7 +431,12 @@ export class UserRepository {
       scope: 'all' | 'select';
       opportunityIds?: string[];
       contractIds?: string[];
-      operator: { userId: string; label: string };
+      operator: {
+        userId: string;
+        label: string;
+        role?: TenantRole | string;
+        campusId?: string | null;
+      };
     },
   ): Promise<HandoverResult> {
     const { fromUserId, toUserId, scope, operator } = payload;

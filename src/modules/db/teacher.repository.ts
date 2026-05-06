@@ -145,11 +145,27 @@ export class TeacherRepository {
     tenantSchema: string,
     teacherId: string,
     operator: string,
+    operatorContext?: { role?: string | null; campusId?: string | null },
   ): Promise<TeacherArchiveResult> {
     const target = await this.findById(tenantSchema, teacherId);
     if (!target) throw new NotFoundException(`teacher ${teacherId} not found`);
     if (target.status === '归档') {
       throw new BadRequestException(`teacher ${teacherId} 已归档`);
+    }
+    // V28 R2 RBAC 边界（用户 2026-05-07「老板也可以同样处理校长」+ 边界精化）
+    // - admin / hr：任意校区老师
+    // - boss：仅同校老师
+    if (operatorContext) {
+      const role = operatorContext.role;
+      const campusId = operatorContext.campusId;
+      if (role === 'boss' && campusId && target.campusId !== campusId) {
+        throw new BadRequestException(
+          `校长（boss）仅能归档同校区老师（operator=${campusId} / target=${target.campusId}）`,
+        );
+      }
+      if (role && role !== 'admin' && role !== 'boss' && role !== 'hr') {
+        throw new BadRequestException(`role=${role} 无老师归档权限`);
+      }
     }
 
     // 找同 campus 其他 active 老师作接棒人（排除自己）

@@ -162,7 +162,7 @@ describe('UserRepository (V27)', () => {
         .mockResolvedValueOnce({ rowCount: 2, rows: [{ id: 'c1' }, { id: 'c2' }] })
         .mockResolvedValueOnce({ rowCount: 4, rows: [{ id: 's1' }, { id: 's2' }, { id: 's3' }, { id: 's4' }] })
         .mockResolvedValue({ rowCount: 1, rows: [] }); // 3 × INSERT log
-      const r = await repo.deactivate(TENANT, SALES_ID, { userId: ADMIN_ID, label: '老板' });
+      const r = await repo.deactivate(TENANT, SALES_ID, { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null });
       expect(r.user.status).toBe('停用');
       expect(r.transferToUserId).toBe(BOSS_A_ID);
       expect(r.opportunitiesMoved).toBe(3);
@@ -186,14 +186,14 @@ describe('UserRepository (V27)', () => {
     it('user 已 停用 → BadRequestException', async () => {
       pg.tenantQuery.mockResolvedValueOnce([userRow({ id: SALES_ID, status: '停用' })]);
       await expect(
-        repo.deactivate(TENANT, SALES_ID, { userId: ADMIN_ID, label: '老板' }),
+        repo.deactivate(TENANT, SALES_ID, { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null }),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('user 不存在 → NotFoundException', async () => {
       pg.tenantQuery.mockResolvedValueOnce([]);
       await expect(
-        repo.deactivate(TENANT, SALES_ID, { userId: ADMIN_ID, label: '老板' }),
+        repo.deactivate(TENANT, SALES_ID, { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null }),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -207,7 +207,7 @@ describe('UserRepository (V27)', () => {
         .mockResolvedValueOnce({ rowCount: 0, rows: [] })
         .mockResolvedValueOnce({ rowCount: 0, rows: [] })
         .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // students UPDATE 空
-      const r = await repo.deactivate(TENANT, SALES_ID, { userId: ADMIN_ID, label: '老板' });
+      const r = await repo.deactivate(TENANT, SALES_ID, { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null });
       expect(r.transferToUserId).toBeNull();
       expect(r.transferToUserLabel).toContain('无人接');
       expect(r.studentsMoved).toBe(0);
@@ -228,7 +228,7 @@ describe('UserRepository (V27)', () => {
         fromUserId: SALES_ID,
         toUserId: BOSS_A_ID,
         scope: 'all',
-        operator: { userId: ADMIN_ID, label: '老板' },
+        operator: { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null },
       });
       expect(r.opportunitiesMoved).toBe(5);
       expect(r.contractsMoved).toBe(2);
@@ -246,7 +246,7 @@ describe('UserRepository (V27)', () => {
         toUserId: BOSS_A_ID,
         scope: 'select',
         opportunityIds: ['opp1', 'opp2'],
-        operator: { userId: ADMIN_ID, label: '老板' },
+        operator: { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null },
       });
       expect(r.opportunitiesMoved).toBe(2);
       expect(r.studentsMoved).toBe(0);
@@ -281,7 +281,7 @@ describe('UserRepository (V27)', () => {
         fromUserId: SALES_ID,
         toUserId: null,
         scope: 'all',
-        operator: { userId: ADMIN_ID, label: '老板' },
+        operator: { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null },
       });
       expect(r.toUserId).toBeNull();
       expect(r.opportunitiesMoved).toBe(2);
@@ -294,7 +294,7 @@ describe('UserRepository (V27)', () => {
           fromUserId: SALES_ID,
           toUserId: BOSS_A_ID,
           scope: 'all',
-          operator: { userId: ADMIN_ID, label: '老板' },
+          operator: { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null },
         }),
       ).rejects.toThrow(/停用.*不能接棒/);
     });
@@ -305,7 +305,7 @@ describe('UserRepository (V27)', () => {
           fromUserId: SALES_ID,
           toUserId: SALES_ID,
           scope: 'all',
-          operator: { userId: ADMIN_ID, label: '老板' },
+          operator: { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null },
         }),
       ).rejects.toThrow(/无须转交/);
     });
@@ -317,7 +317,7 @@ describe('UserRepository (V27)', () => {
           fromUserId: SALES_ID,
           toUserId: BOSS_A_ID,
           scope: 'select',
-          operator: { userId: ADMIN_ID, label: '老板' },
+          operator: { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null },
         }),
       ).rejects.toThrow(/select.*opportunityIds.*contractIds/);
     });
@@ -332,7 +332,7 @@ describe('UserRepository (V27)', () => {
         toUserId: BOSS_A_ID,
         scope: 'select',
         opportunityIds: ['opp1', 'opp2'],
-        operator: { userId: ADMIN_ID, label: '老板' },
+        operator: { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null },
       });
       expect(r.opportunitiesMoved).toBe(2);
       expect(r.contractsMoved).toBe(0);
@@ -353,10 +353,141 @@ describe('UserRepository (V27)', () => {
         fromUserId: SALES_ID,
         toUserId: BOSS_A_ID,
         scope: 'all',
-        operator: { userId: ADMIN_ID, label: '老板' },
+        operator: { userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null },
       });
       expect(r.opportunitiesMoved).toBe(3);
       expect(r.contractsMoved).toBe(1);
+    });
+  });
+
+  describe('deactivate RBAC 边界矩阵 (V28 R2)', () => {
+    /**
+     * 矩阵：
+     * | operator | target | 期望 |
+     * |---|---|---|
+     * | admin   | boss               | ✓ 老板可注销校长（用户 2026-05-07 拍板）|
+     * | admin   | admin（其他）      | ✓ 老板可注销其他老板 |
+     * | admin   | sales（跨校）      | ✓ 老板跨校 |
+     * | boss    | sales 同 campus    | ✓ |
+     * | boss    | sales 跨 campus    | ✗ BadRequest 校区不符 |
+     * | boss    | boss               | ✗ BadRequest 不能注销同级 |
+     * | boss    | admin              | ✗ BadRequest 不能注销上级 |
+     * | hr      | sales              | ✓ |
+     * | hr      | boss               | ✓ |
+     * | hr      | admin              | ✗ BadRequest hr 不能注销老板 |
+     * | sales   | 任何               | ✗ BadRequest 无权 |
+     * | 自己    | 自己               | ✗ BadRequest 不能离自己 |
+     */
+    function setupTarget(role: string, campusId: string = CAMPUS_A) {
+      pg.tenantQuery.mockResolvedValueOnce([userRow({ id: SALES_ID, role, campus_id: campusId })]);
+    }
+
+    it('admin → boss：✓ 老板注销校长（用户 2026-05-07 拍板核心）', async () => {
+      setupTarget('boss', CAMPUS_A);
+      pg.tenantQuery.mockResolvedValueOnce([userRow({ id: ADMIN_ID, role: 'admin' })]); // 接棒人
+      txClient.query
+        .mockResolvedValueOnce({ rowCount: 1, rows: [userRow({ id: SALES_ID, role: 'boss', status: '停用' })] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      const r = await repo.deactivate(TENANT, SALES_ID, {
+        userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null,
+      });
+      expect(r.user.status).toBe('停用');
+    });
+
+    it('admin → admin（其他老板）：✓', async () => {
+      setupTarget('admin', CAMPUS_A);
+      pg.tenantQuery.mockResolvedValueOnce([userRow({ id: BOSS_A_ID, role: 'boss' })]); // 接棒
+      txClient.query
+        .mockResolvedValueOnce({ rowCount: 1, rows: [userRow({ id: SALES_ID, role: 'admin', status: '停用' })] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      const r = await repo.deactivate(TENANT, SALES_ID, {
+        userId: ADMIN_ID, label: '老板', role: 'admin', campusId: null,
+      });
+      expect(r.user.status).toBe('停用');
+    });
+
+    it('boss → sales 同 campus：✓', async () => {
+      setupTarget('sales', CAMPUS_A);
+      pg.tenantQuery.mockResolvedValueOnce([userRow({ id: BOSS_A_ID, role: 'boss', campus_id: CAMPUS_A })]); // 接棒
+      txClient.query
+        .mockResolvedValueOnce({ rowCount: 1, rows: [userRow({ id: SALES_ID, status: '停用' })] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      await repo.deactivate(TENANT, SALES_ID, {
+        userId: BOSS_A_ID, label: 'A 校长', role: 'boss', campusId: CAMPUS_A,
+      });
+    });
+
+    it('boss → sales 跨 campus：✗ BadRequest 校区不符', async () => {
+      setupTarget('sales', CAMPUS_B);
+      await expect(
+        repo.deactivate(TENANT, SALES_ID, {
+          userId: BOSS_A_ID, label: 'A 校长', role: 'boss', campusId: CAMPUS_A,
+        }),
+      ).rejects.toThrow(/校长.*同校区/);
+    });
+
+    it('boss → boss：✗ 不能注销同级', async () => {
+      setupTarget('boss', CAMPUS_A);
+      await expect(
+        repo.deactivate(TENANT, SALES_ID, {
+          userId: BOSS_A_ID, label: 'A 校长', role: 'boss', campusId: CAMPUS_A,
+        }),
+      ).rejects.toThrow(/校长.*仅能注销/);
+    });
+
+    it('boss → admin：✗ 不能注销上级', async () => {
+      setupTarget('admin', CAMPUS_A);
+      await expect(
+        repo.deactivate(TENANT, SALES_ID, {
+          userId: BOSS_A_ID, label: 'A 校长', role: 'boss', campusId: CAMPUS_A,
+        }),
+      ).rejects.toThrow(/校长.*仅能注销/);
+    });
+
+    it('hr → boss：✓', async () => {
+      setupTarget('boss', CAMPUS_A);
+      pg.tenantQuery.mockResolvedValueOnce([userRow({ id: ADMIN_ID, role: 'admin' })]);
+      txClient.query
+        .mockResolvedValueOnce({ rowCount: 1, rows: [userRow({ id: SALES_ID, role: 'boss', status: '停用' })] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      await repo.deactivate(TENANT, SALES_ID, {
+        userId: HR_ID, label: 'HR', role: 'hr', campusId: null,
+      });
+    });
+
+    it('hr → admin：✗ hr 不能注销老板', async () => {
+      setupTarget('admin', CAMPUS_A);
+      await expect(
+        repo.deactivate(TENANT, SALES_ID, {
+          userId: HR_ID, label: 'HR', role: 'hr', campusId: null,
+        }),
+      ).rejects.toThrow(/人事.*不能注销 admin/);
+    });
+
+    it('sales → 任何：✗ 无操作权限', async () => {
+      setupTarget('sales', CAMPUS_A);
+      await expect(
+        repo.deactivate(TENANT, SALES_ID, {
+          userId: BOSS_A_ID, label: '销售', role: 'sales', campusId: CAMPUS_A,
+        }),
+      ).rejects.toThrow(/sales.*无离职操作权限/);
+    });
+
+    it('自己注销自己：✗', async () => {
+      setupTarget('boss', CAMPUS_A);
+      await expect(
+        repo.deactivate(TENANT, SALES_ID, {
+          userId: SALES_ID, label: '本人', role: 'boss', campusId: CAMPUS_A,
+        }),
+      ).rejects.toThrow(/不能自己离职自己/);
     });
   });
 
