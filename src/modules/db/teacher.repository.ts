@@ -1,6 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PgPoolService, PgRow } from './pg-pool.service';
 import { Teacher } from '../teacher/teacher.service';
+
+/**
+ * V28 老师归档结果（注销老师 + 关联学生主带老师转移）
+ */
+export interface TeacherArchiveResult {
+  teacher: Teacher;
+  transferToTeacherId: string | null;
+  transferToTeacherName: string;
+  studentsReassigned: number;
+}
 
 /**
  * TeacherRepository — 教师档案 PG 持久化层
@@ -114,6 +124,81 @@ export class TeacherRepository {
       throw new NotFoundException(`teacher ${id} not found`);
     }
     return this.mapRow(rows[0]);
+  }
+
+  /**
+   * V28 老师归档（注销）+ 关联学生主带老师转移
+   *
+   * 来源：用户 2026-05-07「校长也应该可以注销老师和销售」
+   *
+   * 行为：
+   *   1. teacher.status = '归档'
+   *   2. 该老师 assigned_teacher_id 的所有学生 → 同 campus 其他在职老师
+   *      - 找不到同 campus 在职老师 → 学生 assigned_teacher_id = NULL（待校长再分配）
+   *   3. 全部在事务内
+   *
+   * 边界：
+   *   - 已归档的老师 → BadRequestException
+   *   - 老师不存在 → NotFoundException
+   */
+  async archive(
+    tenantSchema: string,
+    teacherId: string,
+    operator: string,
+  ): Promise<TeacherArchiveResult> {
+    const target = await this.findById(tenantSchema, teacherId);
+    if (!target) throw new NotFoundException(`teacher ${teacherId} not found`);
+    if (target.status === '归档') {
+      throw new BadRequestException(`teacher ${teacherId} 已归档`);
+    }
+
+    // 找同 campus 其他 active 老师作接棒人（排除自己）
+    const candidates = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT id, name FROM teachers
+         WHERE campus_id = $1 AND id <> $2 AND status = '在职'
+         ORDER BY created_at ASC LIMIT 1`,
+      [target.campusId, teacherId],
+    );
+    const transferToId = candidates.length > 0 ? candidates[0].id : null;
+    const transferToName = candidates.length > 0
+      ? candidates[0].name
+      : '无接棒人（待校长再分配）';
+
+    return this.pg.transaction(
+      async (client) => {
+        const teacherRows = await client.query<PgRow>(
+          `UPDATE teachers
+              SET status = '归档', updated_by = $2, updated_at = NOW()
+            WHERE id = $1 AND status <> '归档'
+          RETURNING id, campus_id, name, phone, user_id, subjects, hourly_rate_yuan, status`,
+          [teacherId, operator],
+        );
+        if (teacherRows.rowCount === 0) {
+          throw new BadRequestException(
+            `teacher ${teacherId} 状态变更失败（可能并发已归档）`,
+          );
+        }
+
+        const studentsRes = await client.query<{ id: string }>(
+          `UPDATE students
+              SET assigned_teacher_id = $2,
+                  owner_changed_at = NOW(),
+                  owner_change_reason = '老师归档'
+            WHERE assigned_teacher_id = $1
+            RETURNING id`,
+          [teacherId, transferToId],
+        );
+
+        return {
+          teacher: this.mapRow(teacherRows.rows[0]),
+          transferToTeacherId: transferToId,
+          transferToTeacherName: transferToName,
+          studentsReassigned: studentsRes.rowCount || 0,
+        };
+      },
+      { tenantSchema },
+    );
   }
 
   /**

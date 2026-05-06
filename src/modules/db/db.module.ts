@@ -68,6 +68,10 @@ import { ContractController } from './contract.controller';
 import { UserRepository } from './user.repository';
 import { UserController } from './user.controller';
 
+// ===== V28 学生归属（销售 / 主带老师）+ 单条转移 =====
+import { StudentRepository } from './student.repository';
+import { StudentController } from './student.controller';
+
 // ===== 跨版本 =====
 import { StudentImportRepository } from './student-import.repository';
 import { StudentImportController } from './student-import.controller';
@@ -128,6 +132,7 @@ import { UploadController } from './upload.controller';
     CustomerController,
     ContractController,
     UserController,
+    StudentController,
   ],
   providers: [
     // 基础设施
@@ -162,6 +167,7 @@ import { UploadController } from './upload.controller';
     CustomerRepository,
     ContractRepository,
     UserRepository,
+    StudentRepository,
   ],
   exports: [
     PgPoolService,
@@ -193,6 +199,7 @@ import { UploadController } from './upload.controller';
     CustomerRepository,
     ContractRepository,
     UserRepository,
+    StudentRepository,
   ],
 })
 export class DbModule {}

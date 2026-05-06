@@ -1,17 +1,22 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Param,
   Post,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { TeacherService, Teacher } from './teacher.service';
 import { CreateTeacherDto, TeacherStatus } from './dto/create-teacher.dto';
+import { TeacherRepository, TeacherArchiveResult } from '../db/teacher.repository';
 import { Roles } from '../../guards/rbac.decorator';
 import { RbacGuard } from '../../guards/rbac.guard';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
+import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 /**
  * TeacherController — V7 教师独立档案 HTTP 暴露 BE-V7-1
@@ -26,7 +31,10 @@ import { RbacGuard } from '../../guards/rbac.guard';
  */
 @Controller('teachers')
 export class TeacherController {
-  constructor(private readonly service: TeacherService) {}
+  constructor(
+    private readonly service: TeacherService,
+    private readonly repo: TeacherRepository,
+  ) {}
 
   /**
    * POST /api/teachers — 创建教师档案
@@ -108,5 +116,30 @@ export class TeacherController {
       isPureArchive: this.service.isPureArchive(body.teacher),
       isSchedulable: this.service.isSchedulable(body.teacher),
     };
+  }
+
+  /**
+   * V28 注销老师（归档）+ 关联学生主带老师转给同 campus 其他在职老师
+   *
+   * 用户 2026-05-07：「校长也应该可以注销老师和销售」
+   *
+   * 路由：POST /api/teachers/db/:id/archive
+   *   Body: { tenantId, tenantSchema }
+   *   Returns: { teacher, transferToTeacherId, transferToTeacherName, studentsReassigned }
+   *
+   * RBAC：admin / boss / hr
+   */
+  @Post('db/:id/archive')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('admin', 'boss', 'hr')
+  @HttpCode(HttpStatus.OK)
+  async archive(
+    @Param('id') id: string,
+    @Body() body: { tenantId: string; tenantSchema: string },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<TeacherArchiveResult> {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    const operator = req.user?.sub || 'system';
+    return this.repo.archive(body.tenantSchema, id, operator);
   }
 }

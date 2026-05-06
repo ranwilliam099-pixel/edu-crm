@@ -44,6 +44,7 @@ export interface DeactivateResult {
   transferToUserLabel: string;
   opportunitiesMoved: number;
   contractsMoved: number;
+  studentsMoved: number;
   reason: '离职转交';
 }
 
@@ -52,6 +53,7 @@ export interface HandoverResult {
   toUserId: string | null;
   opportunitiesMoved: number;
   contractsMoved: number;
+  studentsMoved: number;
   reason: '校长再分配' | '主动认领';
 }
 
@@ -310,6 +312,17 @@ export class UserRepository {
           [leaverUserId, targetId, reason],
         );
 
+        // 3b. V28 students.owner_sales_id 联动转交
+        const studentsRes = await client.query<{ id: string }>(
+          `UPDATE students
+              SET owner_sales_id = $2,
+                  owner_changed_at = NOW(),
+                  owner_change_reason = $3
+            WHERE owner_sales_id = $1
+            RETURNING id`,
+          [leaverUserId, targetId, reason],
+        );
+
         // 4. 每个 opportunity 留痕（customer_follow_log）
         for (const row of oppsRes.rows) {
           await client.query(
@@ -337,6 +350,7 @@ export class UserRepository {
           transferToUserLabel: targetLabel,
           opportunitiesMoved: oppsRes.rowCount || 0,
           contractsMoved: contractsRes.rowCount || 0,
+          studentsMoved: studentsRes.rowCount || 0,
           reason,
         };
       },
@@ -388,8 +402,9 @@ export class UserRepository {
 
     return this.pg.transaction(
       async (client) => {
-        let oppsRes;
-        let contractsRes;
+        let oppsRes: { rows: { id: string }[]; rowCount: number | null };
+        let contractsRes: { rows: { id: string }[]; rowCount: number | null };
+        let studentsRes: { rows: { id: string }[]; rowCount: number | null };
         if (scope === 'all') {
           oppsRes = await client.query<{ id: string }>(
             `UPDATE opportunities
@@ -408,6 +423,16 @@ export class UserRepository {
               WHERE owner_user_id = $1
                 AND status IN ('pending','active')
                 AND deleted_at IS NULL
+              RETURNING id`,
+            [fromUserId, toUserId, reason],
+          );
+          // V28 students.owner_sales_id 联动转交
+          studentsRes = await client.query<{ id: string }>(
+            `UPDATE students
+                SET owner_sales_id = $2,
+                    owner_changed_at = NOW(),
+                    owner_change_reason = $3
+              WHERE owner_sales_id = $1
               RETURNING id`,
             [fromUserId, toUserId, reason],
           );
@@ -439,6 +464,8 @@ export class UserRepository {
                   RETURNING id`,
                 [fromUserId, toUserId, reason, conIds],
               );
+          // scope=select 不转 students（精确多选语义只针对 opp/contract；学生用 student-transfer endpoint 单独转）
+          studentsRes = { rows: [], rowCount: 0 };
         }
 
         // 留痕
@@ -468,6 +495,7 @@ export class UserRepository {
           toUserId,
           opportunitiesMoved: oppsRes.rowCount || 0,
           contractsMoved: contractsRes.rowCount || 0,
+          studentsMoved: studentsRes.rowCount || 0,
           reason,
         };
       },

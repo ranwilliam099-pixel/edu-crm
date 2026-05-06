@@ -150,25 +150,32 @@ describe('UserRepository (V27)', () => {
   });
 
   describe('deactivate', () => {
-    it('标 user 停用 + 转交 opportunities + contracts + 留痕（事务）', async () => {
+    it('标 user 停用 + 转交 opportunities + contracts + students + 留痕（事务）', async () => {
       // findById 返回离职者
       pg.tenantQuery.mockResolvedValueOnce([userRow({ id: SALES_ID, role: 'sales' })]);
       // findTransferTarget 返回同 campus boss
       pg.tenantQuery.mockResolvedValueOnce([userRow({ id: BOSS_A_ID, role: 'boss', name: 'A 校长' })]);
-      // 事务内：UPDATE users / UPDATE opportunities / UPDATE contracts / N × INSERT log
+      // 事务内：UPDATE users / UPDATE opportunities / UPDATE contracts / UPDATE students / N × INSERT log
       txClient.query
         .mockResolvedValueOnce({ rowCount: 1, rows: [userRow({ id: SALES_ID, status: '停用' })] })
         .mockResolvedValueOnce({ rowCount: 3, rows: [{ id: 'opp1' }, { id: 'opp2' }, { id: 'opp3' }] })
         .mockResolvedValueOnce({ rowCount: 2, rows: [{ id: 'c1' }, { id: 'c2' }] })
+        .mockResolvedValueOnce({ rowCount: 4, rows: [{ id: 's1' }, { id: 's2' }, { id: 's3' }, { id: 's4' }] })
         .mockResolvedValue({ rowCount: 1, rows: [] }); // 3 × INSERT log
       const r = await repo.deactivate(TENANT, SALES_ID, { userId: ADMIN_ID, label: '老板' });
       expect(r.user.status).toBe('停用');
       expect(r.transferToUserId).toBe(BOSS_A_ID);
       expect(r.opportunitiesMoved).toBe(3);
       expect(r.contractsMoved).toBe(2);
+      expect(r.studentsMoved).toBe(4);
       expect(r.reason).toBe('离职转交');
       // 事务被调用
       expect(pg.transaction).toHaveBeenCalledTimes(1);
+      // V28 students UPDATE 应在事务里调用（含 owner_sales_id）
+      const studentsCall = txClient.query.mock.calls.find((c) =>
+        c[0].includes('UPDATE students') && c[0].includes('owner_sales_id'),
+      );
+      expect(studentsCall).toBeDefined();
       // INSERT log 调了 3 次（每个 opp 一条）
       const insertLogCalls = txClient.query.mock.calls.filter((c) =>
         c[0].includes('customer_follow_log'),
@@ -198,21 +205,24 @@ describe('UserRepository (V27)', () => {
       txClient.query
         .mockResolvedValueOnce({ rowCount: 1, rows: [userRow({ id: SALES_ID, status: '停用' })] })
         .mockResolvedValueOnce({ rowCount: 0, rows: [] })
-        .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // students UPDATE 空
       const r = await repo.deactivate(TENANT, SALES_ID, { userId: ADMIN_ID, label: '老板' });
       expect(r.transferToUserId).toBeNull();
       expect(r.transferToUserLabel).toContain('无人接');
+      expect(r.studentsMoved).toBe(0);
     });
   });
 
   describe('handover (校长二次手动转交)', () => {
-    it('scope=all：转交 fromUser 全部数据给 toUser，reason=校长再分配', async () => {
+    it('scope=all：转交 fromUser 全部数据给 toUser，reason=校长再分配（含 students V28）', async () => {
       // findById toUser
       pg.tenantQuery.mockResolvedValueOnce([userRow({ id: BOSS_A_ID, role: 'boss', name: 'A 校长' })]);
-      // 事务：UPDATE opps / UPDATE contracts / 留痕
+      // 事务：UPDATE opps / UPDATE contracts / UPDATE students (V28) / 留痕
       txClient.query
         .mockResolvedValueOnce({ rowCount: 5, rows: [{ id: 'opp1' }, { id: 'opp2' }, { id: 'opp3' }, { id: 'opp4' }, { id: 'opp5' }] })
         .mockResolvedValueOnce({ rowCount: 2, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 6, rows: [] })  // students V28
         .mockResolvedValue({ rowCount: 1, rows: [] });
       const r = await repo.handover(TENANT, {
         fromUserId: SALES_ID,
@@ -222,7 +232,29 @@ describe('UserRepository (V27)', () => {
       });
       expect(r.opportunitiesMoved).toBe(5);
       expect(r.contractsMoved).toBe(2);
+      expect(r.studentsMoved).toBe(6);
       expect(r.reason).toBe('校长再分配');
+    });
+
+    it('scope=select 不联动转 students（精确多选语义只针对 opp/contract）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([userRow({ id: BOSS_A_ID, role: 'boss' })]);
+      txClient.query
+        .mockResolvedValueOnce({ rowCount: 2, rows: [{ id: 'opp1' }, { id: 'opp2' }] })
+        .mockResolvedValue({ rowCount: 1, rows: [] });
+      const r = await repo.handover(TENANT, {
+        fromUserId: SALES_ID,
+        toUserId: BOSS_A_ID,
+        scope: 'select',
+        opportunityIds: ['opp1', 'opp2'],
+        operator: { userId: ADMIN_ID, label: '老板' },
+      });
+      expect(r.opportunitiesMoved).toBe(2);
+      expect(r.studentsMoved).toBe(0);
+      // 没有 UPDATE students 调用
+      const studentsUpdate = txClient.query.mock.calls.find((c) =>
+        typeof c[0] === 'string' && c[0].includes('UPDATE students'),
+      );
+      expect(studentsUpdate).toBeUndefined();
     });
 
     it('校长把数据转给自己 → reason=主动认领', async () => {
