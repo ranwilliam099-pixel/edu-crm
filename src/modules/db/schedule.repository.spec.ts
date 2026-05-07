@@ -113,3 +113,95 @@ describe('ScheduleRepository — V8 周期展开 bulkUpsertFromRecurring', () =>
     expect(bindingInserts).toBe(0); // 全跳过 → 不绑定
   });
 });
+
+describe('ScheduleRepository — V32 insertWithStudents class_type + max_students', () => {
+  let repo: ScheduleRepository;
+  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock; transaction: jest.Mock };
+
+  const TENANT = 'tenant_v32test_zzzz';
+
+  function makeSchedule(overrides: any = {}) {
+    return {
+      id: 'sch00000000000000000000000000S99',
+      teacherId: 'tch00000000000000000000000000T01',
+      startAt: new Date('2026-05-08T10:00:00Z'),
+      durationMin: 60,
+      endAt: new Date('2026-05-08T11:00:00Z'),
+      status: '已排课' as const,
+      source: 'one_off' as const,
+      createdByUserId: 'usr00000000000000000000000000U01',
+      createdByRole: 'teacher' as const,
+      ...overrides,
+    };
+  }
+
+  beforeEach(async () => {
+    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn(), transaction: jest.fn() };
+    const m = await Test.createTestingModule({
+      providers: [ScheduleRepository, { provide: PgPoolService, useValue: pg }],
+    }).compile();
+    repo = m.get(ScheduleRepository);
+  });
+
+  it('成功 INSERT：class_type + max_students 写入', async () => {
+    const client: any = {
+      query: jest.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
+    };
+    pg.transaction.mockImplementation(async (fn: any) => fn(client));
+
+    await repo.insertWithStudents(
+      TENANT,
+      makeSchedule({ classType: '小班', maxStudents: 5 }),
+      ['stu1', 'stu2', 'stu3'],
+    );
+
+    const insertCall = client.query.mock.calls.find((c: any) =>
+      typeof c[0] === 'string' && c[0].includes('INSERT INTO schedules'),
+    );
+    expect(insertCall).toBeDefined();
+    expect(insertCall[0]).toContain('class_type');
+    expect(insertCall[0]).toContain('max_students');
+    expect(insertCall[1][12]).toBe('小班');     // class_type
+    expect(insertCall[1][13]).toBe(5);           // max_students
+  });
+
+  it('柔性兜底：studentIds.length > maxStudents → throw', async () => {
+    await expect(
+      repo.insertWithStudents(
+        TENANT,
+        makeSchedule({ classType: '一对一', maxStudents: 1 }),
+        ['stu1', 'stu2'],
+      ),
+    ).rejects.toThrow(/exceeds maxStudents/);
+  });
+
+  it('studentIds 为空 → throw', async () => {
+    await expect(
+      repo.insertWithStudents(TENANT, makeSchedule(), []),
+    ).rejects.toThrow(/at least 1 student/);
+  });
+
+  it('maxStudents 未提供 → 仅校验至少 1 个，写 NULL（柔性）', async () => {
+    const client: any = { query: jest.fn().mockResolvedValue({ rows: [], rowCount: 1 }) };
+    pg.transaction.mockImplementation(async (fn: any) => fn(client));
+    await repo.insertWithStudents(
+      TENANT,
+      makeSchedule(),
+      Array.from({ length: 100 }, (_, i) => `stu${i}`),
+    );
+    const insertCall = client.query.mock.calls.find((c: any) =>
+      typeof c[0] === 'string' && c[0].includes('INSERT INTO schedules'),
+    );
+    expect(insertCall[1][13]).toBeNull();
+  });
+
+  it('classType 未提供 → 写 NULL（兼容旧代码）', async () => {
+    const client: any = { query: jest.fn().mockResolvedValue({ rows: [], rowCount: 1 }) };
+    pg.transaction.mockImplementation(async (fn: any) => fn(client));
+    await repo.insertWithStudents(TENANT, makeSchedule(), ['stu1']);
+    const insertCall = client.query.mock.calls.find((c: any) =>
+      typeof c[0] === 'string' && c[0].includes('INSERT INTO schedules'),
+    );
+    expect(insertCall[1][12]).toBeNull();
+  });
+});

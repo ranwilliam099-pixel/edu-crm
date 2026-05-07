@@ -42,6 +42,7 @@ const TENANT_MIGRATIONS = [
   'V29__contracts_self_filled_fields.sql',
   'V30__opportunities_course_product_nullable.sql',
   'V31__campuses_address.sql',
+  'V32__schedules_class_type_and_max_students.sql',
 ];
 
 @Injectable()

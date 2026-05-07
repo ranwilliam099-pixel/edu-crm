@@ -43,6 +43,9 @@ export interface Schedule {
   createdByUserId: string;
   createdByRole: SchedulerRole;
   notes?: string;
+  // V32 班型 + 老师自填最多人数（柔性，仅校验上限）
+  classType?: string;
+  maxStudents?: number;
 }
 
 export interface ScheduleStudent {
@@ -71,6 +74,9 @@ export interface CreateScheduleInput {
   callerRole: SchedulerRole;
   source?: ScheduleSource;
   recurringScheduleId?: string;
+  // V32 班型 + 老师自填最多人数（柔性 — 后端兜底校验 studentIds.length ≤ maxStudents）
+  classType?: string;
+  maxStudents?: number;
 }
 
 @Injectable()
@@ -165,6 +171,9 @@ export class ScheduleService {
       createdByUserId: input.currentUser.id,
       createdByRole: input.callerRole,
       notes: input.notes,
+      // V32 班型 + 老师自填最多人数透传
+      classType: input.classType,
+      maxStudents: input.maxStudents,
     };
     const students: ScheduleStudent[] = input.studentIds.map((sid) => ({
       scheduleId: input.id,
@@ -259,6 +268,9 @@ export class ScheduleService {
       createdByUserId: input.currentUser.id,
       createdByRole: input.callerRole,
       notes: input.notes,
+      // V32 班型 + 老师自填最多人数透传（兜底校验在 repository 层）
+      classType: input.classType,
+      maxStudents: input.maxStudents,
     };
 
     return this.repo.insertWithStudents(tenantSchema, schedule, input.studentIds);

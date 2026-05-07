@@ -89,18 +89,34 @@ export class ScheduleRepository {
 
   /**
    * 在事务内同时 INSERT schedule + 多条 schedule_students
+   *
+   * V32 兜底校验（柔性）：
+   *   - studentIds 至少 1 个
+   *   - 若 schedule.maxStudents 提供，则 studentIds.length ≤ maxStudents
    */
   async insertWithStudents(
     tenantSchema: string,
     schedule: Schedule,
     studentIds: ReadonlyArray<string>,
   ): Promise<{ schedule: Schedule; students: ScheduleStudent[] }> {
+    if (!studentIds || studentIds.length === 0) {
+      throw new Error('schedule must have at least 1 student');
+    }
+    if (
+      typeof schedule.maxStudents === 'number' &&
+      studentIds.length > schedule.maxStudents
+    ) {
+      throw new Error(
+        `studentIds (${studentIds.length}) exceeds maxStudents (${schedule.maxStudents})`,
+      );
+    }
     return this.pg.transaction(async (client) => {
       await client.query(
         `INSERT INTO schedules (
            id, course_product_id, teacher_id, start_at, duration_min, end_at,
-           status, source, recurring_schedule_id, created_by_user_id, created_by_role, notes
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+           status, source, recurring_schedule_id, created_by_user_id, created_by_role, notes,
+           class_type, max_students
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           schedule.id,
           schedule.courseProductId || null,
@@ -114,6 +130,8 @@ export class ScheduleRepository {
           schedule.createdByUserId,
           schedule.createdByRole,
           schedule.notes || null,
+          schedule.classType || null,
+          schedule.maxStudents != null ? schedule.maxStudents : null,
         ],
       );
 
