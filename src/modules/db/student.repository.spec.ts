@@ -22,6 +22,8 @@ describe('StudentRepository (V28)', () => {
     assigned_teacher_id: 'assigned_teacher_id' in overrides ? overrides.assigned_teacher_id : TEACHER_A,
     owner_changed_at: null,
     owner_change_reason: null,
+    grade_or_age: '三年级',
+    intended_subject: '英语',
   });
 
   beforeEach(async () => {

@@ -21,6 +21,9 @@ export interface StudentBrief {
   assignedTeacherId: string | null;
   ownerChangedAt: string | null;
   ownerChangeReason: string | null;
+  // V29 R12 追加常用展示字段（OOUX 老师/销售排课时学生卡需要）
+  gradeOrAge: string | null;
+  intendedSubject: string | null;
 }
 
 export interface StudentTransferResult {
@@ -44,6 +47,8 @@ export class StudentRepository {
       assignedTeacherId: r.assigned_teacher_id,
       ownerChangedAt: r.owner_changed_at ? new Date(r.owner_changed_at).toISOString() : null,
       ownerChangeReason: r.owner_change_reason,
+      gradeOrAge: r.grade_or_age || null,
+      intendedSubject: r.intended_subject || null,
     };
   }
 
@@ -86,7 +91,7 @@ export class StudentRepository {
           owner_sales_id, assigned_teacher_id, created_by, updated_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
        RETURNING id, student_name, customer_id, owner_sales_id, assigned_teacher_id,
-                 owner_changed_at, owner_change_reason`,
+                 owner_changed_at, owner_change_reason, grade_or_age, intended_subject`,
       [
         payload.id,
         payload.studentName,
@@ -119,7 +124,7 @@ export class StudentRepository {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `SELECT id, student_name, customer_id, owner_sales_id, assigned_teacher_id,
-              owner_changed_at, owner_change_reason
+              owner_changed_at, owner_change_reason, grade_or_age, intended_subject
          FROM students
          WHERE assigned_teacher_id = $1
          ORDER BY created_at DESC
@@ -133,7 +138,7 @@ export class StudentRepository {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `SELECT id, student_name, customer_id, owner_sales_id, assigned_teacher_id,
-              owner_changed_at, owner_change_reason
+              owner_changed_at, owner_change_reason, grade_or_age, intended_subject
          FROM students WHERE id = $1`,
       [id],
     );
