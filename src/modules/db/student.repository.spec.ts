@@ -164,12 +164,13 @@ describe('StudentRepository (V28)', () => {
   });
 
   describe('listByTeacher (V29 R4 老师视角)', () => {
-    it('SQL 包含 WHERE assigned_teacher_id = $1 + 默认 limit 100', async () => {
+    it('SQL 包含 WHERE s.assigned_teacher_id = $1 + 默认 limit 100 + V29 R14.4 contract_class_type join', async () => {
       pg.tenantQuery.mockResolvedValueOnce([]);
       await repo.listByTeacher(TENANT, TEACHER_A);
       const [, sql, params] = pg.tenantQuery.mock.calls[0];
-      expect(sql).toContain('WHERE assigned_teacher_id = $1');
-      expect(sql).toContain('ORDER BY created_at DESC');
+      expect(sql).toContain('s.assigned_teacher_id = $1');
+      expect(sql).toContain('ORDER BY s.created_at DESC');
+      expect(sql).toContain('contract_class_type');  // R14.4 join
       expect(params[0]).toBe(TEACHER_A);
       expect(params[1]).toBe(100);
       expect(params[2]).toBe(0);
@@ -188,6 +189,18 @@ describe('StudentRepository (V28)', () => {
       const r = await repo.listByTeacher(TENANT, TEACHER_A);
       expect(r).toHaveLength(2);
       expect(r[0].assignedTeacherId).toBe(TEACHER_A);
+    });
+
+    it('V29 R14.4 mapBrief 透出 contract_class_type 列', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ ...studentRow(), contract_class_type: '小班' }]);
+      const r = await repo.listByTeacher(TENANT, TEACHER_A);
+      expect(r[0].contractClassType).toBe('小班');
+    });
+
+    it('V29 R14.4 学员无 active 合同 → contractClassType=null', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ ...studentRow(), contract_class_type: null }]);
+      const r = await repo.listByTeacher(TENANT, TEACHER_A);
+      expect(r[0].contractClassType).toBeNull();
     });
   });
 

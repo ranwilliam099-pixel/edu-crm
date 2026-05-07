@@ -24,6 +24,8 @@ export interface StudentBrief {
   // V29 R12 追加常用展示字段（OOUX 老师/销售排课时学生卡需要）
   gradeOrAge: string | null;
   intendedSubject: string | null;
+  // V29 R14.4 学员最新 active 合同的班型（用于排课时一致性校验）
+  contractClassType?: string | null;
 }
 
 export interface StudentTransferResult {
@@ -49,6 +51,8 @@ export class StudentRepository {
       ownerChangeReason: r.owner_change_reason,
       gradeOrAge: r.grade_or_age || null,
       intendedSubject: r.intended_subject || null,
+      // V29 R14.4 contract_class_type 来自 join 子查询（仅 listByTeacher 用，其他 SELECT 没 join 时为 null）
+      contractClassType: r.contract_class_type || null,
     };
   }
 
@@ -121,13 +125,20 @@ export class StudentRepository {
   ): Promise<StudentBrief[]> {
     const limit = options.limit ?? 100;
     const offset = options.offset ?? 0;
+    // V29 R14.4 join 子查询拿学员最新 active 合同 class_type（用于排课一致性校验）
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT id, student_name, customer_id, owner_sales_id, assigned_teacher_id,
-              owner_changed_at, owner_change_reason, grade_or_age, intended_subject
-         FROM students
-         WHERE assigned_teacher_id = $1
-         ORDER BY created_at DESC
+      `SELECT s.id, s.student_name, s.customer_id, s.owner_sales_id, s.assigned_teacher_id,
+              s.owner_changed_at, s.owner_change_reason, s.grade_or_age, s.intended_subject,
+              (SELECT c.class_type FROM contracts c
+                 WHERE c.student_id = s.id
+                   AND c.status IN ('pending', 'active')
+                   AND c.deleted_at IS NULL
+                 ORDER BY COALESCE(c.signed_at, c.created_at) DESC
+                 LIMIT 1) AS contract_class_type
+         FROM students s
+         WHERE s.assigned_teacher_id = $1
+         ORDER BY s.created_at DESC
          LIMIT $2 OFFSET $3`,
       [teacherId, limit, offset],
     );
