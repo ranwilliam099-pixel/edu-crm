@@ -92,6 +92,30 @@ export class CourseConsumptionRepository {
     return rows.map((r) => this.mapRow(r));
   }
 
+  /**
+   * home-teacher 待办 banner 用：聚合该老师所有 pending_feedback 课消
+   *
+   * 返回 { count, earliestDueAt }：
+   *   count           pending_feedback 总数（含已超期但未 cron 锁的）
+   *   earliestDueAt   最早到期时间（若 < now 即已超期；UI 据此显示「剩 X 小时」或「已超期」）
+   */
+  async findPendingFeedbackSummaryByTeacher(
+    tenantSchema: string,
+    teacherId: string,
+  ): Promise<{ count: number; earliestDueAt: Date | null }> {
+    const rows = await this.pg.tenantQuery<{ count: string; earliest: Date | null }>(
+      tenantSchema,
+      `SELECT COUNT(*) AS count, MIN(feedback_due_at) AS earliest
+         FROM course_consumptions
+        WHERE teacher_id = $1 AND status = 'pending_feedback'`,
+      [teacherId],
+    );
+    return {
+      count: parseInt(rows[0]?.count || '0', 10),
+      earliestDueAt: rows[0]?.earliest ? new Date(rows[0].earliest) : null,
+    };
+  }
+
   async confirmByFeedback(
     tenantSchema: string,
     id: string,

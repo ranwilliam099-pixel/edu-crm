@@ -43,6 +43,8 @@ const TENANT_MIGRATIONS = [
   'V30__opportunities_course_product_nullable.sql',
   'V31__campuses_address.sql',
   'V32__schedules_class_type_and_max_students.sql',
+  'V33__audit_log_in_tenant_schema.sql',
+  'V34__sensitive_fields_encrypted.sql',
 ];
 
 @Injectable()
@@ -79,11 +81,27 @@ export class TenantProvisionService {
       address?: string;
       courseLines?: string;  // 逗号分隔，用于 wizard 用户首签课程线
     }>;
+    admin?: {
+      id: string;
+      name: string;
+      phone: string;
+      email?: string;
+    };
+    products?: Array<{
+      name: string;
+      classes?: Array<{
+        type: string;
+        enabled?: boolean;
+        price?: string | number;
+      }>;
+    }>;
   }): Promise<{
     tenantId: string;
     tenantSchema: string;
     ranMigrations: string[];
     campusIds?: string[];
+    adminUserId?: string;
+    courseProductIds?: string[];
   }> {
     if (!input.tenantId || input.tenantId.length !== 32) {
       throw new BadRequestException('tenantId must be 32-char ULID');
@@ -167,7 +185,7 @@ export class TenantProvisionService {
       ? input.campuses
       : [{ id: this.simpleUlid(), name: input.name + ' 主校区', address: '', courseLines: '' }];
     const campusIds: string[] = [];
-    for (const c of campuses) {
+    for (const [index, c] of campuses.entries()) {
       if (!c.id || c.id.length !== 32) {
         throw new BadRequestException(`campus id must be 32-char ULID（got ${c.id}）`);
       }
@@ -184,13 +202,46 @@ export class TenantProvisionService {
           [c.id, c.name, c.address || null],
         );
       });
+      await this.pg.query(
+        `INSERT INTO public.campuses (
+           id, tenant_id, name, city, district, address, is_hq
+         ) VALUES ($1, $2, $3, NULL, NULL, $4, $5)
+         ON CONFLICT (id) DO UPDATE
+           SET name = EXCLUDED.name,
+               address = EXCLUDED.address,
+               is_hq = EXCLUDED.is_hq`,
+        [c.id, input.tenantId, c.name, c.address || null, index === 0],
+      );
       campusIds.push(c.id);
     }
     this.logger.log(`[TenantProvision] ✅ ${campusIds.length} campuses created for ${input.tenantId}`);
 
+    const adminUserId = await this.createAdminUser(tenantSchema, {
+      id: input.admin?.id || this.simpleUlid(),
+      name: input.admin?.name || '老板',
+      phone: input.admin?.phone || '13800001111',
+      campusId: campusIds[0],
+    });
+    const courseProductIds = await this.createCourseProducts(
+      tenantSchema,
+      input.products || [],
+      campusIds,
+      adminUserId,
+    );
+    this.logger.log(
+      `[TenantProvision] ✅ admin=${adminUserId}, courseProducts=${courseProductIds.length} created`,
+    );
+
     this.logger.log(`[TenantProvision] ✅ tenant ${input.tenantId} provisioned (${ranMigrations.length} migrations)`);
 
-    return { tenantId: input.tenantId, tenantSchema, ranMigrations, campusIds };
+    return {
+      tenantId: input.tenantId,
+      tenantSchema,
+      ranMigrations,
+      campusIds,
+      adminUserId,
+      courseProductIds,
+    };
   }
 
   /** V29 R5 后端兜底 ULID 生成（前端不传 campus.id 时） */
@@ -199,6 +250,82 @@ export class TenantProvisionService {
     let rand = '';
     while (rand.length < 22) rand += Math.random().toString(36).slice(2);
     return (t + rand).slice(0, 32);
+  }
+
+  private async createAdminUser(
+    tenantSchema: string,
+    input: { id: string; name: string; phone: string; campusId: string },
+  ): Promise<string> {
+    if (!input.id || input.id.length !== 32) {
+      throw new BadRequestException('admin id must be 32-char ULID');
+    }
+    await this.pg.withClient(async (client) => {
+      await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
+      await client.query(
+        `INSERT INTO users
+           (id, name, mobile, role, campus_id, status, created_by, updated_by)
+         VALUES ($1, $2, $3, 'admin', $4, '启用', $1, $1)
+         ON CONFLICT (id) DO UPDATE
+           SET name = EXCLUDED.name,
+               mobile = EXCLUDED.mobile,
+               role = 'admin',
+               campus_id = EXCLUDED.campus_id,
+               status = '启用',
+               updated_at = NOW(),
+               updated_by = EXCLUDED.updated_by`,
+        [input.id, input.name, input.phone, input.campusId],
+      );
+    });
+    return input.id;
+  }
+
+  private async createCourseProducts(
+    tenantSchema: string,
+    products: Array<{
+      name: string;
+      classes?: Array<{ type: string; enabled?: boolean; price?: string | number }>;
+    }>,
+    campusIds: string[],
+    operatorUserId: string,
+  ): Promise<string[]> {
+    const ids: string[] = [];
+    for (const product of products) {
+      const name = product.name && product.name.trim();
+      if (!name) continue;
+      const enabledClasses = (product.classes || []).filter((c) => c.enabled);
+      for (const cls of enabledClasses) {
+        const id = this.simpleUlid();
+        const classType = cls.type || '一对一';
+        const price = Number(cls.price || 0);
+        await this.pg.withClient(async (client) => {
+          await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
+          await client.query(
+            `INSERT INTO course_products
+               (id, product_name, course_line, class_type, lesson_package,
+                standard_price, campus_scope, status, created_by, updated_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, '上架', $8, $8)
+             ON CONFLICT (id) DO NOTHING`,
+            [
+              id,
+              `${name} · ${classType}`,
+              this.inferCourseLine(name),
+              classType,
+              name,
+              Number.isFinite(price) && price > 0 ? price : 0,
+              campusIds.join(','),
+              operatorUserId,
+            ],
+          );
+        });
+        ids.push(id);
+      }
+    }
+    return ids;
+  }
+
+  private inferCourseLine(name: string): string {
+    const match = name.match(/(语文|数学|英语|物理|化学|生物|历史|地理|政治)/);
+    return match ? match[1] : '综合';
   }
 
   /**

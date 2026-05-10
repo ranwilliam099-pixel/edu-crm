@@ -82,6 +82,9 @@ import { StudentImportController } from './student-import.controller';
 import { OnboardingController } from './onboarding.controller';
 import { UploadController } from './upload.controller';
 
+// ===== V33 审计日志（生产架构 P0 第 1 项）=====
+import { AuditLogRepository } from './audit-log.repository';
+
 /**
  * DbModule — 全局持久化基础设施层
  *
@@ -174,6 +177,8 @@ import { UploadController } from './upload.controller';
     UserRepository,
     StudentRepository,
     CourseProductRepository,
+    // V33 审计日志
+    AuditLogRepository,
   ],
   exports: [
     PgPoolService,
@@ -207,6 +212,7 @@ import { UploadController } from './upload.controller';
     UserRepository,
     StudentRepository,
     CourseProductRepository,
+    AuditLogRepository,
   ],
 })
 export class DbModule {}

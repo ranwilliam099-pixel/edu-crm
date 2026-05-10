@@ -214,4 +214,18 @@ export class CourseConsumptionService {
     const r = await this.repo.sumPayrollForTeacher(tenantSchema, teacherId, rangeStart, rangeEnd);
     return { teacherId, payrollYuan: r.total, count: r.count };
   }
+
+  /**
+   * home-teacher 待办 banner：聚合该老师 pending_feedback 课消
+   *
+   * @returns count（待点评课消数）+ earliestDueAt（最早 24h 到期点；< now = 已超期）
+   */
+  async pendingFeedbackSummaryByTeacherInDb(
+    teacherId: string,
+    tenantSchema: string,
+  ): Promise<{ teacherId: string; count: number; earliestDueAt: Date | null }> {
+    if (!this.repo) throw new BadRequestException('CourseConsumptionRepository not available');
+    const r = await this.repo.findPendingFeedbackSummaryByTeacher(tenantSchema, teacherId);
+    return { teacherId, count: r.count, earliestDueAt: r.earliestDueAt };
+  }
 }

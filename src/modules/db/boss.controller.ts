@@ -16,6 +16,7 @@ import {
   Subscription,
   PlanTier,
 } from './subscription.repository';
+import { PgPoolService } from './pg-pool.service';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
@@ -36,7 +37,53 @@ export class BossController {
   constructor(
     private readonly campusRepo: CampusRepository,
     private readonly subRepo: SubscriptionRepository,
+    private readonly pg: PgPoolService,
   ) {}
+
+  // ===== tenant =====
+
+  @Get('tenant/info')
+  @HttpCode(HttpStatus.OK)
+  async tenantInfo(@Query('tenantId') tenantId: string): Promise<{
+    tenantId: string;
+    name: string;
+    status: string;
+    version: string;
+    planTier: PlanTier;
+    maxCampuses: number;
+    createdAt: string;
+  }> {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId required');
+    }
+    const rows = await this.pg.query<{
+      id: string;
+      name: string;
+      status: string;
+      version: string;
+      plan_tier: PlanTier | null;
+      max_campuses: number;
+      created_at: Date;
+    }>(
+      `SELECT id, name, status, version, plan_tier, max_campuses, created_at
+         FROM public.tenants
+        WHERE id = $1`,
+      [tenantId],
+    );
+    if (rows.length === 0) {
+      throw new BadRequestException(`tenant ${tenantId} not found`);
+    }
+    const r = rows[0];
+    return {
+      tenantId: r.id,
+      name: r.name,
+      status: r.status,
+      version: r.version,
+      planTier: r.plan_tier || 'single',
+      maxCampuses: r.max_campuses,
+      createdAt: r.created_at.toISOString(),
+    };
+  }
 
   // ===== campuses =====
 

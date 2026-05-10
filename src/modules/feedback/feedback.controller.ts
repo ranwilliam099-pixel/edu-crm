@@ -441,6 +441,22 @@ export class FeedbackController {
     );
   }
 
+  /**
+   * home-teacher 待办 banner 聚合：老师待点评课消数 + 最早到期时间
+   * UI 据 earliestDueAt 显示「剩 X 小时锁课消」或「已超期」
+   */
+  @Post('db/teachers/:teacherId/pending-feedback-summary')
+  @HttpCode(HttpStatus.OK)
+  async teacherPendingFeedbackSummaryInDb(
+    @Param('teacherId') teacherId: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<{ teacherId: string; count: number; earliestDueAt: Date | null }> {
+    return this.consumption.pendingFeedbackSummaryByTeacherInDb(
+      teacherId,
+      body.tenantSchema,
+    );
+  }
+
   // ----- MonthlyReport -----
 
   @Post('db/monthly-reports/generate')

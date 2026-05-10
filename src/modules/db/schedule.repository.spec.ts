@@ -204,4 +204,132 @@ describe('ScheduleRepository — V32 insertWithStudents class_type + max_student
     );
     expect(insertCall[1][12]).toBeNull();
   });
+
+  describe('V29 R14.6 contractClassType 兜底校验', () => {
+    it('classType 提供 + 所有学员 contract_class_type 一致 → 通过 INSERT', async () => {
+      const client: any = {
+        query: jest.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM students')) {
+            return Promise.resolve({
+              rows: [
+                { student_id: 'stu1', contract_class_type: '小班' },
+                { student_id: 'stu2', contract_class_type: '小班' },
+              ],
+              rowCount: 2,
+            });
+          }
+          return Promise.resolve({ rows: [], rowCount: 1 });
+        }),
+      };
+      pg.transaction.mockImplementation(async (fn: any) => fn(client));
+
+      await expect(
+        repo.insertWithStudents(
+          TENANT,
+          makeSchedule({ classType: '小班', maxStudents: 5 }),
+          ['stu1', 'stu2'],
+        ),
+      ).resolves.toBeDefined();
+
+      const insertCall = client.query.mock.calls.find(
+        (c: any) => typeof c[0] === 'string' && c[0].includes('INSERT INTO schedules'),
+      );
+      expect(insertCall).toBeDefined();
+    });
+
+    it('classType 提供 + 1 个学员 contract_class_type 不一致 → throw 拒 INSERT', async () => {
+      let scheduleInserted = false;
+      const client: any = {
+        query: jest.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM students')) {
+            return Promise.resolve({
+              rows: [
+                { student_id: 'stu1', contract_class_type: '小班' },
+                { student_id: 'stu2', contract_class_type: '一对一' },
+              ],
+              rowCount: 2,
+            });
+          }
+          if (sql.includes('INSERT INTO schedules')) scheduleInserted = true;
+          return Promise.resolve({ rows: [], rowCount: 1 });
+        }),
+      };
+      pg.transaction.mockImplementation(async (fn: any) => fn(client));
+
+      await expect(
+        repo.insertWithStudents(
+          TENANT,
+          makeSchedule({ classType: '小班', maxStudents: 5 }),
+          ['stu1', 'stu2'],
+        ),
+      ).rejects.toThrow(/contractClassType mismatch.*小班/);
+      expect(scheduleInserted).toBe(false);
+    });
+
+    it('classType 提供 + 学员无 active 合同（contract_class_type=null）→ 柔性放行', async () => {
+      const client: any = {
+        query: jest.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM students')) {
+            return Promise.resolve({
+              rows: [
+                { student_id: 'stu1', contract_class_type: null },
+                { student_id: 'stu2', contract_class_type: '小班' },
+              ],
+              rowCount: 2,
+            });
+          }
+          return Promise.resolve({ rows: [], rowCount: 1 });
+        }),
+      };
+      pg.transaction.mockImplementation(async (fn: any) => fn(client));
+
+      await expect(
+        repo.insertWithStudents(
+          TENANT,
+          makeSchedule({ classType: '小班', maxStudents: 5 }),
+          ['stu1', 'stu2'],
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it('classType 未提供 → 完全跳过 contractClassType 查询', async () => {
+      let studentsQueried = false;
+      const client: any = {
+        query: jest.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM students')) studentsQueried = true;
+          return Promise.resolve({ rows: [], rowCount: 1 });
+        }),
+      };
+      pg.transaction.mockImplementation(async (fn: any) => fn(client));
+      await repo.insertWithStudents(TENANT, makeSchedule(), ['stu1', 'stu2']);
+      expect(studentsQueried).toBe(false);
+    });
+
+    it('错误信息含所有不一致学员 ID', async () => {
+      const client: any = {
+        query: jest.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM students')) {
+            return Promise.resolve({
+              rows: [
+                { student_id: 'stuA', contract_class_type: '一对一' },
+                { student_id: 'stuB', contract_class_type: '大班' },
+                { student_id: 'stuC', contract_class_type: '小班' },
+              ],
+              rowCount: 3,
+            });
+          }
+          return Promise.resolve({ rows: [], rowCount: 1 });
+        }),
+      };
+      pg.transaction.mockImplementation(async (fn: any) => fn(client));
+
+      await expect(
+        repo.insertWithStudents(
+          TENANT,
+          makeSchedule({ classType: '小班', maxStudents: 10 }),
+          ['stuA', 'stuB', 'stuC'],
+        ),
+      ).rejects.toThrow(/stuA,stuB/);
+    });
+  });
 });

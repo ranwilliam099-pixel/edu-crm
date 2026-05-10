@@ -1,5 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { LoggerModule } from './common/logger/logger.module';
+import { SentryModule } from './common/sentry/sentry.module';
+import { AlertModule } from './common/alert/alert.module';
+import { IdempotencyModule } from './common/idempotency/idempotency.module';
+import { RedisModule } from './modules/redis/redis.module';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { TenantModule } from './modules/tenant/tenant.module';
@@ -23,6 +28,16 @@ import { DbModule } from './modules/db/db.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
+    // PROD-ARCH(2026-05-10) P0-6: Sentry 错误上报（必须先于其他模块，hook 全局异常）
+    SentryModule,
+    // PROD-ARCH(2026-05-10) P0-3: 生产级日志（pino + 链路追踪 + PII 脱敏）
+    LoggerModule,
+    // PROD-ARCH(2026-05-10) P0-4: Redis（cache / lock / queue / idempotency）
+    RedisModule,
+    // PROD-ARCH(2026-05-10) P0-5: idempotency-key 写操作幂等（依赖 Redis）
+    IdempotencyModule,
+    // PROD-ARCH(2026-05-10) P0-8: 钉钉/企微告警（依赖 Redis dedup）
+    AlertModule,
     // USER-AUTH(2026-05-02): DbModule 真接 PG（pg.Pool + tenant schema worker + Repository）
     DbModule,
     AuthModule,

@@ -93,6 +93,11 @@ export class ScheduleRepository {
    * V32 兜底校验（柔性）：
    *   - studentIds 至少 1 个
    *   - 若 schedule.maxStudents 提供，则 studentIds.length ≤ maxStudents
+   *
+   * V29 R14.6 兜底校验（柔性）：
+   *   - 若 schedule.classType 提供，校验所有 studentIds 的最新 pending|active 合同班型一致
+   *   - 学员无 active 合同（contract_class_type IS NULL）→ 视为无约束放行（柔性，未签约学员可入任意班型）
+   *   - 仅在 contract_class_type 非空且 ≠ schedule.classType 时拒绝
    */
   async insertWithStudents(
     tenantSchema: string,
@@ -111,6 +116,32 @@ export class ScheduleRepository {
       );
     }
     return this.pg.transaction(async (client) => {
+      if (schedule.classType) {
+        const checkRes = await client.query(
+          `SELECT s.id AS student_id,
+                  (SELECT c.class_type FROM contracts c
+                     WHERE c.student_id = s.id
+                       AND c.status IN ('pending', 'active')
+                       AND c.deleted_at IS NULL
+                     ORDER BY COALESCE(c.signed_at, c.created_at) DESC
+                     LIMIT 1) AS contract_class_type
+             FROM students s
+             WHERE s.id = ANY($1)`,
+          [studentIds as string[]],
+        );
+        const mismatched = checkRes.rows.filter(
+          (r: PgRow) =>
+            r.contract_class_type != null &&
+            r.contract_class_type !== schedule.classType,
+        );
+        if (mismatched.length > 0) {
+          const ids = mismatched.map((r: PgRow) => r.student_id).join(',');
+          throw new Error(
+            `studentIds [${ids}] contractClassType mismatch (expected ${schedule.classType})`,
+          );
+        }
+      }
+
       await client.query(
         `INSERT INTO schedules (
            id, course_product_id, teacher_id, start_at, duration_min, end_at,

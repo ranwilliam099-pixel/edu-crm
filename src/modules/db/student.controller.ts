@@ -114,6 +114,30 @@ export class StudentController {
     return { items };
   }
 
+  @Post('list')
+  @UseGuards(RbacGuard)
+  @Roles('sales', 'sales_manager', 'sales_director', 'boss', 'admin', 'hr')
+  @HttpCode(HttpStatus.OK)
+  async listAll(
+    @Body()
+    body: {
+      tenantSchema: string;
+      limit?: number;
+      offset?: number;
+      ownerSalesId?: string;
+      assignedTeacherId?: string;
+    },
+  ): Promise<{ items: StudentBrief[] }> {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    const items = await this.repo.listAll(body.tenantSchema, {
+      limit: body.limit ? Math.min(body.limit, 200) : 100,
+      offset: body.offset || 0,
+      ownerSalesId: body.ownerSalesId,
+      assignedTeacherId: body.assignedTeacherId,
+    });
+    return { items };
+  }
+
   @Post(':id/transfer-sales')
   @UseGuards(RbacGuard)
   @Roles('admin', 'boss', 'sales', 'sales_manager', 'sales_director')

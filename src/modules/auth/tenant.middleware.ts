@@ -53,6 +53,11 @@ export class TenantMiddleware implements NestMiddleware {
       return next();
     }
 
+    if (this.isParentDbPath(path)) {
+      this.requireParentDbUser(req);
+      return next();
+    }
+
     // 平台超管路径：必须无租户 + 平台角色
     if (path.startsWith('/api/admin/')) {
       const user = this.requireUser(req);
@@ -116,6 +121,59 @@ export class TenantMiddleware implements NestMiddleware {
     }
     const user = this.jwt.parse(token);
     (req as RequestWithUser).user = user;
+  }
+
+  /**
+   * C 端页面复用部分 tenant DB 查询：家长 token 本身不带 tenantId，
+   * 因此通过绑定二维码/孩子档案保存的 tenantSchema 限定 schema。
+   */
+  private requireParentDbUser(req: Request): void {
+    const token = this.extractToken(req);
+    if (!token) throw new UnauthorizedException('Missing Authorization header');
+    try {
+      const parent = this.parentJwt.parse(token);
+      const schema = this.extractTenantSchema(req);
+      if (!schema) throw new UnauthorizedException('x-tenant-schema or body.tenantSchema required');
+      const tenantId = schema.replace(/^tenant_/, '');
+      (req as RequestWithUser).user = {
+        sub: parent.parentId,
+        tenantId,
+        role: 'parent' as any,
+        campusId: null,
+      };
+      (req as RequestWithTenant).tenantSchema = schema;
+      return;
+    } catch (e) {
+      if (e instanceof UnauthorizedException) throw e;
+    }
+    const user = this.jwt.parse(token);
+    (req as RequestWithUser).user = user;
+  }
+
+  private isParentDbPath(path: string): boolean {
+    const parentStudentPath =
+      /^\/api\/db\/students\/[^/]+\/(feedbacks|monthly-reports)$/.test(path) ||
+      /^\/api\/db\/students\/[^/]+\/leaves\/list$/.test(path);
+
+    return (
+      parentStudentPath ||
+      path.startsWith('/api/db/lesson-feedbacks/') ||
+      path.startsWith('/api/db/monthly-reports/') ||
+      path.startsWith('/api/db/leaves') ||
+      path.startsWith('/api/db/recommendations') ||
+      path.startsWith('/api/db/referrals') ||
+      path.startsWith('/api/course-balance/db/students/') ||
+      path.startsWith('/api/homework/db/submissions') ||
+      path.startsWith('/api/homework/db/students/')
+    );
+  }
+
+  private extractTenantSchema(req: Request): string {
+    const raw = String(req.headers['x-tenant-schema'] || req.body?.tenantSchema || '');
+    if (!/^tenant_[a-z0-9]+$/.test(raw)) {
+      throw new UnauthorizedException('invalid tenant schema');
+    }
+    return raw;
   }
 
   private extractToken(req: Request): string | null {

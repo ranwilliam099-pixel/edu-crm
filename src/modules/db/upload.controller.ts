@@ -32,21 +32,24 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
  * 配置（.env）：
  *   UPLOAD_DIR=/home/ubuntu/uploads
  *   UPLOAD_PUBLIC_BASE=http://1.14.127.67/uploads
- *   UPLOAD_MAX_BYTES=10485760  （10 MB）
+ *   UPLOAD_MAX_BYTES=20971520  （20 MB；覆盖 30s 压缩视频）
  *
  * 安全：
  *   - TenantScopeGuard 强制 JWT 携带 tenantId（防匿名滥用磁盘）
- *   - 仅图片白名单（jpg/jpeg/png/webp/gif）
+ *   - 图片 + 视频白名单（jpg/jpeg/png/webp/gif/mp4/mov/webm）
  *   - 文件名 random ULID + 扩展名（防 path traversal）
- *   - 大小硬上限 10 MB
+ *   - 大小硬上限 20 MB
  */
 @Controller('db')
 @UseGuards(TenantScopeGuard)
 export class UploadController {
   private readonly logger = new Logger(UploadController.name);
 
-  static readonly ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
-  static readonly DEFAULT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+  static readonly ALLOWED_EXT = new Set([
+    '.jpg', '.jpeg', '.png', '.webp', '.gif',
+    '.mp4', '.mov', '.webm',
+  ]);
+  static readonly DEFAULT_MAX_BYTES = 20 * 1024 * 1024; // 20 MB
 
   constructor(private readonly config: ConfigService) {}
 

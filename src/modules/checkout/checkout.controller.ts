@@ -4,6 +4,7 @@ import {
   CreateOrderDto,
   SkuName,
 } from './checkout.service';
+import { InvoiceService, InvoiceRequestInput } from './invoice.service';
 
 /**
  * CheckoutController — W3-1 Phase 1.3 BE-W3-3 订单 / 4 SKU 价格 HTTP 暴露
@@ -19,7 +20,10 @@ import {
  */
 @Controller('checkout')
 export class CheckoutController {
-  constructor(private readonly service: CheckoutService) {}
+  constructor(
+    private readonly service: CheckoutService,
+    private readonly invoice: InvoiceService,
+  ) {}
 
   /**
    * GET /api/public/checkout/sku/:sku — 查询单个 SKU 价格信息
@@ -49,6 +53,25 @@ export class CheckoutController {
   @HttpCode(HttpStatus.CREATED)
   createOrder(@Body() dto: CreateOrderDto) {
     return this.service.createOrder(dto);
+  }
+
+  /**
+   * POST /api/checkout/invoices — 提交开票申请
+   *
+   * 当前阶段先做服务端校验与状态回执；真实写入 invoice_requests
+   * 等支付订单持久化仓库接入后补上。
+   */
+  @Post('invoices')
+  @HttpCode(HttpStatus.CREATED)
+  createInvoiceRequest(@Body() dto: InvoiceRequestInput) {
+    this.invoice.validateInvoiceRequest(dto);
+    return {
+      invoiceId: `inv${dto.orderId.slice(3)}`,
+      orderId: dto.orderId,
+      invoiceTitle: dto.invoiceTitle,
+      state: '待审核',
+      submittedAt: new Date().toISOString(),
+    };
   }
 
   /**

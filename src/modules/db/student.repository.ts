@@ -145,6 +145,44 @@ export class StudentRepository {
     return rows.map((r) => StudentRepository.mapBrief(r));
   }
 
+  async listAll(
+    tenantSchema: string,
+    options: { limit?: number; offset?: number; ownerSalesId?: string; assignedTeacherId?: string } = {},
+  ): Promise<StudentBrief[]> {
+    const limit = options.limit ?? 100;
+    const offset = options.offset ?? 0;
+    const where: string[] = [];
+    const params: any[] = [];
+    if (options.ownerSalesId) {
+      params.push(options.ownerSalesId);
+      where.push(`s.owner_sales_id = $${params.length}`);
+    }
+    if (options.assignedTeacherId) {
+      params.push(options.assignedTeacherId);
+      where.push(`s.assigned_teacher_id = $${params.length}`);
+    }
+    params.push(limit, offset);
+    const limitIdx = params.length - 1;
+    const offsetIdx = params.length;
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT s.id, s.student_name, s.customer_id, s.owner_sales_id, s.assigned_teacher_id,
+              s.owner_changed_at, s.owner_change_reason, s.grade_or_age, s.intended_subject,
+              (SELECT c.class_type FROM contracts c
+                 WHERE c.student_id = s.id
+                   AND c.status IN ('pending', 'active')
+                   AND c.deleted_at IS NULL
+                 ORDER BY COALESCE(c.signed_at, c.created_at) DESC
+                 LIMIT 1) AS contract_class_type
+         FROM students s
+         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+         ORDER BY s.created_at DESC
+         LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      params,
+    );
+    return rows.map((r) => StudentRepository.mapBrief(r));
+  }
+
   async findBrief(tenantSchema: string, id: string): Promise<StudentBrief | null> {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,

@@ -102,6 +102,32 @@ describe('CourseConsumptionRepository', () => {
     expect(r).toEqual({ total: 0, count: 0 });
   });
 
+  describe('findPendingFeedbackSummaryByTeacher (home-teacher 待办)', () => {
+    it('返回 count + earliestDueAt（有待点评）', async () => {
+      const due = new Date('2026-05-08T20:00:00Z');
+      pg.tenantQuery.mockResolvedValueOnce([{ count: '3', earliest: due }]);
+      const r = await repo.findPendingFeedbackSummaryByTeacher(TENANT, SAMPLE.teacherId);
+      expect(r.count).toBe(3);
+      expect(r.earliestDueAt).toEqual(due);
+    });
+
+    it('count=0 + earliest=null → 全无待点评', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ count: '0', earliest: null }]);
+      const r = await repo.findPendingFeedbackSummaryByTeacher(TENANT, SAMPLE.teacherId);
+      expect(r).toEqual({ count: 0, earliestDueAt: null });
+    });
+
+    it('SQL 含 teacher_id + status=pending_feedback 过滤 + MIN(feedback_due_at)', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ count: '0', earliest: null }]);
+      await repo.findPendingFeedbackSummaryByTeacher(TENANT, SAMPLE.teacherId);
+      const sql = pg.tenantQuery.mock.calls[0][1];
+      expect(sql).toContain('teacher_id = $1');
+      expect(sql).toContain("status = 'pending_feedback'");
+      expect(sql).toContain('MIN(feedback_due_at)');
+      expect(pg.tenantQuery.mock.calls[0][2]).toEqual([SAMPLE.teacherId]);
+    });
+  });
+
   it('listByStatus uses default pagination', async () => {
     pg.tenantQuery.mockResolvedValueOnce([]);
     await repo.listByStatus(TENANT, 'confirmed');
