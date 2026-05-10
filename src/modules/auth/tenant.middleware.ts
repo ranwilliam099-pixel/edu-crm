@@ -42,6 +42,16 @@ export class TenantMiddleware implements NestMiddleware {
       return next();
     }
 
+    // BUGFIX 2026-05-10: parents/register 是公开端点（家长首次注册无 token）
+    // 之前被错误划入"必须有 token"分支，导致小程序 c/auth/login 永远 401
+    if (
+      path === '/api/parents/register' ||
+      path === '/api/parents/db/register'
+    ) {
+      this.tryAttachUser(req);
+      return next();
+    }
+
     // C 端家长路径：接受 ParentJwt 或 TenantJwt（联调期间双轨容错）
     // /api/parents/* 和 /api/parent-subscriptions/*
     // 真实 production 应严格按 ParentJwt（条目 34 Q-FE-2）
