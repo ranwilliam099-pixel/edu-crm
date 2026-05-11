@@ -1,6 +1,7 @@
-import { Controller, Get, Param, Headers, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Param, Headers, BadRequestException, UseGuards } from '@nestjs/common';
 import { TeacherShowcaseRepository, TeacherShowcaseSummary } from './teacher-showcase.repository';
 import { TeacherRepository } from './teacher.repository';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
  * TeacherShowcaseController — 老师业务展示卡数据接入
@@ -10,8 +11,12 @@ import { TeacherRepository } from './teacher.repository';
  * 路由：
  *   GET /api/db/teachers/:id/showcase  — 11 项指标聚合查询
  *
- * 鉴权：x-tenant-schema header（与其他 /db 路由一致）
+ * 鉴权：
+ *   - x-tenant-schema header（与其他 /db 路由一致）
+ *   - A01 红线：@UseGuards(TenantScopeGuard) 校验 JWT.tenantId === x-tenant-schema
+ *     防止 tenant_A 用户持自己 JWT + 改 header 读取 tenant_B 数据
  */
+@UseGuards(TenantScopeGuard)
 @Controller('db/teachers')
 export class TeacherShowcaseController {
   constructor(
