@@ -5,6 +5,7 @@ import {
   Post,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   RecurringScheduleService,
@@ -12,6 +13,7 @@ import {
   RecurringSchedule,
   WeekDay,
 } from './recurring-schedule.service';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
  * RecurringScheduleController — V8.1 学员-老师绑定 + 周期性课表 HTTP 暴露 BE-V8-2
@@ -19,7 +21,11 @@ import {
  * 路由前缀：/api/recurring
  *
  * USER-AUTH(2026-05-02): PD §3.6 + P12 学员-老师固定绑定 + 周期性模板
+ *
+ * Sprint B.6 mini (2026-05-11) 深度防御：
+ *   - class-level @UseGuards(TenantScopeGuard) — 兜底跨租户校验
  */
+@UseGuards(TenantScopeGuard)
 @Controller('recurring')
 export class RecurringScheduleController {
   constructor(private readonly service: RecurringScheduleService) {}

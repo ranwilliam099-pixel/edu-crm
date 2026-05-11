@@ -5,6 +5,7 @@ import {
   Post,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ScheduleService,
@@ -13,6 +14,7 @@ import {
   CreateScheduleInput,
   AttendanceStatus,
 } from './schedule.service';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
  * ScheduleController — V8 排课核心 HTTP 暴露 BE-V8-1
@@ -22,7 +24,11 @@ import {
  * RBAC 在 ScheduleService 内做（callerRole='teacher' / 'sales' 二选一）
  *
  * USER-AUTH(2026-05-02): PD §3 + 条目 31 #2 + 条目 32 L2
+ *
+ * Sprint B.6 mini (2026-05-11) 深度防御：
+ *   - class-level @UseGuards(TenantScopeGuard) — 兜底所有 /db endpoint body.tenantSchema 跨租户校验
  */
+@UseGuards(TenantScopeGuard)
 @Controller('schedules')
 export class ScheduleController {
   constructor(private readonly service: ScheduleService) {}

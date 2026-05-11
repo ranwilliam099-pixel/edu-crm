@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Post, HttpCode, HttpStatus } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import {
   CheckoutService,
   CreateOrderDto,
   SkuName,
 } from './checkout.service';
 import { InvoiceService, InvoiceRequestInput } from './invoice.service';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
  * CheckoutController — W3-1 Phase 1.3 BE-W3-3 订单 / 4 SKU 价格 HTTP 暴露
@@ -16,7 +17,12 @@ import { InvoiceService, InvoiceRequestInput } from './invoice.service';
  * PM-AUTH-6(2026-04-30): 公开价格查询 + 已认证订单创建
  *
  * 路由前缀：/api/checkout
- * 价格查询为公开接口（GET /sku/...）；订单创建需要认证（POST /orders）
+ * 价格查询为公开接口（GET /sku/* + GET /capacity/:sku，纯 SKU 元数据，无租户上下文）；
+ * 订单创建需要认证（POST /orders + POST /invoices）
+ *
+ * Sprint B.6 mini (2026-05-11) 深度防御：
+ *   - method-level @UseGuards(TenantScopeGuard) 仅装在 POST 写 endpoint
+ *   - 公开 GET 不装（保持落地页 / 静态价格页可访问）
  */
 @Controller('checkout')
 export class CheckoutController {
@@ -50,6 +56,7 @@ export class CheckoutController {
    * 当前不真实 INSERT DB（INT-01 仍由 AUTH-1 docker PG 提供，Repository 待落地）
    */
   @Post('orders')
+  @UseGuards(TenantScopeGuard)
   @HttpCode(HttpStatus.CREATED)
   createOrder(@Body() dto: CreateOrderDto) {
     return this.service.createOrder(dto);
@@ -62,6 +69,7 @@ export class CheckoutController {
    * 等支付订单持久化仓库接入后补上。
    */
   @Post('invoices')
+  @UseGuards(TenantScopeGuard)
   @HttpCode(HttpStatus.CREATED)
   createInvoiceRequest(@Body() dto: InvoiceRequestInput) {
     this.invoice.validateInvoiceRequest(dto);
@@ -76,6 +84,8 @@ export class CheckoutController {
 
   /**
    * GET /api/checkout/capacity/:sku — 查询 SKU 容量边界
+   *
+   * 公开接口（纯 SKU 元数据，对应 SKU 价格信息中的 maxCampuses/maxAccounts 字段）
    */
   @Get('capacity/:sku')
   getCapacity(@Param('sku') sku: string) {

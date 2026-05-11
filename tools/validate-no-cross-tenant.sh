@@ -35,10 +35,19 @@ VIOLATIONS=()
 #   - 在 public schema 表（campuses / tenants / parents 跨租户）
 
 # 找所有 raw SQL（query / execute / pool.query）
-SQL_HITS=$(grep -rEn "\.query\(.*['\"\\\`](SELECT|UPDATE|DELETE)" "$SCAN_DIR" --include='*.ts' 2>/dev/null || true)
+# 排除：
+#   *.spec.ts — 单测 dummy SQL fixture
+#   pg-pool.service.ts — 连接池基础设施（含 SELECT 1 健康检查 + JSDoc 示例），不是业务 SQL
+SQL_HITS=$(grep -rEn "\.query\(.*['\"\\\`](SELECT|UPDATE|DELETE)" "$SCAN_DIR" --include='*.ts' --exclude='*.spec.ts' --exclude='pg-pool.service.ts' 2>/dev/null || true)
 
 while IFS= read -r line; do
   [ -z "$line" ] && continue
+
+  # 提取行内容（path:lineno: 后面的部分），跳过 JSDoc/单行注释
+  content=$(echo "$line" | cut -d':' -f3-)
+  if echo "$content" | grep -qE '^[[:space:]]*(\*|//)'; then
+    continue
+  fi
 
   # 检查该行是否含 tenant_id 或 search_path
   if echo "$line" | grep -qE 'tenant_id|search_path|public\.(tenants|campuses|parents|parent_subscriptions|promotion)'; then
@@ -58,8 +67,13 @@ CONTROLLERS=$(grep -rEln '@Controller\(' "$SCAN_DIR" --include='*.ts' 2>/dev/nul
 while IFS= read -r ctrl_file; do
   [ -z "$ctrl_file" ] && continue
 
-  # 白名单：public / health / auth(login/register) / onboarding
-  if echo "$ctrl_file" | grep -qE 'public|health|auth|onboarding'; then
+  # 白名单：
+  #   public / health / auth(login/register) / onboarding — 公共接口
+  #   admin — admin 跨租户，使用 AdminGuard 不是 TenantScopeGuard
+  #   parent — parent 在 public schema 跨租户（家长跨机构 5/10 拍板）
+  #   cron — 系统内部任务，无用户请求上下文
+  #   reverse-order — 平台级 GMV 报表模块，service 无 tenantSchema，仅 platform_admin/finance_admin 可调（待 Sprint C/E 整体设计重构）
+  if echo "$ctrl_file" | grep -qE 'public|health|auth|onboarding|admin|parent|cron|reverse-order'; then
     continue
   fi
 

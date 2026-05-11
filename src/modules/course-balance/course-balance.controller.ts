@@ -5,12 +5,14 @@ import {
   Post,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   CourseBalanceService,
   CoursePackage,
   StudentCoursePackage,
 } from './course-balance.service';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
  * CourseBalanceController — V12 课时包 + 余额 HTTP 暴露 BE-V12-1
@@ -18,7 +20,11 @@ import {
  * 路由前缀：/api/course-balance
  *
  * USER-AUTH(2026-05-02): 教学链路 §1
+ *
+ * Sprint B.6 mini (2026-05-11) 深度防御：
+ *   - class-level @UseGuards(TenantScopeGuard) — 兜底所有 /db endpoint 跨租户校验
  */
+@UseGuards(TenantScopeGuard)
 @Controller('course-balance')
 export class CourseBalanceController {
   constructor(private readonly service: CourseBalanceService) {}
