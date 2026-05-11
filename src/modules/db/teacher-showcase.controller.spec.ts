@@ -79,6 +79,17 @@ describe('TeacherShowcaseController (C.2)', () => {
     );
   });
 
+  /**
+   * Sprint B.3：getShowcase 现在第 3 参数 req（@Req() AuthenticatedRequest）
+   *   - admin role：summary 不被遮蔽（原有 spec 关注 meta-vs-summary 双轨独立）
+   *   - 单独的「sales/parent summary 遮蔽」spec 在最末尾测
+   */
+  const adminReq = (): AuthenticatedRequest =>
+    ({
+      user: { sub: ADMIN, role: 'admin', tenantId: 'TENANTA00000', campusId: null },
+      headers: {},
+    }) as AuthenticatedRequest;
+
   // ============================================================
   // GET /showcase 三层结构
   // ============================================================
@@ -88,7 +99,7 @@ describe('TeacherShowcaseController (C.2)', () => {
       showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
       metaRepo.getMeta.mockResolvedValueOnce(baseMeta);
 
-      const r = await controller.getShowcase(TEACHER_A, TENANT);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, adminReq());
 
       expect(r).toHaveProperty('teacher');
       expect(r).toHaveProperty('summary');
@@ -115,7 +126,7 @@ describe('TeacherShowcaseController (C.2)', () => {
       showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
       metaRepo.getMeta.mockResolvedValueOnce({ ...baseMeta, bio: 'meta bio (canonical)' });
 
-      const r = await controller.getShowcase(TEACHER_A, TENANT);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, adminReq());
       expect(r.teacher.bio).toBe('meta bio (canonical)');
     });
 
@@ -124,7 +135,7 @@ describe('TeacherShowcaseController (C.2)', () => {
       showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
       metaRepo.getMeta.mockResolvedValueOnce(null);
 
-      const r = await controller.getShowcase(TEACHER_A, TENANT);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, adminReq());
       expect(r.teacher.bio).toBe('legacy bio');
       // avatar 也走 fallback 链路：meta=null → teacher.avatar 不存在 → null
       expect(r.teacher.avatar).toBeNull();
@@ -143,7 +154,7 @@ describe('TeacherShowcaseController (C.2)', () => {
       showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
       metaRepo.getMeta.mockResolvedValueOnce({ ...baseMeta, bio: null, avatarUrl: null });
 
-      const r = await controller.getShowcase(TEACHER_A, TENANT);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, adminReq());
       expect(r.teacher.bio).toBeNull();
       expect(r.teacher.avatar).toBeNull();
     });
@@ -156,7 +167,7 @@ describe('TeacherShowcaseController (C.2)', () => {
 
     it('teacher 不存在 → BadRequestException', async () => {
       teacherRepo.findById.mockResolvedValueOnce(null);
-      await expect(controller.getShowcase(TEACHER_A, TENANT)).rejects.toThrow(
+      await expect(controller.getShowcase(TEACHER_A, TENANT, adminReq())).rejects.toThrow(
         /teacher.*not found/,
       );
     });
@@ -439,7 +450,7 @@ describe('TeacherShowcaseController (C.2)', () => {
         ...baseMeta,
         displayedRecommendationsCount: 9999, // 老师美化数据
       });
-      const r = await controller.getShowcase(TEACHER_A, TENANT);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, adminReq());
       // summary.ratingCount 走真实 KPI，不被 meta.displayedRecommendationsCount 影响
       expect(r.summary.ratingCount).toBe(18);
       expect(r.meta.displayedRecommendationsCount).toBe(9999);
@@ -457,11 +468,141 @@ describe('TeacherShowcaseController (C.2)', () => {
           { anon_name: '假同学', content: '伪造好评', stars: 5 },
         ],
       });
-      const r = await controller.getShowcase(TEACHER_A, TENANT);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, adminReq());
       // summary.cases 走 monthly_reports 真数据
       expect(r.summary.cases[0].anonName).toBe('王同学');
       // meta.testimonials 是老师自填 — 走独立通道，不被 summary 覆盖
       expect(r.meta.testimonials[0].anon_name).toBe('假同学');
+    });
+  });
+
+  // ============================================================
+  // Sprint B.3：双轨硬红线 — summary 仅 admin/boss/academic/teacher 自己可看
+  // ============================================================
+  describe('Sprint B.3：summary 角色级遮蔽（双轨硬红线）', () => {
+    const mkReq = (role: string, sub = 'someUserId000000000000000000000A'): AuthenticatedRequest =>
+      ({
+        user: { sub, role, tenantId: 'TENANTA00000', campusId: null },
+        headers: {},
+      }) as AuthenticatedRequest;
+
+    it('admin → summary 真实数据可见（totalLessons=200 / avgStars=4.6）', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
+      showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
+      metaRepo.getMeta.mockResolvedValueOnce(baseMeta);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, mkReq('admin'));
+      expect(r.summary.totalLessons).toBe(200);
+      expect(r.summary.avgStars).toBe(4.6);
+      expect(r.summary.renewalRate).toBe(75);
+      expect(r.summary.cases).toHaveLength(1);
+    });
+
+    it('boss → summary 可见（同 admin）', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
+      showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
+      metaRepo.getMeta.mockResolvedValueOnce(baseMeta);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, mkReq('boss'));
+      expect(r.summary.totalLessons).toBe(200);
+    });
+
+    it('academic → summary 可见（质检需要）', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
+      showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
+      metaRepo.getMeta.mockResolvedValueOnce(baseMeta);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, mkReq('academic'));
+      expect(r.summary.totalLessons).toBe(200);
+    });
+
+    it('academic_admin → summary 可见', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
+      showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
+      metaRepo.getMeta.mockResolvedValueOnce(baseMeta);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, mkReq('academic_admin'));
+      expect(r.summary.totalLessons).toBe(200);
+    });
+
+    it('teacher 看自己（userId === sub）→ summary 可见', async () => {
+      const TEACHER_USER = 'teacherUser0000000000000000000A1';
+      teacherRepo.findById.mockResolvedValueOnce({ ...baseTeacher, userId: TEACHER_USER });
+      showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
+      metaRepo.getMeta.mockResolvedValueOnce(baseMeta);
+      const r = await controller.getShowcase(
+        TEACHER_A,
+        TENANT,
+        mkReq('teacher', TEACHER_USER),
+      );
+      expect(r.summary.totalLessons).toBe(200);
+      expect(r.summary.avgStars).toBe(4.6);
+    });
+
+    it('teacher 看别人（userId !== sub）→ summary 遮蔽（同校老师互看走遮蔽）', async () => {
+      teacherRepo.findById.mockResolvedValueOnce({
+        ...baseTeacher,
+        userId: 'OWNER_USER_000000000000000000A02',
+      });
+      showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
+      metaRepo.getMeta.mockResolvedValueOnce(baseMeta);
+      const r = await controller.getShowcase(
+        TEACHER_A,
+        TENANT,
+        mkReq('teacher', 'OTHER_USER_000000000000000000A03'),
+      );
+      // 数值清零
+      expect(r.summary.totalLessons).toBe(0);
+      expect(r.summary.totalStudents).toBe(0);
+      expect(r.summary.avgStars).toBeNull();
+      expect(r.summary.renewalRate).toBeNull();
+      // 数组清空
+      expect(r.summary.cases).toEqual([]);
+      expect(r.summary.topTags).toEqual([]);
+      // isColdStart 设 true（UI 友好显示）
+      expect(r.summary.isColdStart).toBe(true);
+      // 但 meta 仍正常返（业务展示卡）
+      expect(r.meta.avatarUrl).toBe('https://cdn.example.com/avatar.jpg');
+    });
+
+    it('sales → summary 遮蔽（销售看老师宣传卡场景）', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
+      showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
+      metaRepo.getMeta.mockResolvedValueOnce(baseMeta);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, mkReq('sales'));
+      expect(r.summary.totalLessons).toBe(0);
+      expect(r.summary.avgStars).toBeNull();
+      expect(r.summary.recommendRate).toBeNull();
+      expect(r.summary.cases).toEqual([]);
+      // meta 仍可看
+      expect(r.meta.avatarUrl).toBe('https://cdn.example.com/avatar.jpg');
+      expect(r.meta.testimonials).toHaveLength(1); // 老师美化展示
+    });
+
+    it('sales_director → summary 遮蔽（修 5：销售线不看老师真实 KPI，拍板美化 only）', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
+      showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
+      metaRepo.getMeta.mockResolvedValueOnce(baseMeta);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, mkReq('sales_director'));
+      // Sprint B.3 复审 修 5：sales_director 虽然 actorGroupOf 归 admin（customer/contract 收口），
+      //   但 teacher KPI summary 拍板「销售看 showcase = 美化数据」
+      //   → 显式遮蔽 sales_director / sales_manager 的真实 KPI
+      expect(r.summary.totalLessons).toBe(0);
+      expect(r.summary.avgStars).toBeNull();
+      expect(r.summary.recommendRate).toBeNull();
+      expect(r.summary.cases).toEqual([]);
+      expect(r.summary.isColdStart).toBe(true);
+      // meta 仍可看（业务展示卡）
+      expect(r.meta.avatarUrl).toBe('https://cdn.example.com/avatar.jpg');
+    });
+
+    it('sales_manager → summary 遮蔽（修 5：同 sales_director，销售线不看真实 KPI）', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
+      showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
+      metaRepo.getMeta.mockResolvedValueOnce(baseMeta);
+      const r = await controller.getShowcase(TEACHER_A, TENANT, mkReq('sales_manager'));
+      expect(r.summary.totalLessons).toBe(0);
+      expect(r.summary.avgStars).toBeNull();
+      expect(r.summary.cases).toEqual([]);
+      expect(r.summary.isColdStart).toBe(true);
+      // meta 仍可看
+      expect(r.meta.avatarUrl).toBe('https://cdn.example.com/avatar.jpg');
     });
   });
 });

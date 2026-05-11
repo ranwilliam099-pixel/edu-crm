@@ -1,0 +1,437 @@
+/**
+ * ContractController — Sprint B.3 字段级权限过滤 controller 单测
+ *
+ * 范围：
+ *   - GET /db/contracts/:id：scope filter + field mask
+ *   - GET /db/contracts/mine：listByOwner 已 SQL 过滤 + mask
+ *   - GET /db/contracts/by-student/:studentId：教学/家长视角字段裁剪
+ *
+ * 红线（fields-by-role.md #4）：
+ *   - 教学人员（teacher/academic）不看合同金额细节（standardPrice/discountAmount/giftHours 全 0）
+ *   - sales 别人合同 → 403（scope filter）
+ *   - parent 自己孩子 → totalAmount ✅ + discountAmount/giftHours 0
+ */
+
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { ContractController } from './contract.controller';
+import { Contract, ContractRepository } from './contract.repository';
+import { StudentRepository } from './student.repository';
+import { TeacherRepository } from './teacher.repository';
+import { AuthenticatedRequest, JwtPayload, TenantRole } from '../auth/jwt-payload.interface';
+
+describe('ContractController (Sprint B.3 字段级权限)', () => {
+  let controller: ContractController;
+  let repo: {
+    findById: jest.Mock;
+    listByOwner: jest.Mock;
+    listByStudent: jest.Mock;
+  };
+  let studentRepo: { findBrief: jest.Mock };
+  let teacherRepo: { findByUserId: jest.Mock };
+
+  const TENANT_A = 'TENANTA00000000000000000000000A1';
+  const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const CAMPUS_A = 'campus_A0000000000000000000000A01';
+  const SALES_A = 'salesA00000000000000000000000A01';
+  const SALES_B = 'salesB00000000000000000000000A02';
+  const CONTRACT_ID = 'contract000000000000000000000A01';
+  const STUDENT_ID = 'student00000000000000000000000A1';
+  const TEACHER_USER_A = 'teacherUser00000000000000000A01';
+  const TEACHER_ID_A = 'teacherID000000000000000000000A1';
+
+  function jwt(role: TenantRole, sub = SALES_A): JwtPayload {
+    return { sub, tenantId: TENANT_A, role, campusId: CAMPUS_A };
+  }
+
+  function req(user?: JwtPayload): AuthenticatedRequest {
+    return { user, headers: {}, body: {}, query: {}, params: {} };
+  }
+
+  function contractFixture(overrides: Partial<Contract> = {}): Contract {
+    return {
+      id: CONTRACT_ID,
+      studentId: STUDENT_ID,
+      courseProductId: null,
+      courseProductName: '一对一英语',
+      ownerUserId: SALES_A,
+      opportunityId: 'oppor00000000000000000000000A01',
+      campusId: CAMPUS_A,
+      classType: '一对一',
+      lessonHours: 60,
+      standardPrice: 9999,
+      discountAmount: 999,
+      giftHours: 5,
+      totalAmount: 9000,
+      orderType: '新签',
+      status: 'active',
+      paidLocked: false,
+      signedAt: '2026-05-08T00:00:00.000Z',
+      activatedAt: '2026-05-08T00:00:00.000Z',
+      createdAt: '2026-05-08T00:00:00.000Z',
+      updatedAt: '2026-05-08T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    repo = {
+      findById: jest.fn(),
+      listByOwner: jest.fn(),
+      listByStudent: jest.fn(),
+    };
+    studentRepo = { findBrief: jest.fn() };
+    teacherRepo = { findByUserId: jest.fn() };
+    controller = new ContractController(
+      repo as unknown as ContractRepository,
+      studentRepo as unknown as StudentRepository,
+      teacherRepo as unknown as TeacherRepository,
+    );
+  });
+
+  // ============================================================
+  // detail() GET /db/contracts/:id
+  // ============================================================
+  describe('detail() — scope + field', () => {
+    it('admin → 全字段（standardPrice/discountAmount/totalAmount/giftHours）', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture());
+      const r = (await controller.detail(CONTRACT_ID, TENANT_SCHEMA, req(jwt('admin')))) as Contract;
+      expect(r.standardPrice).toBe(9999);
+      expect(r.discountAmount).toBe(999);
+      expect(r.totalAmount).toBe(9000);
+      expect(r.giftHours).toBe(5);
+    });
+
+    it('finance → 全字段（作账）', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture());
+      const r = (await controller.detail(CONTRACT_ID, TENANT_SCHEMA, req(jwt('finance')))) as Contract;
+      expect(r.standardPrice).toBe(9999);
+      expect(r.totalAmount).toBe(9000);
+    });
+
+    it('sales 自己合同 → 全字段', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture({ ownerUserId: SALES_A }));
+      const r = (await controller.detail(
+        CONTRACT_ID,
+        TENANT_SCHEMA,
+        req(jwt('sales', SALES_A)),
+      )) as Contract;
+      expect(r.standardPrice).toBe(9999);
+      expect(r.totalAmount).toBe(9000);
+    });
+
+    it('sales 别人合同 → 403 ForbiddenException', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture({ ownerUserId: SALES_B }));
+      await expect(
+        controller.detail(CONTRACT_ID, TENANT_SCHEMA, req(jwt('sales', SALES_A))),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('sales_director 看任何合同 → 全字段（销售主管收口）', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture({ ownerUserId: SALES_B }));
+      const r = (await controller.detail(
+        CONTRACT_ID,
+        TENANT_SCHEMA,
+        req(jwt('sales_director', SALES_A)),
+      )) as Contract;
+      expect(r.standardPrice).toBe(9999);
+    });
+
+    it('academic → totalAmount 保留 + 价格细节全 0', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture());
+      const r = (await controller.detail(
+        CONTRACT_ID,
+        TENANT_SCHEMA,
+        req(jwt('academic')),
+      )) as Contract;
+      expect(r.standardPrice).toBe(0); // ❌
+      expect(r.discountAmount).toBe(0); // ❌
+      expect(r.totalAmount).toBe(9000); // ✅ 续费话术
+      expect(r.status).toBe('active');
+      expect(r.classType).toBe('一对一');
+    });
+
+    it('teacher → 金额全 0，仅 status/classType/lessonHours', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture());
+      const r = (await controller.detail(
+        CONTRACT_ID,
+        TENANT_SCHEMA,
+        req(jwt('teacher')),
+      )) as Contract;
+      expect(r.standardPrice).toBe(0);
+      expect(r.discountAmount).toBe(0);
+      expect(r.totalAmount).toBe(0);
+      expect(r.giftHours).toBe(0);
+      expect(r.lessonHours).toBe(60); // 教学执行需要
+      expect(r.classType).toBe('一对一');
+    });
+
+    it('parent → totalAmount + standardPrice ✅，discountAmount/giftHours 0', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture());
+      const r = (await controller.detail(
+        CONTRACT_ID,
+        TENANT_SCHEMA,
+        req(jwt('parent' as TenantRole)),
+      )) as Contract;
+      expect(r.totalAmount).toBe(9000);
+      expect(r.standardPrice).toBe(9999);
+      expect(r.discountAmount).toBe(0);
+      expect(r.giftHours).toBe(0);
+    });
+
+    it('hr → 403（不该看合同）', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture());
+      await expect(
+        controller.detail(CONTRACT_ID, TENANT_SCHEMA, req(jwt('hr'))),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('合同不存在 → {found:false}', async () => {
+      repo.findById.mockResolvedValueOnce(null);
+      const r = await controller.detail(CONTRACT_ID, TENANT_SCHEMA, req(jwt('admin')));
+      expect(r).toEqual({ found: false });
+    });
+
+    it('tenantSchema 缺失 → BadRequest', async () => {
+      await expect(
+        controller.detail(CONTRACT_ID, '', req(jwt('admin'))),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ============================================================
+  // listMine() GET /db/contracts/mine
+  // ============================================================
+  describe('listMine() — owner=me SQL 过滤 + field mask', () => {
+    it('sales 自己合同 → 全字段', async () => {
+      repo.listByOwner.mockResolvedValueOnce([contractFixture({ ownerUserId: SALES_A })]);
+      const r = await controller.listMine(
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        undefined,
+        req(jwt('sales', SALES_A)),
+      );
+      expect(r.items[0].standardPrice).toBe(9999);
+      expect(r.items[0].totalAmount).toBe(9000);
+    });
+
+    it('admin 调 mine（实际 ownerUserId !== sub 的 corner case）→ admin 路径全字段', async () => {
+      repo.listByOwner.mockResolvedValueOnce([contractFixture({ ownerUserId: SALES_A })]);
+      const r = await controller.listMine(
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        undefined,
+        req(jwt('admin', 'adminUid000000000000000000000A01')),
+      );
+      // admin group 不依赖 isOwnerSelf，全字段
+      expect(r.items[0].totalAmount).toBe(9000);
+    });
+  });
+
+  // ============================================================
+  // listByStudent() GET /db/contracts/by-student/:studentId
+  // Sprint B.3 复审 修 3：scope filter（先查 student.ownerSalesId/assignedTeacherId）
+  // ============================================================
+  describe('listByStudent() — OOUX 学生详情合同列表 + scope filter (修 3)', () => {
+    // Sprint B.3 复审 修 3 默认 mock：student 归属 SALES_A / TEACHER_ID_A
+    function mockStudent(overrides: Partial<{ ownerSalesId: string | null; assignedTeacherId: string | null }> = {}) {
+      studentRepo.findBrief.mockResolvedValueOnce({
+        id: STUDENT_ID,
+        studentName: '小明',
+        customerId: 'cust00000000000000000000000000A1',
+        ownerSalesId: SALES_A,
+        assignedTeacherId: TEACHER_ID_A,
+        ownerChangedAt: null,
+        ownerChangeReason: null,
+        gradeOrAge: null,
+        intendedSubject: null,
+        contractClassType: null,
+        ...overrides,
+      });
+    }
+
+    it('teacher 主带学生（assignedTeacherId === ownTeacherId）→ 金额全 0', async () => {
+      mockStudent({ assignedTeacherId: TEACHER_ID_A });
+      teacherRepo.findByUserId.mockResolvedValueOnce({
+        id: TEACHER_ID_A,
+        userId: TEACHER_USER_A,
+      });
+      repo.listByStudent.mockResolvedValueOnce([
+        contractFixture({ ownerUserId: SALES_A }),
+        contractFixture({ id: 'c2', ownerUserId: SALES_B }),
+      ]);
+      const r = await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        req(jwt('teacher', TEACHER_USER_A)),
+      );
+      expect(r.items[0].totalAmount).toBe(0);
+      expect(r.items[1].totalAmount).toBe(0);
+      expect(r.items[0].classType).toBe('一对一');
+      expect(r.items[0].lessonHours).toBe(60);
+    });
+
+    it('teacher 非主带学生 → 403（scope filter 拒绝）', async () => {
+      mockStudent({ assignedTeacherId: 'OTHER_TEACHER_0000000000000000A1' });
+      teacherRepo.findByUserId.mockResolvedValueOnce({
+        id: TEACHER_ID_A,
+        userId: TEACHER_USER_A,
+      });
+      await expect(
+        controller.listByStudent(
+          STUDENT_ID,
+          TENANT_SCHEMA,
+          undefined,
+          undefined,
+          req(jwt('teacher', TEACHER_USER_A)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      // 拒绝前 listByStudent 不应被调
+      expect(repo.listByStudent).not.toHaveBeenCalled();
+    });
+
+    it('parent → 403（拍板：parent 走 c 端独立 endpoint，不走 B 端 by-student）', async () => {
+      mockStudent();
+      await expect(
+        controller.listByStudent(
+          STUDENT_ID,
+          TENANT_SCHEMA,
+          undefined,
+          undefined,
+          req(jwt('parent' as TenantRole)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(repo.listByStudent).not.toHaveBeenCalled();
+    });
+
+    it('hr → 403（拍板：hr 不参与教学/销售）', async () => {
+      mockStudent();
+      await expect(
+        controller.listByStudent(
+          STUDENT_ID,
+          TENANT_SCHEMA,
+          undefined,
+          undefined,
+          req(jwt('hr')),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(repo.listByStudent).not.toHaveBeenCalled();
+    });
+
+    it('sales 自己客户的孩子（student.ownerSalesId === me）→ 自己合同全字段，他人金额 0', async () => {
+      mockStudent({ ownerSalesId: SALES_A });
+      repo.listByStudent.mockResolvedValueOnce([
+        contractFixture({ ownerUserId: SALES_A }),
+        contractFixture({ id: 'c2', ownerUserId: SALES_B }),
+      ]);
+      const r = await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        req(jwt('sales', SALES_A)),
+      );
+      expect(r.items[0].totalAmount).toBe(9000);
+      expect(r.items[1].totalAmount).toBe(0);
+    });
+
+    it('sales 非自己客户的孩子（student.ownerSalesId !== me）→ 403', async () => {
+      mockStudent({ ownerSalesId: SALES_B });
+      await expect(
+        controller.listByStudent(
+          STUDENT_ID,
+          TENANT_SCHEMA,
+          undefined,
+          undefined,
+          req(jwt('sales', SALES_A)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(repo.listByStudent).not.toHaveBeenCalled();
+    });
+
+    it('sales_director 看任意学生合同 → admin group 全放行', async () => {
+      mockStudent({ ownerSalesId: SALES_B });
+      repo.listByStudent.mockResolvedValueOnce([contractFixture({ ownerUserId: SALES_B })]);
+      const r = await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        req(jwt('sales_director', SALES_A)),
+      );
+      // sales_director 走 admin group，全字段
+      expect(r.items[0].totalAmount).toBe(9000);
+    });
+
+    it('admin 看 → 全字段（不论 student 归属）', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: 'OTHER_TEACHER_0000000000000000A1' });
+      repo.listByStudent.mockResolvedValueOnce([contractFixture()]);
+      const r = await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        req(jwt('admin')),
+      );
+      expect(r.items[0].totalAmount).toBe(9000);
+    });
+
+    it('academic → 放行（教务全可看本校学生合同），价格细节 0', async () => {
+      mockStudent({ ownerSalesId: SALES_B });
+      repo.listByStudent.mockResolvedValueOnce([contractFixture()]);
+      const r = await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        req(jwt('academic')),
+      );
+      expect(r.items[0].totalAmount).toBe(9000); // 拍板续费话术依据
+      expect(r.items[0].standardPrice).toBe(0);
+    });
+
+    it('finance → 放行（财务作账），全字段', async () => {
+      mockStudent({ ownerSalesId: SALES_B });
+      repo.listByStudent.mockResolvedValueOnce([contractFixture()]);
+      const r = await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        req(jwt('finance')),
+      );
+      expect(r.items[0].totalAmount).toBe(9000);
+      expect(r.items[0].standardPrice).toBe(9999);
+    });
+
+    it('teacher 未绑定 teachers.user_id → 403（fail-safe，不抛 500）', async () => {
+      mockStudent();
+      teacherRepo.findByUserId.mockResolvedValueOnce(null);
+      await expect(
+        controller.listByStudent(
+          STUDENT_ID,
+          TENANT_SCHEMA,
+          undefined,
+          undefined,
+          req(jwt('teacher', TEACHER_USER_A)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('student 不存在 → 空数组（侧信道防护）', async () => {
+      studentRepo.findBrief.mockResolvedValueOnce(null);
+      const r = await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        req(jwt('admin')),
+      );
+      expect(r.items).toEqual([]);
+      expect(repo.listByStudent).not.toHaveBeenCalled();
+    });
+  });
+});

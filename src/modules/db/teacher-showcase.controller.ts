@@ -30,6 +30,12 @@ import { Roles } from '../../guards/rbac.decorator';
 import { ActorRole, AuditLogRepository } from './audit-log.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
+// Sprint B.3 (2026-05-11): showcase 双轨硬红线
+//   - summary（系统真实 KPI）→ 仅 admin/boss/academic/teacher 自己可看
+//   - meta（美化展示）→ 全角色可看（包括 sales / parent，因为是宣传卡）
+//   - sales/parent/sales_director/sales_manager 调 → summary 自动遮蔽（returnEmptySummary）
+// 注：Sprint B.3 复审 — 不再用 actorGroupOf（sales_director 归 admin group，但 KPI 拍板要求遮蔽）
+//     改用 raw role 显式判定，保持 actorGroupOf 在 customer/contract 模块的收口语义
 
 /**
  * TeacherShowcaseController — V35 老师业务展示卡数据接入（C.2 双轨数据落地）
@@ -105,6 +111,7 @@ export class TeacherShowcaseController {
   async getShowcase(
     @Param('id') teacherId: string,
     @Headers('x-tenant-schema') tenantSchema: string,
+    @Req() req?: AuthenticatedRequest,
   ): Promise<{
     teacher: {
       id: string;
@@ -141,6 +148,32 @@ export class TeacherShowcaseController {
     const resolvedBio = meta?.bio ?? teacherBio;
     const resolvedAvatar = meta?.avatarUrl ?? legacyAvatar;
 
+    // Sprint B.3 双轨硬红线 (2026-05-11)：
+    //   - 真实 KPI summary 仅 admin/boss/academic/teacher 自己（拍板「相关角色可见」）
+    //   - 销售/家长 → summary 自动遮蔽（return empty summary，不抛 403）
+    //   - 教师自己 (teacher.userId === req.user.sub) → summary 可见（自己看自己 KPI）
+    //   - 其他 teacher 看别人的 summary → 走 teacher 互看 path（仅 admin path 全可看）
+    //   - meta 字段不限制（业务展示卡本来就是宣传）
+    //
+    // Sprint B.3 复审 (2026-05-11) 修 5：拍板边界 — KPI summary ≠ customer/contract
+    //   - actorGroupOf 把 sales_director/sales_manager 归 admin（customer/contract 收口拍板 ✅）
+    //   - 但 teacher KPI summary 拍板「销售看 showcase = 美化数据」
+    //     → sales_director / sales_manager 也走 emptySummary
+    //   - 实现：显式检测 raw role 而非 group（保持 actorGroupOf 在其他模块的语义）
+    const role = req?.user?.role;
+    const isRealAdmin = role === 'admin' || role === 'boss';
+    const isAcademic = role === 'academic' || role === 'academic_admin';
+    const isSelf =
+      role === 'teacher' &&
+      teacher.userId &&
+      teacher.userId === req?.user?.sub;
+    // sales / sales_manager / sales_director / marketing / hr / finance / parent / teacher(看别人)
+    //   → 全部走 emptySummary（销售线不看真实 KPI；拍板「美化数据 only」）
+    const canSeeSummary = isRealAdmin || isAcademic || isSelf;
+    const finalSummary: TeacherShowcaseSummary = canSeeSummary
+      ? summary
+      : this.emptySummary(summary);
+
     return {
       teacher: {
         id: teacher.id,
@@ -149,8 +182,37 @@ export class TeacherShowcaseController {
         avatar: resolvedAvatar,
         bio: resolvedBio,
       },
-      summary,
+      summary: finalSummary,
       meta: this.viewMeta(meta),
+    };
+  }
+
+  /**
+   * Sprint B.3：销售/家长视角的 summary 遮蔽
+   *
+   * 真实 KPI（totalLessons / avgStars / renewalRate 等）对销售/家长不可见，
+   * 防止销售对客户夸大宣传"老师 5 星好评 92%" 等真实数据。
+   *
+   * 返回值字段保持（不删 key，前端类型不破），但数值清零：
+   *   - 数值字段 → 0
+   *   - 数组字段 → []
+   *   - 布尔 → 默认值（isColdStart=true 表示"冷启动无数据"，UI 友好显示）
+   */
+  private emptySummary(original: TeacherShowcaseSummary): TeacherShowcaseSummary {
+    return {
+      ...original,
+      totalLessons: 0,
+      totalStudents: 0,
+      activeStudents: 0,
+      monthlyLessons: 0,
+      avgStars: null,
+      ratingCount: 0,
+      recommendRate: null,
+      topTags: [],
+      renewalRate: null,
+      monthlyAReportRate: null,
+      cases: [],
+      isColdStart: true,
     };
   }
 

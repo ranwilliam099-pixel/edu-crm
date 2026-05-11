@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -22,6 +23,17 @@ import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 import { Roles } from '../../guards/rbac.decorator';
 import { RbacGuard } from '../../guards/rbac.guard';
+// Sprint B.3 (2026-05-11): contract 字段级权限（教学人员不看金额；sales 不看他人合同金额）
+import {
+  maskContract,
+  canAccessContract,
+  actorGroupOf,
+} from '../../common/role-field-filter';
+// Sprint B.3 复审 (2026-05-11) — 修 3 by-student scope filter:
+//   - 用 studentRepo.findBrief 拿 ownerSalesId / assignedTeacherId
+//   - sales 只看自己 owner 的学生合同；teacher 只看自己 assigned 的；其他 admin/finance/academic 放行
+import { StudentRepository } from './student.repository';
+import { TeacherRepository } from './teacher.repository';
 
 /**
  * ContractController — V25 签约管理 HTTP 暴露（业绩数据源头）
@@ -38,7 +50,13 @@ import { RbacGuard } from '../../guards/rbac.guard';
 @Controller('db/contracts')
 @UseGuards(TenantScopeGuard)
 export class ContractController {
-  constructor(private readonly repo: ContractRepository) {}
+  constructor(
+    private readonly repo: ContractRepository,
+    // Sprint B.3 复审: by-student scope filter 需查 student 归属
+    private readonly studentRepo: StudentRepository,
+    // Sprint B.3 复审: teacher role 反查 ownTeacherId
+    private readonly teacherRepo: TeacherRepository,
+  ) {}
 
   @Get('mine')
   @HttpCode(HttpStatus.OK)
@@ -57,7 +75,13 @@ export class ContractController {
       limit: limit ? Math.min(parseInt(limit, 10), 200) : 50,
       offset: offset ? parseInt(offset, 10) : 0,
     });
-    return { items };
+    // Sprint B.3：listByOwner 已 SQL 过滤 owner=me，全字段
+    //   sales 自己合同 → isOwnerSelf=true → 全字段
+    //   admin/finance 调 mine（罕见）→ 走 admin/finance 路径自动全字段
+    const items_masked = items.map((c) =>
+      maskContract(c, req?.user, { isOwnerSelf: c.ownerUserId === ownerUserId }),
+    );
+    return { items: items_masked };
   }
 
   @Get('performance')
@@ -103,11 +127,27 @@ export class ContractController {
   async detail(
     @Param('id') id: string,
     @Query('tenantSchema') tenantSchema: string,
+    @Req() req?: AuthenticatedRequest,
   ): Promise<Contract | { found: false }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
     const c = await this.repo.findById(tenantSchema, id);
     if (!c) return { found: false };
-    return c;
+
+    // Sprint B.3：scope filter 优先 — sales 别人合同 403
+    //   admin/finance/academic/teacher/parent 都允许（具体字段在 mask 层裁剪）
+    //   - teacher/parent 走 controller-level 学生关系校验交由调用方（OOUX 入口）
+    //   - 此处只挡 sales other-owner 一个常见侧信道
+    if (!canAccessContract(c, req?.user)) {
+      throw new ForbiddenException(
+        `CONTRACT_ACCESS_DENIED: role=${req?.user?.role ?? 'unknown'} ` +
+          `contractId=${id} owner=${c.ownerUserId ?? 'null'}`,
+      );
+    }
+
+    // 字段级 mask
+    const isOwnerSelf =
+      req?.user?.sub !== undefined && c.ownerUserId === req.user.sub;
+    return maskContract(c, req?.user, { isOwnerSelf });
   }
 
   /**
@@ -116,7 +156,14 @@ export class ContractController {
    * 用户 2026-05-07「合同也在学员里面」
    * 学员详情页 Section 6 真接此 endpoint。
    *
-   * RBAC：本租户内任何 role 可看（家长视角合同也透过此读，但前端不暴露给 C 端）
+   * RBAC（Sprint B.3 复审 2026-05-11 红线 A01 收紧）：
+   *   - scope filter：
+   *     - admin / boss / finance / academic / academic_admin：放行
+   *     - sales / sales_manager / sales_director：student.ownerSalesId === req.user.sub 才放行
+   *       （sales_director / sales_manager 走 admin group 收口，全放行）
+   *     - teacher：student.assignedTeacherId === ownTeacherId 才放行
+   *     - parent / hr：403（拍板 hr 不参与；parent 走 c 端独立 endpoint）
+   *   - 失败 → ForbiddenException
    */
   @Get('by-student/:studentId')
   @HttpCode(HttpStatus.OK)
@@ -125,16 +172,66 @@ export class ContractController {
     @Query('tenantSchema') tenantSchema: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @Req() req?: AuthenticatedRequest,
   ): Promise<{ items: Contract[] }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
     if (!studentId || studentId.length !== 32) {
       throw new BadRequestException('studentId must be 32-char ULID');
     }
+
+    // Sprint B.3 复审：scope filter 优先于字段过滤
+    //   1. 查 student brief 拿 ownerSalesId / assignedTeacherId
+    //   2. 按 role 判定可否访问
+    //   3. 不在范围 → 403
+    const student = await this.studentRepo.findBrief(tenantSchema, studentId);
+    if (!student) {
+      // 学生不存在 → 空数组（避免侧信道）
+      return { items: [] };
+    }
+
+    const role = req?.user?.role;
+    const group = actorGroupOf(role);
+    const subId = req?.user?.sub;
+
+    // admin / academic / finance group 全放行（拍板「老板校长 + 教务 + 财务 ✅」）
+    // sales 个人（sales/marketing）：必须 student.ownerSalesId === me
+    // teacher：必须 student.assignedTeacherId === ownTeacherId（反查 teachers.user_id）
+    // parent / hr / unknown：403
+    let allowed = false;
+    if (group === 'admin' || group === 'academic' || group === 'finance') {
+      allowed = true;
+    } else if (group === 'sales' && subId) {
+      allowed = student.ownerSalesId === subId;
+    } else if (group === 'teacher' && subId) {
+      const ownTeacher = await this.teacherRepo.findByUserId(tenantSchema, subId);
+      if (ownTeacher) {
+        allowed = student.assignedTeacherId === ownTeacher.id;
+      }
+    }
+    // parent / hr / unknown 留 allowed=false
+
+    if (!allowed) {
+      throw new ForbiddenException(
+        `CONTRACT_BY_STUDENT_ACCESS_DENIED: role=${role ?? 'unknown'} ` +
+          `studentId=${studentId} ownerSales=${student.ownerSalesId ?? 'null'} ` +
+          `assignedTeacher=${student.assignedTeacherId ?? 'null'}`,
+      );
+    }
+
     const items = await this.repo.listByStudent(tenantSchema, studentId, {
       limit: limit ? Math.min(parseInt(limit, 10), 200) : 50,
       offset: offset ? parseInt(offset, 10) : 0,
     });
-    return { items };
+    // Sprint B.3：from student/detail OOUX 进入
+    //   teacher 主带学生合同 → 走 teacher path（金额全 0）
+    //   sales 自己客户的孩子合同 → owner=me ✅，他 owner ❌ 0
+    //   admin/finance/academic 走各自路径
+    //   parent 自己孩子合同 → totalAmount 保留 + discountAmount/giftHours 0
+    const items_masked = items.map((c) => {
+      const isOwnerSelf = subId !== undefined && c.ownerUserId === subId;
+      return maskContract(c, req?.user, { isOwnerSelf });
+    });
+    return { items: items_masked };
   }
 
   @Post()

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -19,9 +20,11 @@ import {
   FollowType,
 } from './customer.repository';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
-import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
+import { AuthenticatedRequest, JwtPayload } from '../auth/jwt-payload.interface';
 import { Roles } from '../../guards/rbac.decorator';
 import { RbacGuard } from '../../guards/rbac.guard';
+// Sprint B.3 (2026-05-11): 字段级权限过滤 + 范围过滤
+import { maskCustomer, canAccessCustomer, actorGroupOf } from '../../common/role-field-filter';
 
 /**
  * CustomerController — V25 销售客户管理 HTTP 暴露
@@ -126,7 +129,12 @@ export class CustomerController {
       limit: limit ? Math.min(parseInt(limit, 10), 200) : 50,
       offset: offset ? parseInt(offset, 10) : 0,
     });
-    return { items };
+    // Sprint B.3：listMine 已是 SQL 层 owner_user_id=me 过滤过，但字段级
+    // 仍需走 mask：保证一致策略（如未来 sales_manager 调 listMine 路径也走同 mask）
+    const items_masked = items.map((c) =>
+      maskCustomer(c, req?.user, { isOwnerSelf: c.ownerUserId === ownerUserId }),
+    );
+    return { items: items_masked };
   }
 
   /**
@@ -145,6 +153,7 @@ export class CustomerController {
     @Query('campusId') campusId?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @Req() req?: AuthenticatedRequest,
   ): Promise<{ items: Customer[] }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
     const items = await this.repo.listAllForBoss(tenantSchema, {
@@ -154,7 +163,20 @@ export class CustomerController {
       limit: limit ? Math.min(parseInt(limit, 10), 500) : 200,
       offset: offset ? parseInt(offset, 10) : 0,
     });
-    return { items };
+    // Sprint B.3：admin/sales_director/sales_manager 都允许调，但字段裁剪按 role
+    //   - admin / boss：全字段
+    //   - sales_director / sales_manager：admin group（按 actorGroupOf 归类 sales，但
+    //     canAccessCustomer 视为「主管类」全可看，maskCustomer 内 sales 路径需配合）
+    //   - sales_manager / sales_director 走 sales path 但 isOwnerSelf=ownerUserId 自比
+    //     主管类视为 owner（拍板「老板校长 + 销售主管 ✅ 看全」）— 这里走 admin group 视为全字段
+    const ownerUserId = req?.user?.sub ?? null;
+    const items_masked = items.map((c) => {
+      // sales_director / sales_manager 走 admin group 等效（拍板 KPI 主可看）
+      // 实际取决于 actorGroupOf；这里直接传 owner 比对，subgroup 不影响 admin/boss
+      const isOwnerSelf = ownerUserId !== null && c.ownerUserId === ownerUserId;
+      return maskCustomer(c, req?.user, { isOwnerSelf });
+    });
+    return { items: items_masked };
   }
 
   @Get('pool')
@@ -164,6 +186,7 @@ export class CustomerController {
     @Query('source') source?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @Req() req?: AuthenticatedRequest,
   ): Promise<{ items: Customer[] }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
     const items = await this.repo.listPool(tenantSchema, {
@@ -171,7 +194,14 @@ export class CustomerController {
       limit: limit ? Math.min(parseInt(limit, 10), 200) : 100,
       offset: offset ? parseInt(offset, 10) : 0,
     });
-    return { items };
+    // Sprint B.3：公共池里 owner_user_id=NULL，sales 看到的都不是"自己持有"，
+    //   但拍板「公共池」客户对销售可见 phone/wechat（FCFS 抢占前提需见联系人）
+    //   → 把 isOwnerSelf 设为 true（=池里所有 sales 都视为「可看」），不影响 admin/finance
+    //   注：admin 路径下 maskCustomer 无视 isOwnerSelf，按 admin 路径全字段保留
+    const items_masked = items.map((c) =>
+      maskCustomer(c, req?.user, { isOwnerSelf: true }),
+    );
+    return { items: items_masked };
   }
 
   @Get(':id')
@@ -179,11 +209,31 @@ export class CustomerController {
   async detail(
     @Param('id') id: string,
     @Query('tenantSchema') tenantSchema: string,
+    @Req() req?: AuthenticatedRequest,
   ): Promise<Customer | { found: false }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
     const c = await this.repo.findById(tenantSchema, id);
     if (!c) return { found: false };
-    return c;
+
+    // Sprint B.3 (2026-05-11)：范围过滤优先于字段过滤
+    //   1. canAccessCustomer：sales 只能看 owner=me / 池内（admin/academic/finance 全可看）
+    //   2. 拒绝场景：返 {found:false} 避免侧信道泄漏（不区分「不存在」vs「无权」）
+    //   3. teacher / hr / parent / unknown 都拒绝（拍板不该看）
+    if (!canAccessCustomer(c, req?.user)) {
+      throw new ForbiddenException(
+        `CUSTOMER_ACCESS_DENIED: role=${req?.user?.role ?? 'unknown'} ` +
+          `customerId=${id} owner=${c.ownerUserId ?? 'pool'}`,
+      );
+    }
+
+    // 字段级 mask
+    //   - sales 个人：isOwnerSelf 比对 sub
+    //   - 池客户（ownerUserId=null）→ isOwnerSelf=true（允许 sales 看 phone 以便 claim）
+    //   - admin / academic / finance：mask 内部按 group 自己判定
+    const isOwnerSelf =
+      c.ownerUserId === null || // 池
+      (req?.user?.sub !== undefined && c.ownerUserId === req.user.sub);
+    return maskCustomer(c, req?.user, { isOwnerSelf });
   }
 
   @Get(':id/follows')
@@ -192,8 +242,28 @@ export class CustomerController {
     @Param('id') id: string,
     @Query('tenantSchema') tenantSchema: string,
     @Query('limit') limit?: string,
+    @Req() req?: AuthenticatedRequest,
   ): Promise<{ items: FollowEntry[] }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+
+    // Sprint B.3 复审 (2026-05-11) — 红线 A01：
+    //   - 跟进时间轴是销售线敏感数据（沟通记录 + 内部 note）
+    //   - 必须先 canAccessCustomer：sales 仅看 owner=me / 池；teacher/parent/hr 403
+    //   - 拍板「教务/财务可看本校客户」→ 直接放行（campus 比对在 controller 层）
+    //
+    // 实现：先 findById 拿 ownerUserId → canAccessCustomer 判定 → listFollowLog
+    const c = await this.repo.findById(tenantSchema, id);
+    if (!c) {
+      // 客户不存在 → 空数组（避免侧信道泄漏「该 ID 是否存在」）
+      return { items: [] };
+    }
+    if (!canAccessCustomer(c, req?.user)) {
+      throw new ForbiddenException(
+        `CUSTOMER_ACCESS_DENIED: role=${req?.user?.role ?? 'unknown'} ` +
+          `customerId=${id} owner=${c.ownerUserId ?? 'pool'} (follows)`,
+      );
+    }
+
     const items = await this.repo.listFollowLog(
       tenantSchema,
       id,
