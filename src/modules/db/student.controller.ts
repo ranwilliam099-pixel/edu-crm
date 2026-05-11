@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Optional,
   Param,
   Post,
   Query,
@@ -28,6 +29,10 @@ import { TeacherRepository } from './teacher.repository';
 //   - 复用 ContractRepository.create，保持业务规则一致
 //   - 旧 POST /db/contracts 保留向后兼容（前端迁移完才删）
 import { ContractRepository, Contract, OrderType } from './contract.repository';
+// Sprint B.5 (2026-05-11): audit_log 业务写
+//   - create / transferSales / transferTeacher / createContract 写 audit_log
+//   - student 表无 phone/PII（仅 studentName 等 brief 字段），snapshot 直接入
+import { ActorRole, AuditLogRepository } from './audit-log.repository';
 
 /**
  * StudentController — V28 学生归属转移 HTTP 暴露
@@ -53,7 +58,53 @@ export class StudentController {
     private readonly teacherRepo: TeacherRepository,
     // Sprint B.3 复审：OOUX POST /db/students/:id/contracts 复用合同写入
     private readonly contractRepo: ContractRepository,
+    // Sprint B.5 (2026-05-11): audit_log 业务写
+    //   - @Optional：unit spec 直接 new 不传也能跑（兼容现有 spec 测试）
+    //   - fail-open：log() 写失败不阻塞主业务
+    @Optional() private readonly auditLog?: AuditLogRepository,
   ) {}
+
+  /**
+   * Sprint B.5 helper：从 req 取 audit 上下文
+   */
+  private auditCtx(req: AuthenticatedRequest): {
+    actorRole: ActorRole;
+    ip: string | null;
+    userAgent: string | null;
+    requestId: string | null;
+  } {
+    return {
+      actorRole: ((req.user?.role as ActorRole) ?? 'admin') as ActorRole,
+      ip: req.ip ?? null,
+      userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+      requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+    };
+  }
+
+  /**
+   * Sprint B.5 helper：写 audit_log，try-catch 不阻塞主业务
+   */
+  private async tryAudit(
+    tenantSchema: string,
+    entry: {
+      actorUserId: string | null;
+      actorRole: ActorRole;
+      action: string;
+      targetType: string;
+      targetId: string | null;
+      before: Record<string, unknown> | null;
+      after: Record<string, unknown> | null;
+      ip: string | null;
+      userAgent: string | null;
+      requestId: string | null;
+    },
+  ): Promise<void> {
+    try {
+      await this.auditLog?.log(tenantSchema, entry);
+    } catch {
+      // fail-open
+    }
+  }
 
   /**
    * V29 R2 销售即时建学生（替代仅 batch import）
@@ -92,7 +143,7 @@ export class StudentController {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
     const operatorUserId = req.user?.sub;
     if (!operatorUserId) throw new BadRequestException('user sub required');
-    return this.repo.create(body.tenantSchema, {
+    const result = await this.repo.create(body.tenantSchema, {
       id: body.id,
       studentName: body.studentName,
       customerId: body.customerId,
@@ -104,6 +155,27 @@ export class StudentController {
       assignedTeacherId: body.assignedTeacherId,
       operatorUserId,
     });
+
+    // Sprint B.5: audit_log student.create（student brief 无 PII，全字段入 audit）
+    await this.tryAudit(body.tenantSchema, {
+      actorUserId: operatorUserId,
+      ...this.auditCtx(req),
+      action: 'student.create',
+      targetType: 'student',
+      targetId: result.id,
+      before: null,
+      after: {
+        id: result.id,
+        studentName: result.studentName,
+        customerId: result.customerId,
+        ownerSalesId: result.ownerSalesId,
+        assignedTeacherId: result.assignedTeacherId,
+        gradeOrAge: result.gradeOrAge,
+        intendedSubject: result.intendedSubject,
+      },
+    });
+
+    return result;
   }
 
   /**
@@ -291,7 +363,7 @@ export class StudentController {
     // V26 校区归属：跨校 role（admin/sales_director）允许 body.campusId 显式传，
     // 单校 role 从 jwt.campusId 自动填
     const campusId = body.campusId || req.user?.campusId || null;
-    return this.contractRepo.create(body.tenantSchema, {
+    const result = await this.contractRepo.create(body.tenantSchema, {
       id: body.id,
       studentId, // path → repo（OOUX 子对象归属）
       courseProductId: body.courseProductId,
@@ -309,6 +381,39 @@ export class StudentController {
       signedAt: body.signedAt,
       note: body.note,
     });
+
+    // Sprint B.5: audit_log contract.create（OOUX 子对象路径 — 同 contract.create action）
+    //   金额字段不脱敏：合同变更追溯需要 totalAmount/standardPrice/discountAmount
+    await this.tryAudit(body.tenantSchema, {
+      actorUserId: ownerUserId,
+      ...this.auditCtx(req),
+      action: 'contract.create',
+      targetType: 'contract',
+      targetId: result.id,
+      before: null,
+      after: {
+        id: result.id,
+        studentId: result.studentId,
+        ownerUserId: result.ownerUserId,
+        opportunityId: result.opportunityId,
+        campusId: result.campusId,
+        courseProductId: result.courseProductId,
+        courseProductName: result.courseProductName,
+        classType: result.classType,
+        lessonHours: result.lessonHours,
+        standardPrice: result.standardPrice,
+        discountAmount: result.discountAmount,
+        giftHours: result.giftHours,
+        totalAmount: result.totalAmount,
+        orderType: result.orderType,
+        status: result.status,
+        signedAt: result.signedAt,
+        // OOUX 入口标识：区分 POST /db/contracts vs POST /db/students/:id/contracts
+        sourceEndpoint: 'student-children',
+      },
+    });
+
+    return result;
   }
 
   @Post(':id/transfer-sales')
@@ -333,12 +438,29 @@ export class StudentController {
       (operatorRole === 'admin' || operatorRole === 'boss'
         ? '校长再分配'
         : '销售主动转交');
-    return this.repo.transferSales(
+    const result = await this.repo.transferSales(
       body.tenantSchema,
       id,
       body.toSalesId === undefined ? null : body.toSalesId,
       reason,
     );
+
+    // Sprint B.5: audit_log student.transfer-sales（高敏感转移 — 学生归属变更）
+    await this.tryAudit(body.tenantSchema, {
+      actorUserId: req.user?.sub ?? null,
+      ...this.auditCtx(req),
+      action: 'student.transfer-sales',
+      targetType: 'student',
+      targetId: id,
+      before: { ownerSalesId: result.fromUserId },
+      after: {
+        ownerSalesId: result.toUserId,
+        field: result.field,
+        reason: result.reason,
+      },
+    });
+
+    return result;
   }
 
   @Post(':id/transfer-teacher')
@@ -354,13 +476,33 @@ export class StudentController {
       toTeacherId: string | null;
       reason?: string;
     },
+    @Req() req?: AuthenticatedRequest,
   ): Promise<StudentTransferResult> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
-    return this.repo.transferTeacher(
+    const result = await this.repo.transferTeacher(
       body.tenantSchema,
       id,
       body.toTeacherId === undefined ? null : body.toTeacherId,
       body.reason || '校长再分配',
     );
+
+    // Sprint B.5: audit_log student.transfer-teacher（高敏感 — 主带老师变更）
+    if (req) {
+      await this.tryAudit(body.tenantSchema, {
+        actorUserId: req.user?.sub ?? null,
+        ...this.auditCtx(req),
+        action: 'student.transfer-teacher',
+        targetType: 'student',
+        targetId: id,
+        before: { assignedTeacherId: result.fromUserId },
+        after: {
+          assignedTeacherId: result.toUserId,
+          field: result.field,
+          reason: result.reason,
+        },
+      });
+    }
+
+    return result;
   }
 }

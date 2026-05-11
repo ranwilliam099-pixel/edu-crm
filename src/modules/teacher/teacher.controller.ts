@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Optional,
   Param,
   Post,
   Req,
@@ -17,6 +18,10 @@ import { Roles } from '../../guards/rbac.decorator';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
+// Sprint B.5 (2026-05-11): audit_log 业务写
+//   - createTeacher / createTeacherInDb / archive 写 audit_log
+//   - phone 走 mask 入 audit（避免明文 PII 落 audit_log）
+import { ActorRole, AuditLogRepository } from '../db/audit-log.repository';
 
 /**
  * TeacherController — V7 教师独立档案 HTTP 暴露 BE-V7-1
@@ -39,7 +44,62 @@ export class TeacherController {
   constructor(
     private readonly service: TeacherService,
     private readonly repo: TeacherRepository,
+    // Sprint B.5 (2026-05-11): audit_log 业务写
+    //   - @Optional：unit spec 直接 new 不传也能跑（兼容现有 spec 测试）
+    //   - fail-open：log() 写失败不阻塞主业务
+    @Optional() private readonly auditLog?: AuditLogRepository,
   ) {}
+
+  /**
+   * Sprint B.5 helper：PII 脱敏（phone 13800138000 → '138****8000'）
+   */
+  private maskPhoneForAudit(phone: string | null | undefined): string | null {
+    if (!phone || typeof phone !== 'string') return null;
+    if (phone.length < 7) return '***';
+    return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
+  }
+
+  /**
+   * Sprint B.5 helper：从 req 取 audit 上下文
+   */
+  private auditCtx(req: AuthenticatedRequest | undefined): {
+    actorRole: ActorRole;
+    ip: string | null;
+    userAgent: string | null;
+    requestId: string | null;
+  } {
+    return {
+      actorRole: ((req?.user?.role as ActorRole) ?? 'admin') as ActorRole,
+      ip: req?.ip ?? null,
+      userAgent: (req?.headers?.['user-agent'] as string | undefined) ?? null,
+      requestId: (req?.headers?.['x-request-id'] as string | undefined) ?? null,
+    };
+  }
+
+  /**
+   * Sprint B.5 helper：写 audit_log，try-catch 不阻塞主业务
+   */
+  private async tryAudit(
+    tenantSchema: string,
+    entry: {
+      actorUserId: string | null;
+      actorRole: ActorRole;
+      action: string;
+      targetType: string;
+      targetId: string | null;
+      before: Record<string, unknown> | null;
+      after: Record<string, unknown> | null;
+      ip: string | null;
+      userAgent: string | null;
+      requestId: string | null;
+    },
+  ): Promise<void> {
+    try {
+      await this.auditLog?.log(tenantSchema, entry);
+    } catch {
+      // fail-open
+    }
+  }
 
   /**
    * POST /api/teachers — 创建教师档案
@@ -82,6 +142,8 @@ export class TeacherController {
    * POST /api/teachers/db — 真 PG 持久化版（用户 2026-05-02「做啊」）
    *
    * Body: CreateTeacherDto + { tenantSchema: 'tenant_xxx' }
+   *
+   * Sprint B.5: 写 audit_log teacher.create（phone 脱敏入 audit）
    */
   @Post('db')
   @UseGuards(RbacGuard)
@@ -89,9 +151,34 @@ export class TeacherController {
   @HttpCode(HttpStatus.CREATED)
   async createTeacherInDb(
     @Body() body: CreateTeacherDto & { tenantSchema: string },
+    @Req() req?: AuthenticatedRequest,
   ): Promise<Teacher> {
     const { tenantSchema, ...dto } = body;
-    return this.service.createTeacherInDb(dto, tenantSchema);
+    const result = await this.service.createTeacherInDb(dto, tenantSchema);
+
+    // Sprint B.5: audit_log teacher.create（phone 走 mask 入 audit）
+    if (req) {
+      await this.tryAudit(tenantSchema, {
+        actorUserId: req.user?.sub ?? dto.operator ?? null,
+        ...this.auditCtx(req),
+        action: 'teacher.create',
+        targetType: 'teacher',
+        targetId: result.id,
+        before: null,
+        after: {
+          id: result.id,
+          campusId: result.campusId,
+          name: result.name,
+          phoneMask: this.maskPhoneForAudit(result.phone),
+          userId: result.userId ?? null,
+          subjects: result.subjects,
+          hourlyPriceYuan: result.hourlyPriceYuan ?? null,
+          status: result.status,
+        },
+      });
+    }
+
+    return result;
   }
 
   /**
@@ -145,9 +232,34 @@ export class TeacherController {
   ): Promise<TeacherArchiveResult> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
     const operator = req.user?.sub || 'system';
-    return this.repo.archive(body.tenantSchema, id, operator, {
+    const result = await this.repo.archive(body.tenantSchema, id, operator, {
       role: req.user?.role || null,
       campusId: req.user?.campusId ?? null,
     });
+
+    // Sprint B.5: audit_log teacher.archive（高敏感操作 — 注销老师 + 学生转移）
+    //   before status='在职' / '请假'（result.teacher 已是 '归档' 状态）
+    //   after 含 transferToTeacherId / studentsReassigned 便于追溯
+    await this.tryAudit(body.tenantSchema, {
+      actorUserId: req.user?.sub ?? null,
+      ...this.auditCtx(req),
+      action: 'teacher.archive',
+      targetType: 'teacher',
+      targetId: id,
+      // teacher.archive 在 repo 层已设 status='归档'；before 的 'active' 是逻辑推断
+      // （repo.archive 会拒绝 status='归档' 的 teacher，所以 before 必然是 '在职' 或 '请假'）
+      before: { status: 'active' },
+      after: {
+        teacherId: result.teacher.id,
+        teacherName: result.teacher.name,
+        campusId: result.teacher.campusId,
+        status: result.teacher.status, // 应为 '归档'
+        transferToTeacherId: result.transferToTeacherId,
+        transferToTeacherName: result.transferToTeacherName,
+        studentsReassigned: result.studentsReassigned,
+      },
+    });
+
+    return result;
   }
 }

@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Optional,
   Param,
   Post,
   Query,
@@ -34,6 +35,10 @@ import {
 //   - sales 只看自己 owner 的学生合同；teacher 只看自己 assigned 的；其他 admin/finance/academic 放行
 import { StudentRepository } from './student.repository';
 import { TeacherRepository } from './teacher.repository';
+// Sprint B.5 (2026-05-11): audit_log 业务写 + 拒绝路径
+//   - create 写 audit_log（金额详情入 audit 用于变更溯源 — 不脱敏，财务/审计场景必需）
+//   - canAccessContract 失败前 audit 'contract.access-denied'
+import { ActorRole, AuditLogRepository } from './audit-log.repository';
 
 /**
  * ContractController — V25 签约管理 HTTP 暴露（业绩数据源头）
@@ -56,7 +61,53 @@ export class ContractController {
     private readonly studentRepo: StudentRepository,
     // Sprint B.3 复审: teacher role 反查 ownTeacherId
     private readonly teacherRepo: TeacherRepository,
+    // Sprint B.5 (2026-05-11): audit_log 业务写 + 拒绝路径
+    //   - @Optional：unit spec 直接 new 不传也能跑（兼容现有 spec 测试）
+    //   - fail-open：log() 写失败仅 logger.warn 不抛主业务
+    @Optional() private readonly auditLog?: AuditLogRepository,
   ) {}
+
+  /**
+   * Sprint B.5 helper：从 req 取 audit 上下文（ip/ua/req-id + actorRole）
+   */
+  private auditCtx(req: AuthenticatedRequest): {
+    actorRole: ActorRole;
+    ip: string | null;
+    userAgent: string | null;
+    requestId: string | null;
+  } {
+    return {
+      actorRole: ((req.user?.role as ActorRole) ?? 'admin') as ActorRole,
+      ip: req.ip ?? null,
+      userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+      requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+    };
+  }
+
+  /**
+   * Sprint B.5 helper：写 audit_log，try-catch 不阻塞主业务
+   */
+  private async tryAudit(
+    tenantSchema: string,
+    entry: {
+      actorUserId: string | null;
+      actorRole: ActorRole;
+      action: string;
+      targetType: string;
+      targetId: string | null;
+      before: Record<string, unknown> | null;
+      after: Record<string, unknown> | null;
+      ip: string | null;
+      userAgent: string | null;
+      requestId: string | null;
+    },
+  ): Promise<void> {
+    try {
+      await this.auditLog?.log(tenantSchema, entry);
+    } catch {
+      // fail-open
+    }
+  }
 
   @Get('mine')
   @HttpCode(HttpStatus.OK)
@@ -137,7 +188,25 @@ export class ContractController {
     //   admin/finance/academic/teacher/parent 都允许（具体字段在 mask 层裁剪）
     //   - teacher/parent 走 controller-level 学生关系校验交由调用方（OOUX 入口）
     //   - 此处只挡 sales other-owner 一个常见侧信道
+    //
+    // Sprint B.5 (2026-05-11) — 拒绝路径 audit_log：A09 安全留证
     if (!canAccessContract(c, req?.user)) {
+      if (req) {
+        await this.tryAudit(tenantSchema, {
+          actorUserId: req.user?.sub ?? null,
+          ...this.auditCtx(req),
+          action: 'contract.access-denied',
+          targetType: 'contract',
+          targetId: id,
+          before: null,
+          after: {
+            attempted_role: req.user?.role ?? 'unknown',
+            attempted_owner: req.user?.sub ?? null,
+            actual_owner: c.ownerUserId ?? null,
+            endpoint: 'detail',
+          },
+        });
+      }
       throw new ForbiddenException(
         `CONTRACT_ACCESS_DENIED: role=${req?.user?.role ?? 'unknown'} ` +
           `contractId=${id} owner=${c.ownerUserId ?? 'null'}`,
@@ -211,6 +280,24 @@ export class ContractController {
     // parent / hr / unknown 留 allowed=false
 
     if (!allowed) {
+      // Sprint B.5: 拒绝路径 audit_log（endpoint='by-student'）
+      if (req) {
+        await this.tryAudit(tenantSchema, {
+          actorUserId: subId ?? null,
+          ...this.auditCtx(req),
+          action: 'contract.access-denied',
+          targetType: 'student',
+          targetId: studentId,
+          before: null,
+          after: {
+            attempted_role: role ?? 'unknown',
+            attempted_owner: subId ?? null,
+            actual_owner_sales: student.ownerSalesId ?? null,
+            actual_assigned_teacher: student.assignedTeacherId ?? null,
+            endpoint: 'by-student',
+          },
+        });
+      }
       throw new ForbiddenException(
         `CONTRACT_BY_STUDENT_ACCESS_DENIED: role=${role ?? 'unknown'} ` +
           `studentId=${studentId} ownerSales=${student.ownerSalesId ?? 'null'} ` +
@@ -275,7 +362,7 @@ export class ContractController {
     // V26 校区归属：跨校 role（admin/sales_director）允许 body.campusId 显式传，
     // 单校 role 从 jwt.campusId 自动填，前端不需要传。
     const campusId = body.campusId || req.user?.campusId || null;
-    return this.repo.create(body.tenantSchema, {
+    const result = await this.repo.create(body.tenantSchema, {
       id: body.id,
       studentId: body.studentId,
       courseProductId: body.courseProductId,
@@ -293,6 +380,38 @@ export class ContractController {
       signedAt: body.signedAt,
       note: body.note,
     });
+
+    // Sprint B.5: audit_log contract.create
+    //   金额字段不脱敏：合同变更追溯需要 totalAmount/standardPrice/discountAmount/giftHours
+    //   完整快照（财务/审计场景必需）
+    await this.tryAudit(body.tenantSchema, {
+      actorUserId: ownerUserId,
+      ...this.auditCtx(req),
+      action: 'contract.create',
+      targetType: 'contract',
+      targetId: result.id,
+      before: null,
+      after: {
+        id: result.id,
+        studentId: result.studentId,
+        ownerUserId: result.ownerUserId,
+        opportunityId: result.opportunityId,
+        campusId: result.campusId,
+        courseProductId: result.courseProductId,
+        courseProductName: result.courseProductName,
+        classType: result.classType,
+        lessonHours: result.lessonHours,
+        standardPrice: result.standardPrice,
+        discountAmount: result.discountAmount,
+        giftHours: result.giftHours,
+        totalAmount: result.totalAmount,
+        orderType: result.orderType,
+        status: result.status,
+        signedAt: result.signedAt,
+      },
+    });
+
+    return result;
   }
 
   @Post(':id/activate')

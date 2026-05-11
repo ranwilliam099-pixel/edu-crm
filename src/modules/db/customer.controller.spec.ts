@@ -16,8 +16,9 @@
 
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
 import { CustomerController } from './customer.controller';
-import { CustomerRepository, Customer } from './customer.repository';
+import { CustomerRepository, Customer, CreateCustomerResult } from './customer.repository';
 import { AuthenticatedRequest, JwtPayload, TenantRole } from '../auth/jwt-payload.interface';
+import { AuditLogRepository } from './audit-log.repository';
 
 describe('CustomerController (Sprint B.3 字段级权限)', () => {
   let controller: CustomerController;
@@ -486,6 +487,323 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
       await expect(
         controller.listFollows(CUSTOMER_ID, '', undefined, req(jwt('admin'))),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+});
+
+// ============================================================
+// Sprint B.5 (2026-05-11): audit_log 业务写 + 拒绝路径
+// ============================================================
+describe('CustomerController (Sprint B.5 audit_log)', () => {
+  let controller: CustomerController;
+  let repo: {
+    findById: jest.Mock;
+    listMine: jest.Mock;
+    listAllForBoss: jest.Mock;
+    listPool: jest.Mock;
+    listFollowLog: jest.Mock;
+    createWithOpportunity: jest.Mock;
+    claim: jest.Mock;
+    release: jest.Mock;
+    markLost: jest.Mock;
+  };
+  let auditLog: { log: jest.Mock };
+
+  const TENANT_A = 'TENANTA00000000000000000000000A1';
+  const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const CAMPUS_A = 'campus_A0000000000000000000000A01';
+  const SALES_A = 'salesA00000000000000000000000A01';
+  const SALES_B = 'salesB00000000000000000000000A02';
+  const CUSTOMER_ID = 'opp00000000000000000000000000A01';
+  const OPPORTUNITY_ID = 'oppor00000000000000000000000A01';
+  const STUDENT_ID = 'student00000000000000000000A001';
+
+  function jwt(role: TenantRole, sub = SALES_A): JwtPayload {
+    return { sub, tenantId: TENANT_A, role, campusId: CAMPUS_A };
+  }
+
+  function req(user?: JwtPayload): AuthenticatedRequest {
+    return {
+      user,
+      headers: { 'user-agent': 'WeChatMP/8.x', 'x-request-id': 'req-test-001' },
+      body: {},
+      query: {},
+      params: {},
+      ip: '127.0.0.1',
+    };
+  }
+
+  function customerFixture(overrides: Partial<Customer> = {}): Customer {
+    return {
+      id: CUSTOMER_ID,
+      studentId: STUDENT_ID,
+      studentName: '小明',
+      gradeOrAge: '三年级',
+      intendedSubject: '英语',
+      ownerUserId: SALES_A,
+      stage: '初步接触',
+      source: '抖音',
+      phone: '13800138000',
+      wechat: 'wx_parent_abc',
+      intentLevel: '高',
+      urgent: false,
+      note: '内部跟进备注',
+      enteredPoolAt: null,
+      enterPoolReason: null,
+      lastContactAt: '2026-05-10T10:00:00.000Z',
+      signedAt: null,
+      lostReason: null,
+      createdAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-10T10:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    repo = {
+      findById: jest.fn(),
+      listMine: jest.fn(),
+      listAllForBoss: jest.fn(),
+      listPool: jest.fn(),
+      listFollowLog: jest.fn(),
+      createWithOpportunity: jest.fn(),
+      claim: jest.fn(),
+      release: jest.fn(),
+      markLost: jest.fn(),
+    } as any;
+    auditLog = { log: jest.fn().mockResolvedValue(undefined) };
+    controller = new CustomerController(
+      repo as unknown as CustomerRepository,
+      auditLog as unknown as AuditLogRepository,
+    );
+  });
+
+  // ============================================================
+  // createSelfBuilt() → audit_log 'customer.create'
+  // ============================================================
+  describe('createSelfBuilt() — audit customer.create', () => {
+    it('销售即时建客户 → audit_log 调 1 次, action="customer.create", phone 脱敏', async () => {
+      const result: CreateCustomerResult = {
+        customerId: CUSTOMER_ID,
+        opportunityId: OPPORTUNITY_ID,
+        studentId: STUDENT_ID,
+      };
+      repo.createWithOpportunity.mockResolvedValueOnce(result);
+
+      await controller.createSelfBuilt(
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          customerId: CUSTOMER_ID,
+          opportunityId: OPPORTUNITY_ID,
+          parentName: '小明妈妈',
+          primaryMobile: '13800138000',
+          campusId: CAMPUS_A,
+          studentId: STUDENT_ID,
+          studentName: '小明',
+          intendedSubject: '英语',
+          gradeOrAge: '三年级',
+        },
+        req(jwt('sales', SALES_A)),
+      );
+
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const [schema, entry] = auditLog.log.mock.calls[0];
+      expect(schema).toBe(TENANT_SCHEMA);
+      expect(entry.action).toBe('customer.create');
+      expect(entry.targetType).toBe('customer');
+      expect(entry.targetId).toBe(CUSTOMER_ID);
+      expect(entry.before).toBeNull();
+      expect(entry.actorUserId).toBe(SALES_A);
+      expect(entry.actorRole).toBe('sales');
+      // PII mask check: primaryMobile '13800138000' → '138****8000'
+      expect(entry.after.primaryMobileMask).toBe('138****8000');
+      // raw phone 不应出现在 after
+      expect(entry.after.primaryMobile).toBeUndefined();
+      // 业务关键字段保留
+      expect(entry.after.parentName).toBe('小明妈妈');
+      expect(entry.after.ownerSalesId).toBe(SALES_A);
+      expect(entry.after.studentId).toBe(STUDENT_ID);
+    });
+
+    it('audit_log.log 抛错 → 不阻塞主业务（fail-open）', async () => {
+      const result: CreateCustomerResult = {
+        customerId: CUSTOMER_ID,
+        opportunityId: OPPORTUNITY_ID,
+        studentId: null,
+      };
+      repo.createWithOpportunity.mockResolvedValueOnce(result);
+      auditLog.log.mockRejectedValueOnce(new Error('audit_log write fail'));
+
+      // 主业务不应抛 — audit 失败 try-catch 兜住
+      const r = await controller.createSelfBuilt(
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          customerId: CUSTOMER_ID,
+          opportunityId: OPPORTUNITY_ID,
+          parentName: '小明妈妈',
+          primaryMobile: '13800138000',
+          campusId: CAMPUS_A,
+        },
+        req(jwt('sales', SALES_A)),
+      );
+      expect(r.customerId).toBe(CUSTOMER_ID);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ============================================================
+  // claim() → audit_log 'customer.claim'
+  // ============================================================
+  describe('claim() — audit customer.claim', () => {
+    it('销售抢池客户 → audit_log 调 1 次, before owner=null, after owner=me', async () => {
+      repo.findById.mockResolvedValueOnce(customerFixture({ ownerUserId: null }));
+      repo.claim.mockResolvedValueOnce(customerFixture({ ownerUserId: SALES_A }));
+
+      await controller.claim(
+        CUSTOMER_ID,
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA },
+        req(jwt('sales', SALES_A)),
+      );
+
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('customer.claim');
+      expect(entry.targetType).toBe('customer');
+      expect(entry.targetId).toBe(CUSTOMER_ID);
+      expect(entry.before).toEqual({ ownerUserId: null, stage: '初步接触' });
+      expect(entry.after.ownerUserId).toBe(SALES_A);
+      // PII 不入 audit
+      expect(entry.after.phone).toBeUndefined();
+    });
+  });
+
+  // ============================================================
+  // release() → audit_log 'customer.release'
+  // ============================================================
+  describe('release() — audit customer.release', () => {
+    it('销售退池 → audit_log 调 1 次, before owner=me, after owner=null', async () => {
+      repo.findById.mockResolvedValueOnce(customerFixture({ ownerUserId: SALES_A }));
+      repo.release.mockResolvedValueOnce(customerFixture({ ownerUserId: null }));
+
+      await controller.release(
+        CUSTOMER_ID,
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          reason: 'not_engaged',
+        },
+        req(jwt('sales', SALES_A)),
+      );
+
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('customer.release');
+      expect(entry.targetId).toBe(CUSTOMER_ID);
+      expect(entry.before.ownerUserId).toBe(SALES_A);
+      expect(entry.after.ownerUserId).toBeNull();
+      expect(entry.after.reason).toBe('not_engaged');
+    });
+  });
+
+  // ============================================================
+  // markLost() → audit_log 'customer.mark-lost'
+  // ============================================================
+  describe('markLost() — audit customer.mark-lost', () => {
+    it('销售标失单 → audit_log 调 1 次, stage 流转记录', async () => {
+      repo.findById.mockResolvedValueOnce(
+        customerFixture({ ownerUserId: SALES_A, stage: '谈单中' }),
+      );
+      repo.markLost.mockResolvedValueOnce(
+        customerFixture({
+          ownerUserId: SALES_A,
+          stage: '已失单',
+          lostReason: '价格高',
+        }),
+      );
+
+      await controller.markLost(
+        CUSTOMER_ID,
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          lostReason: '价格高',
+        },
+        req(jwt('sales', SALES_A)),
+      );
+
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('customer.mark-lost');
+      expect(entry.before).toEqual({ stage: '谈单中', lostReason: null });
+      expect(entry.after).toEqual({ stage: '已失单', lostReason: '价格高' });
+    });
+  });
+
+  // ============================================================
+  // detail() 拒绝路径 → audit_log 'customer.access-denied'
+  // ============================================================
+  describe('detail() — 拒绝路径 audit customer.access-denied', () => {
+    it('sales 越权看他人客户 → audit access-denied 调 1 次 + 403', async () => {
+      repo.findById.mockResolvedValueOnce(
+        customerFixture({ ownerUserId: SALES_B }),
+      );
+      await expect(
+        controller.detail(CUSTOMER_ID, TENANT_SCHEMA, req(jwt('sales', SALES_A))),
+      ).rejects.toThrow(ForbiddenException);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('customer.access-denied');
+      expect(entry.targetType).toBe('customer');
+      expect(entry.targetId).toBe(CUSTOMER_ID);
+      expect(entry.after.attempted_role).toBe('sales');
+      expect(entry.after.attempted_owner).toBe(SALES_A);
+      expect(entry.after.actual_owner).toBe(SALES_B);
+      expect(entry.after.endpoint).toBe('detail');
+    });
+
+    it('teacher 看 customer → audit access-denied 调 1 次 + 403', async () => {
+      repo.findById.mockResolvedValueOnce(customerFixture());
+      await expect(
+        controller.detail(CUSTOMER_ID, TENANT_SCHEMA, req(jwt('teacher'))),
+      ).rejects.toThrow(ForbiddenException);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      expect(auditLog.log.mock.calls[0][1].after.attempted_role).toBe('teacher');
+    });
+
+    it('audit_log.log 抛错 → 主 403 仍抛（fail-open）', async () => {
+      repo.findById.mockResolvedValueOnce(
+        customerFixture({ ownerUserId: SALES_B }),
+      );
+      auditLog.log.mockRejectedValueOnce(new Error('audit fail'));
+      await expect(
+        controller.detail(CUSTOMER_ID, TENANT_SCHEMA, req(jwt('sales', SALES_A))),
+      ).rejects.toThrow(ForbiddenException);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ============================================================
+  // listFollows() 拒绝路径 → audit_log 'customer.access-denied'
+  // ============================================================
+  describe('listFollows() — 拒绝路径 audit customer.access-denied', () => {
+    it('sales 看他人客户跟进 → audit access-denied + 403', async () => {
+      repo.findById.mockResolvedValueOnce(
+        customerFixture({ ownerUserId: SALES_B }),
+      );
+      await expect(
+        controller.listFollows(
+          CUSTOMER_ID,
+          TENANT_SCHEMA,
+          undefined,
+          req(jwt('sales', SALES_A)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('customer.access-denied');
+      expect(entry.after.endpoint).toBe('follows');
     });
   });
 });

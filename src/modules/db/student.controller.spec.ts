@@ -14,10 +14,11 @@
  */
 
 import { StudentController } from './student.controller';
-import { StudentBrief, StudentRepository } from './student.repository';
+import { StudentBrief, StudentRepository, StudentTransferResult } from './student.repository';
 import { TeacherRepository } from './teacher.repository';
 import { ContractRepository } from './contract.repository';
 import { AuthenticatedRequest, JwtPayload, TenantRole } from '../auth/jwt-payload.interface';
+import { AuditLogRepository } from './audit-log.repository';
 
 describe('StudentController (Sprint B.3 范围过滤)', () => {
   let controller: StudentController;
@@ -419,6 +420,279 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
           req(jwt('sales', SALES_A)),
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+});
+
+// ============================================================
+// Sprint B.5 (2026-05-11): audit_log 业务写
+// ============================================================
+describe('StudentController (Sprint B.5 audit_log)', () => {
+  let controller: StudentController;
+  let repo: {
+    create: jest.Mock;
+    transferSales: jest.Mock;
+    transferTeacher: jest.Mock;
+    listAll: jest.Mock;
+    listByTeacher: jest.Mock;
+  };
+  let teacherRepo: { findByUserId: jest.Mock };
+  let contractRepo: { create: jest.Mock };
+  let auditLog: { log: jest.Mock };
+
+  const TENANT_A = 'TENANTA00000000000000000000000A1';
+  const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const CAMPUS_A = 'campus_A0000000000000000000000A01';
+  const SALES_A = 'salesA00000000000000000000000A01';
+  const SALES_B = 'salesB00000000000000000000000A02';
+  const STUDENT_ID = 'student00000000000000000000000A1';
+  const CUSTOMER_ID = 'cust00000000000000000000000000A1';
+  const CONTRACT_ID = 'contract00000000000000000000000A';
+  const TEACHER_ID_A = 'teacherID000000000000000000000A1';
+  const TEACHER_ID_B = 'teacherID000000000000000000000B1';
+
+  function jwt(role: TenantRole, sub = SALES_A): JwtPayload {
+    return { sub, tenantId: TENANT_A, role, campusId: CAMPUS_A };
+  }
+
+  function req(user?: JwtPayload): AuthenticatedRequest {
+    return {
+      user,
+      headers: { 'user-agent': 'WeChatMP/8.x', 'x-request-id': 'req-test-001' },
+      body: {},
+      query: {},
+      params: {},
+      ip: '127.0.0.1',
+    };
+  }
+
+  function studentBriefFixture(overrides: Partial<StudentBrief> = {}): StudentBrief {
+    return {
+      id: STUDENT_ID,
+      studentName: '小明',
+      customerId: CUSTOMER_ID,
+      ownerSalesId: SALES_A,
+      assignedTeacherId: TEACHER_ID_A,
+      ownerChangedAt: null,
+      ownerChangeReason: null,
+      gradeOrAge: '三年级',
+      intendedSubject: '英语',
+      contractClassType: null,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    repo = {
+      create: jest.fn(),
+      transferSales: jest.fn(),
+      transferTeacher: jest.fn(),
+      listAll: jest.fn(),
+      listByTeacher: jest.fn(),
+    } as any;
+    teacherRepo = { findByUserId: jest.fn() };
+    contractRepo = { create: jest.fn() };
+    auditLog = { log: jest.fn().mockResolvedValue(undefined) };
+    controller = new StudentController(
+      repo as unknown as StudentRepository,
+      teacherRepo as unknown as TeacherRepository,
+      contractRepo as unknown as ContractRepository,
+      auditLog as unknown as AuditLogRepository,
+    );
+  });
+
+  // ============================================================
+  // create() → audit_log 'student.create'
+  // ============================================================
+  describe('create() — audit student.create', () => {
+    it('销售即时建学生 → audit_log 调 1 次, action="student.create"', async () => {
+      repo.create.mockResolvedValueOnce(
+        studentBriefFixture({ ownerSalesId: SALES_A }),
+      );
+      await controller.create(
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          id: STUDENT_ID,
+          studentName: '小明',
+          customerId: CUSTOMER_ID,
+          gradeOrAge: '三年级',
+          intendedSubject: '英语',
+        },
+        req(jwt('sales', SALES_A)),
+      );
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const [schema, entry] = auditLog.log.mock.calls[0];
+      expect(schema).toBe(TENANT_SCHEMA);
+      expect(entry.action).toBe('student.create');
+      expect(entry.targetType).toBe('student');
+      expect(entry.targetId).toBe(STUDENT_ID);
+      expect(entry.before).toBeNull();
+      expect(entry.actorUserId).toBe(SALES_A);
+      expect(entry.actorRole).toBe('sales');
+      expect(entry.after.studentName).toBe('小明');
+      expect(entry.after.customerId).toBe(CUSTOMER_ID);
+      expect(entry.after.ownerSalesId).toBe(SALES_A); // 销售自建归自己
+    });
+
+    it('audit_log.log 抛错 → 不阻塞主业务（fail-open）', async () => {
+      repo.create.mockResolvedValueOnce(studentBriefFixture());
+      auditLog.log.mockRejectedValueOnce(new Error('audit fail'));
+      const r = await controller.create(
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          id: STUDENT_ID,
+          studentName: '小明',
+          customerId: CUSTOMER_ID,
+        },
+        req(jwt('sales', SALES_A)),
+      );
+      expect(r.id).toBe(STUDENT_ID);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ============================================================
+  // transferSales() → audit_log 'student.transfer-sales'
+  // ============================================================
+  describe('transferSales() — audit student.transfer-sales', () => {
+    it('校长把学生从 SALES_A 转到 SALES_B → audit before/after 完整', async () => {
+      const transferResult: StudentTransferResult = {
+        studentId: STUDENT_ID,
+        fromUserId: SALES_A,
+        toUserId: SALES_B,
+        field: 'owner_sales_id',
+        reason: '校长再分配',
+      };
+      repo.transferSales.mockResolvedValueOnce(transferResult);
+
+      await controller.transferSales(
+        STUDENT_ID,
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          toSalesId: SALES_B,
+        },
+        req(jwt('admin')),
+      );
+
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('student.transfer-sales');
+      expect(entry.targetType).toBe('student');
+      expect(entry.targetId).toBe(STUDENT_ID);
+      expect(entry.before).toEqual({ ownerSalesId: SALES_A });
+      expect(entry.after).toEqual({
+        ownerSalesId: SALES_B,
+        field: 'owner_sales_id',
+        reason: '校长再分配',
+      });
+      expect(entry.actorRole).toBe('admin');
+    });
+
+    it('销售主动转交（reason 默认）', async () => {
+      const transferResult: StudentTransferResult = {
+        studentId: STUDENT_ID,
+        fromUserId: SALES_A,
+        toUserId: SALES_B,
+        field: 'owner_sales_id',
+        reason: '销售主动转交',
+      };
+      repo.transferSales.mockResolvedValueOnce(transferResult);
+      await controller.transferSales(
+        STUDENT_ID,
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA, toSalesId: SALES_B },
+        req(jwt('sales', SALES_A)),
+      );
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.after.reason).toBe('销售主动转交');
+      expect(entry.actorRole).toBe('sales');
+    });
+  });
+
+  // ============================================================
+  // transferTeacher() → audit_log 'student.transfer-teacher'
+  // ============================================================
+  describe('transferTeacher() — audit student.transfer-teacher', () => {
+    it('hr 把学生主带老师转给 TEACHER_B → audit before/after', async () => {
+      const transferResult: StudentTransferResult = {
+        studentId: STUDENT_ID,
+        fromUserId: TEACHER_ID_A,
+        toUserId: TEACHER_ID_B,
+        field: 'assigned_teacher_id',
+        reason: '校长再分配',
+      };
+      repo.transferTeacher.mockResolvedValueOnce(transferResult);
+
+      await controller.transferTeacher(
+        STUDENT_ID,
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          toTeacherId: TEACHER_ID_B,
+        },
+        req(jwt('hr')),
+      );
+
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('student.transfer-teacher');
+      expect(entry.before).toEqual({ assignedTeacherId: TEACHER_ID_A });
+      expect(entry.after.assignedTeacherId).toBe(TEACHER_ID_B);
+      expect(entry.after.field).toBe('assigned_teacher_id');
+      expect(entry.actorRole).toBe('hr');
+    });
+  });
+
+  // ============================================================
+  // createContract() → audit_log 'contract.create' (OOUX 子对象)
+  // ============================================================
+  describe('createContract() OOUX — audit contract.create', () => {
+    it('OOUX 子对象路径建合同 → audit action="contract.create" + sourceEndpoint="student-children"', async () => {
+      const created = {
+        id: CONTRACT_ID,
+        studentId: STUDENT_ID,
+        ownerUserId: SALES_A,
+        opportunityId: null,
+        campusId: CAMPUS_A,
+        courseProductId: null,
+        courseProductName: '一对一英语',
+        classType: '一对一',
+        lessonHours: 60,
+        standardPrice: 9999,
+        discountAmount: 999,
+        giftHours: 5,
+        totalAmount: 9000,
+        orderType: '新签',
+        status: 'pending',
+        signedAt: '2026-05-08T00:00:00.000Z',
+      };
+      contractRepo.create.mockResolvedValueOnce(created);
+
+      await controller.createContract(
+        STUDENT_ID,
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          id: CONTRACT_ID,
+          courseProductName: '一对一英语',
+          lessonHours: 60,
+          standardPrice: 9999,
+          totalAmount: 9000,
+        },
+        req(jwt('sales', SALES_A)),
+      );
+
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('contract.create');
+      expect(entry.targetType).toBe('contract');
+      expect(entry.targetId).toBe(CONTRACT_ID);
+      expect(entry.after.totalAmount).toBe(9000);
+      expect(entry.after.studentId).toBe(STUDENT_ID);
+      // 区分 OOUX 子对象路径
+      expect(entry.after.sourceEndpoint).toBe('student-children');
     });
   });
 });

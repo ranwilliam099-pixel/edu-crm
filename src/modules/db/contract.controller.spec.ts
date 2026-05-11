@@ -18,6 +18,7 @@ import { Contract, ContractRepository } from './contract.repository';
 import { StudentRepository } from './student.repository';
 import { TeacherRepository } from './teacher.repository';
 import { AuthenticatedRequest, JwtPayload, TenantRole } from '../auth/jwt-payload.interface';
+import { AuditLogRepository } from './audit-log.repository';
 
 describe('ContractController (Sprint B.3 字段级权限)', () => {
   let controller: ContractController;
@@ -432,6 +433,260 @@ describe('ContractController (Sprint B.3 字段级权限)', () => {
       );
       expect(r.items).toEqual([]);
       expect(repo.listByStudent).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ============================================================
+// Sprint B.5 (2026-05-11): audit_log 业务写 + 拒绝路径
+// ============================================================
+describe('ContractController (Sprint B.5 audit_log)', () => {
+  let controller: ContractController;
+  let repo: {
+    findById: jest.Mock;
+    listByOwner: jest.Mock;
+    listByStudent: jest.Mock;
+    create: jest.Mock;
+    setStatus: jest.Mock;
+    getOwnerPerformance: jest.Mock;
+    getTeamPerformance: jest.Mock;
+  };
+  let studentRepo: { findBrief: jest.Mock };
+  let teacherRepo: { findByUserId: jest.Mock };
+  let auditLog: { log: jest.Mock };
+
+  const TENANT_A = 'TENANTA00000000000000000000000A1';
+  const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const CAMPUS_A = 'campus_A0000000000000000000000A01';
+  const SALES_A = 'salesA00000000000000000000000A01';
+  const SALES_B = 'salesB00000000000000000000000A02';
+  const CONTRACT_ID = 'contract000000000000000000000A01';
+  const STUDENT_ID = 'student00000000000000000000000A1';
+  const TEACHER_USER_A = 'teacherUser00000000000000000A01';
+  const TEACHER_ID_A = 'teacherID000000000000000000000A1';
+
+  function jwt(role: TenantRole, sub = SALES_A): JwtPayload {
+    return { sub, tenantId: TENANT_A, role, campusId: CAMPUS_A };
+  }
+
+  function req(user?: JwtPayload): AuthenticatedRequest {
+    return {
+      user,
+      headers: { 'user-agent': 'WeChatMP/8.x', 'x-request-id': 'req-test-001' },
+      body: {},
+      query: {},
+      params: {},
+      ip: '127.0.0.1',
+    };
+  }
+
+  function contractFixture(overrides: Partial<Contract> = {}): Contract {
+    return {
+      id: CONTRACT_ID,
+      studentId: STUDENT_ID,
+      courseProductId: null,
+      courseProductName: '一对一英语',
+      ownerUserId: SALES_A,
+      opportunityId: 'oppor00000000000000000000000A01',
+      campusId: CAMPUS_A,
+      classType: '一对一',
+      lessonHours: 60,
+      standardPrice: 9999,
+      discountAmount: 999,
+      giftHours: 5,
+      totalAmount: 9000,
+      orderType: '新签',
+      status: 'pending',
+      paidLocked: false,
+      signedAt: '2026-05-08T00:00:00.000Z',
+      activatedAt: null,
+      createdAt: '2026-05-08T00:00:00.000Z',
+      updatedAt: '2026-05-08T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    repo = {
+      findById: jest.fn(),
+      listByOwner: jest.fn(),
+      listByStudent: jest.fn(),
+      create: jest.fn(),
+      setStatus: jest.fn(),
+      getOwnerPerformance: jest.fn(),
+      getTeamPerformance: jest.fn(),
+    } as any;
+    studentRepo = { findBrief: jest.fn() };
+    teacherRepo = { findByUserId: jest.fn() };
+    auditLog = { log: jest.fn().mockResolvedValue(undefined) };
+    controller = new ContractController(
+      repo as unknown as ContractRepository,
+      studentRepo as unknown as StudentRepository,
+      teacherRepo as unknown as TeacherRepository,
+      auditLog as unknown as AuditLogRepository,
+    );
+  });
+
+  // ============================================================
+  // create() → audit_log 'contract.create'
+  // ============================================================
+  describe('create() — audit contract.create', () => {
+    it('销售签约 → audit_log 调 1 次, action="contract.create", 金额完整入 audit', async () => {
+      const created = contractFixture({ ownerUserId: SALES_A });
+      repo.create.mockResolvedValueOnce(created);
+
+      await controller.create(
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          id: CONTRACT_ID,
+          studentId: STUDENT_ID,
+          courseProductName: '一对一英语',
+          lessonHours: 60,
+          standardPrice: 9999,
+          discountAmount: 999,
+          giftHours: 5,
+          totalAmount: 9000,
+        },
+        req(jwt('sales', SALES_A)),
+      );
+
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const [schema, entry] = auditLog.log.mock.calls[0];
+      expect(schema).toBe(TENANT_SCHEMA);
+      expect(entry.action).toBe('contract.create');
+      expect(entry.targetType).toBe('contract');
+      expect(entry.targetId).toBe(CONTRACT_ID);
+      expect(entry.before).toBeNull();
+      expect(entry.actorUserId).toBe(SALES_A);
+      expect(entry.actorRole).toBe('sales');
+      // 金额详情入 audit（财务/审计场景必需，不脱敏）
+      expect(entry.after.totalAmount).toBe(9000);
+      expect(entry.after.standardPrice).toBe(9999);
+      expect(entry.after.discountAmount).toBe(999);
+      expect(entry.after.giftHours).toBe(5);
+      expect(entry.after.studentId).toBe(STUDENT_ID);
+      expect(entry.after.ownerUserId).toBe(SALES_A);
+    });
+
+    it('audit_log.log 抛错 → 不阻塞主业务（fail-open）', async () => {
+      repo.create.mockResolvedValueOnce(contractFixture());
+      auditLog.log.mockRejectedValueOnce(new Error('audit fail'));
+
+      const r = await controller.create(
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          id: CONTRACT_ID,
+          studentId: STUDENT_ID,
+          courseProductName: '一对一英语',
+          lessonHours: 60,
+          standardPrice: 9999,
+          totalAmount: 9000,
+        },
+        req(jwt('sales', SALES_A)),
+      );
+      expect(r.id).toBe(CONTRACT_ID);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ============================================================
+  // detail() 拒绝路径 → audit_log 'contract.access-denied'
+  // ============================================================
+  describe('detail() — 拒绝路径 audit contract.access-denied', () => {
+    it('sales 越权看他人合同 → audit access-denied 调 1 次 + 403', async () => {
+      repo.findById.mockResolvedValueOnce(
+        contractFixture({ ownerUserId: SALES_B }),
+      );
+      await expect(
+        controller.detail(CONTRACT_ID, TENANT_SCHEMA, req(jwt('sales', SALES_A))),
+      ).rejects.toThrow(ForbiddenException);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('contract.access-denied');
+      expect(entry.targetType).toBe('contract');
+      expect(entry.targetId).toBe(CONTRACT_ID);
+      expect(entry.after.attempted_role).toBe('sales');
+      expect(entry.after.attempted_owner).toBe(SALES_A);
+      expect(entry.after.actual_owner).toBe(SALES_B);
+      expect(entry.after.endpoint).toBe('detail');
+    });
+
+    it('hr 看合同 → audit access-denied + 403', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture());
+      await expect(
+        controller.detail(CONTRACT_ID, TENANT_SCHEMA, req(jwt('hr'))),
+      ).rejects.toThrow(ForbiddenException);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      expect(auditLog.log.mock.calls[0][1].after.attempted_role).toBe('hr');
+    });
+  });
+
+  // ============================================================
+  // listByStudent() 拒绝路径 → audit_log 'contract.access-denied'
+  // ============================================================
+  describe('listByStudent() — 拒绝路径 audit contract.access-denied', () => {
+    it('sales 看他人客户的孩子合同 → audit access-denied + 403', async () => {
+      studentRepo.findBrief.mockResolvedValueOnce({
+        id: STUDENT_ID,
+        studentName: '小明',
+        customerId: 'cust00000000000000000000000000A1',
+        ownerSalesId: SALES_B, // 他人客户
+        assignedTeacherId: TEACHER_ID_A,
+        ownerChangedAt: null,
+        ownerChangeReason: null,
+        gradeOrAge: null,
+        intendedSubject: null,
+        contractClassType: null,
+      });
+      await expect(
+        controller.listByStudent(
+          STUDENT_ID,
+          TENANT_SCHEMA,
+          undefined,
+          undefined,
+          req(jwt('sales', SALES_A)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('contract.access-denied');
+      expect(entry.targetType).toBe('student'); // by-student 路径 targetType=student
+      expect(entry.targetId).toBe(STUDENT_ID);
+      expect(entry.after.attempted_role).toBe('sales');
+      expect(entry.after.actual_owner_sales).toBe(SALES_B);
+      expect(entry.after.endpoint).toBe('by-student');
+    });
+
+    it('teacher 非主带学生 → audit access-denied + 403', async () => {
+      studentRepo.findBrief.mockResolvedValueOnce({
+        id: STUDENT_ID,
+        studentName: '小明',
+        customerId: 'cust00000000000000000000000000A1',
+        ownerSalesId: SALES_A,
+        assignedTeacherId: 'OTHER_TEACHER_0000000000000000A1',
+        ownerChangedAt: null,
+        ownerChangeReason: null,
+        gradeOrAge: null,
+        intendedSubject: null,
+        contractClassType: null,
+      });
+      teacherRepo.findByUserId.mockResolvedValueOnce({
+        id: TEACHER_ID_A,
+        userId: TEACHER_USER_A,
+      });
+      await expect(
+        controller.listByStudent(
+          STUDENT_ID,
+          TENANT_SCHEMA,
+          undefined,
+          undefined,
+          req(jwt('teacher', TEACHER_USER_A)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      expect(auditLog.log.mock.calls[0][1].after.attempted_role).toBe('teacher');
     });
   });
 });
