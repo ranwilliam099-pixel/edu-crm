@@ -5,6 +5,7 @@ import { TenantProvisionService } from './tenant-provision.service';
 // ===== V7 教师档案 =====
 import { TeacherRepository } from './teacher.repository';
 import { TeacherShowcaseRepository } from './teacher-showcase.repository';
+import { TeacherShowcaseMetaRepository } from './teacher-showcase-meta.repository';
 import { TeacherShowcaseController } from './teacher-showcase.controller';
 import { LeaveRepository } from './leave.repository';
 import { LeaveController } from './leave.controller';
@@ -164,6 +165,7 @@ import { FieldEncryptor } from '../../common/crypto/field-encryptor';
     AssessmentRepository,
     LearningProfileRepository,
     TeacherShowcaseRepository,
+    TeacherShowcaseMetaRepository,
     LeaveRepository,
     RecommendationRepository,
     StudentImportRepository,
@@ -205,6 +207,7 @@ import { FieldEncryptor } from '../../common/crypto/field-encryptor';
     AssessmentRepository,
     LearningProfileRepository,
     TeacherShowcaseRepository,
+    TeacherShowcaseMetaRepository,
     LeaveRepository,
     RecommendationRepository,
     StudentImportRepository,

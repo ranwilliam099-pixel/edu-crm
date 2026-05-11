@@ -45,6 +45,7 @@ const TENANT_MIGRATIONS = [
   'V32__schedules_class_type_and_max_students.sql',
   'V33__audit_log_in_tenant_schema.sql',
   'V34__sensitive_fields_encrypted.sql',
+  'V35__teacher_showcase_meta.sql',
 ];
 
 @Injectable()
