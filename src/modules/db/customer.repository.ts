@@ -3,8 +3,10 @@ import {
   BadRequestException,
   ConflictException,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { PgPoolService, PgRow } from './pg-pool.service';
+import { FieldEncryptor } from '../../common/crypto/field-encryptor';
 
 /**
  * CustomerRepository — V25 销售客户管理（基于 V2 opportunities + V25 ALTER）
@@ -15,6 +17,16 @@ import { PgPoolService, PgRow } from './pg-pool.service';
  *   3. 销售跟进（addFollow 写 customer_follow_log）
  *   4. 销售 release → owner_user_id 回 NULL
  *   5. 30 天无跟进 cron → 自动回池
+ *
+ * V34 双写双读模式（A02-2，2026-05-11）：
+ *   - opportunities.phone + phone_encrypted 双轨；opportunities.wechat + wechat_encrypted 双轨
+ *   - INSERT/UPDATE：明文列 + *_encrypted BYTEA 列同事务一并写
+ *   - SELECT：优先解密 *_encrypted；解密失败或 NULL → fallback 明文
+ *   - 对外接口（Customer.phone/wechat）始终是解密后的明文，前端透明
+ *   - 解密失败 logger.warn + fallback 明文（fail-open，不阻塞主流程）
+ *   - opportunities 表无 WHERE phone=? 等值查询、无 UNIQUE 索引 → GCM 随机 IV 不影响功能
+ *   - 旧数据（V40 backfill 前 *_encrypted=NULL）走明文 fallback
+ *   - 灰度完毕 + V40 backfill 全量后，V41+ DROP 明文列
  */
 
 export type CustomerStage =
@@ -79,7 +91,12 @@ export interface CreateCustomerResult {
 
 @Injectable()
 export class CustomerRepository {
-  constructor(private readonly pg: PgPoolService) {}
+  private readonly logger = new Logger(CustomerRepository.name);
+
+  constructor(
+    private readonly pg: PgPoolService,
+    private readonly encryptor: FieldEncryptor,
+  ) {}
 
   /**
    * V29 R2 销售即时建客户（家长） + opportunity + 可选 student（一并）
@@ -165,12 +182,17 @@ export class CustomerRepository {
         }
 
         // 3. opportunity（销售线索 — 必须 student_id 已存在；如无 student 则跳过）
+        //    V34 A02-2：phone 明文 + phone_encrypted 密文双写（同事务保证一致）
+        //    wechat 在此方法暂无入参（前端流程未传），保留 null；后续如新增编辑接口时双写
         if (createdStudentId) {
+          const phonePlain = payload.primaryMobile;
+          const phoneEncrypted = this.encryptPhone(phonePlain);
           await client.query(
             `INSERT INTO opportunities
                (id, student_id, course_product_id, stage, owner_user_id, campus_id,
-                source, phone, last_contact_at, note, created_by, updated_by)
-             VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, NOW(), $8, $4, $4)`,
+                source, phone, phone_encrypted, last_contact_at, note,
+                created_by, updated_by)
+             VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, NOW(), $9, $4, $4)`,
             [
               payload.opportunityId,
               createdStudentId,
@@ -178,7 +200,8 @@ export class CustomerRepository {
               payload.ownerSalesId,
               payload.campusId,
               payload.source || '销售自建',
-              payload.primaryMobile,
+              phonePlain,
+              phoneEncrypted,
               payload.note || null,
             ],
           );
@@ -194,7 +217,11 @@ export class CustomerRepository {
     );
   }
 
-  static mapCustomerRow(r: PgRow): Customer {
+  /**
+   * V34 A02-2：mapCustomerRow 改为 instance 方法以便注入 FieldEncryptor 用于解密
+   * phone / wechat：优先解密 *_encrypted；NULL/失败 → fallback 明文
+   */
+  mapCustomerRow(r: PgRow): Customer {
     return {
       id: r.id,
       studentId: r.student_id,
@@ -205,8 +232,8 @@ export class CustomerRepository {
       ownerUserId: r.owner_user_id,
       stage: r.stage as CustomerStage,
       source: r.source,
-      phone: r.phone,
-      wechat: r.wechat,
+      phone: this.decryptPhone(r.id, r.phone_encrypted, r.phone),
+      wechat: this.decryptWechat(r.id, r.wechat_encrypted, r.wechat),
       intentLevel: r.intent_level as Customer['intentLevel'],
       urgent: !!r.urgent,
       note: r.note,
@@ -253,7 +280,7 @@ export class CustomerRepository {
           LIMIT $3 OFFSET $4`,
         [ownerUserId, options.stage, limit, offset],
       );
-      return rows.map((r) => CustomerRepository.mapCustomerRow(r));
+      return rows.map((r) => this.mapCustomerRow(r));
     }
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
@@ -266,7 +293,7 @@ export class CustomerRepository {
         LIMIT $2 OFFSET $3`,
       [ownerUserId, limit, offset],
     );
-    return rows.map((r) => CustomerRepository.mapCustomerRow(r));
+    return rows.map((r) => this.mapCustomerRow(r));
   }
 
   /**
@@ -314,7 +341,7 @@ export class CustomerRepository {
         LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
-    return rows.map((r) => CustomerRepository.mapCustomerRow(r));
+    return rows.map((r) => this.mapCustomerRow(r));
   }
 
   async listPool(
@@ -336,7 +363,7 @@ export class CustomerRepository {
           LIMIT $2 OFFSET $3`,
         [options.source, limit, offset],
       );
-      return rows.map((r) => CustomerRepository.mapCustomerRow(r));
+      return rows.map((r) => this.mapCustomerRow(r));
     }
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
@@ -349,7 +376,7 @@ export class CustomerRepository {
         LIMIT $1 OFFSET $2`,
       [limit, offset],
     );
-    return rows.map((r) => CustomerRepository.mapCustomerRow(r));
+    return rows.map((r) => this.mapCustomerRow(r));
   }
 
   async findById(tenantSchema: string, id: string): Promise<Customer | null> {
@@ -361,7 +388,7 @@ export class CustomerRepository {
         WHERE o.id = $1`,
       [id],
     );
-    return rows.length === 0 ? null : CustomerRepository.mapCustomerRow(rows[0]);
+    return rows.length === 0 ? null : this.mapCustomerRow(rows[0]);
   }
 
   // ===== 公共池操作 =====
@@ -425,7 +452,7 @@ export class CustomerRepository {
           ],
         );
 
-        return CustomerRepository.mapCustomerRow(upd.rows[0]);
+        return this.mapCustomerRow(upd.rows[0]);
       },
       { tenantSchema },
     );
@@ -467,7 +494,7 @@ export class CustomerRepository {
             JSON.stringify({ reason: reason || 'no_reason' }),
           ],
         );
-        return CustomerRepository.mapCustomerRow(upd.rows[0]);
+        return this.mapCustomerRow(upd.rows[0]);
       },
       { tenantSchema },
     );
@@ -515,7 +542,7 @@ export class CustomerRepository {
             JSON.stringify({ lostReason }),
           ],
         );
-        return CustomerRepository.mapCustomerRow(upd.rows[0]);
+        return this.mapCustomerRow(upd.rows[0]);
       },
       { tenantSchema },
     );
@@ -616,5 +643,77 @@ export class CustomerRepository {
     let s = '';
     for (let i = 0; i < 32; i++) s += chars[Math.floor(Math.random() * chars.length)];
     return s;
+  }
+
+  // =====================================================================
+  // V34 字段加密 helper（A02-2）
+  // =====================================================================
+
+  /**
+   * 加密 phone 明文 → BYTEA Buffer。null/undefined → null
+   * encryptor.encrypt 内部对 null/undefined 直接返回 null，安全
+   */
+  private encryptPhone(plaintext: string | null | undefined): Buffer | null {
+    return this.encryptor.encrypt(plaintext);
+  }
+
+  /**
+   * 加密 wechat 明文 → BYTEA Buffer。null/undefined → null
+   * 当前 createWithOpportunity 不接收 wechat 入参（保留接口对称性 + 未来扩展）
+   */
+  private encryptWechat(plaintext: string | null | undefined): Buffer | null {
+    return this.encryptor.encrypt(plaintext);
+  }
+
+  /**
+   * 解密 phone_encrypted → 明文。fallback 路径（V34 fail-open）：
+   *   - encrypted = null/undefined/非 Buffer/空 → 返回明文 fallback（phone 列）
+   *   - encrypted 解密抛错（key 不匹配 / 数据损坏）→ logger.warn + 返回明文 fallback
+   *   - 都没有 → null（Customer.phone 类型是 string | null）
+   *
+   * 注：PG node-pg 驱动会把 BYTEA 自动转为 Buffer；测试 mock 可能传 null/undefined。
+   */
+  private decryptPhone(
+    rowId: string,
+    encrypted: Buffer | null | undefined,
+    fallbackPlain: string | null | undefined,
+  ): string | null {
+    if (encrypted && Buffer.isBuffer(encrypted) && encrypted.length > 0) {
+      try {
+        const decoded = this.encryptor.decrypt(encrypted);
+        if (decoded !== null && decoded !== undefined) {
+          return decoded;
+        }
+      } catch (err) {
+        // V34 fail-open：解密失败不阻塞业务，logger.warn + 走明文 fallback
+        this.logger.warn(
+          `[V34-decrypt-fallback] opportunity ${rowId} phone_encrypted decrypt failed: ${(err as Error).message}; using plaintext fallback`,
+        );
+      }
+    }
+    return fallbackPlain ?? null;
+  }
+
+  /**
+   * 解密 wechat_encrypted → 明文。同 decryptPhone 的 fallback 策略。
+   */
+  private decryptWechat(
+    rowId: string,
+    encrypted: Buffer | null | undefined,
+    fallbackPlain: string | null | undefined,
+  ): string | null {
+    if (encrypted && Buffer.isBuffer(encrypted) && encrypted.length > 0) {
+      try {
+        const decoded = this.encryptor.decrypt(encrypted);
+        if (decoded !== null && decoded !== undefined) {
+          return decoded;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `[V34-decrypt-fallback] opportunity ${rowId} wechat_encrypted decrypt failed: ${(err as Error).message}; using plaintext fallback`,
+        );
+      }
+    }
+    return fallbackPlain ?? null;
   }
 }
