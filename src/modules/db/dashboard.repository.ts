@@ -42,19 +42,22 @@ export interface TeacherLeaderboardItem {
   name: string;
   subject: string;
   avatar?: string;
-  payroll: number;
+  // V37 删 payroll（薪资业务下线，拍板 fields-by-role.md 全角色 home 不展示工资）
   lessons: number;
   rating: number | null;
   feedbackRate: number;
-  trend: 'up' | 'down' | 'flat';
+  // V37 删 trend（来源 monthly_aggregates.payroll_yuan 已下线；cron 未实现
+  // monthly_aggregates 写入，trend 实际一直返 'flat'，无业务价值）
 }
 export interface TeacherLeaderboard {
   activeMonth: string;
-  summary: { count: number; total: number; avgRating: number | null };
+  // V37 删 summary.total（原 totalPayroll 别名）；保留 count + avgRating
+  summary: { count: number; avgRating: number | null };
   teachers: TeacherLeaderboardItem[];
 }
 
-export type LeaderboardSortKey = 'payroll' | 'lessons' | 'rating' | 'feedbackRate';
+// V37 删 'payroll' sortKey（薪资下线）
+export type LeaderboardSortKey = 'lessons' | 'rating' | 'feedbackRate';
 
 @Injectable()
 export class DashboardRepository {
@@ -276,7 +279,8 @@ export class DashboardRepository {
     tenantSchema: string,
     options: { month?: string; sortBy?: LeaderboardSortKey } = {},
   ): Promise<TeacherLeaderboard> {
-    const sortBy = options.sortBy || 'payroll';
+    // V37: 默认 sortBy 由 'payroll' 改为 'lessons'（薪资下线）
+    const sortBy = options.sortBy || 'lessons';
     const month = options.month || new Date().toISOString().slice(0, 7);
     const monthStart = new Date(`${month}-01T00:00:00Z`);
     const monthEnd = new Date(monthStart);
@@ -284,21 +288,19 @@ export class DashboardRepository {
 
     let teachers: TeacherLeaderboardItem[] = [];
     try {
-      // 老师基础 + 课时数 + 工资（course_consumptions.amount_yuan + status='confirmed'）
+      // V37: 老师基础 + 课时数（删 payroll SUM；薪资业务下线，仅留课时统计）
       const rows = await this.pg.tenantQuery<{
         id: string;
         name: string;
         subject: string;
         avatar: string | null;
         lessons: string;
-        payroll: string;
       }>(
         tenantSchema,
         `WITH lesson_stats AS (
            SELECT
              cc.teacher_id,
-             COUNT(*)::int as lessons,
-             COALESCE(SUM(cc.amount_yuan), 0)::numeric as payroll
+             COUNT(*)::int as lessons
            FROM course_consumptions cc
            WHERE cc.status = 'confirmed'
              AND cc.confirmed_at >= $1 AND cc.confirmed_at < $2
@@ -309,12 +311,11 @@ export class DashboardRepository {
            t.name,
            COALESCE(t.subjects[1], '未设定') as subject,
            t.avatar_url as avatar,
-           COALESCE(ls.lessons, 0) as lessons,
-           COALESCE(ls.payroll, 0) as payroll
+           COALESCE(ls.lessons, 0) as lessons
          FROM teachers t
          LEFT JOIN lesson_stats ls ON ls.teacher_id = t.id
          WHERE t.status = 'active'
-         ORDER BY ls.payroll DESC NULLS LAST`,
+         ORDER BY ls.lessons DESC NULLS LAST`,
         [monthStart, monthEnd],
       );
 
@@ -359,34 +360,12 @@ export class DashboardRepository {
         this.logger.debug(`[V24-rating] ${tenantSchema}: ${(e as Error).message}`);
       }
 
-      // V24: trend 真接 monthly_aggregates 上月对比
-      const trendMap = new Map<string, 'up' | 'down' | 'flat'>();
-      try {
-        const lastMonthStart = new Date(monthStart);
-        lastMonthStart.setUTCMonth(lastMonthStart.getUTCMonth() - 1);
-        const trendRows = await this.pg.tenantQuery<{
-          entity_id: string;
-          payroll_yuan: string | null;
-        }>(
-          tenantSchema,
-          `SELECT entity_id, payroll_yuan
-             FROM monthly_aggregates
-            WHERE entity_type = 'teacher' AND month = $1`,
-          [lastMonthStart],
-        );
-        for (const tr of trendRows) {
-          const prevPayroll = Number(tr.payroll_yuan || 0);
-          const curPayroll = Number(
-            rows.find((r) => r.id === tr.entity_id)?.payroll || 0,
-          );
-          if (prevPayroll === 0 && curPayroll === 0) trendMap.set(tr.entity_id, 'flat');
-          else if (curPayroll > prevPayroll * 1.05) trendMap.set(tr.entity_id, 'up');
-          else if (curPayroll < prevPayroll * 0.95) trendMap.set(tr.entity_id, 'down');
-          else trendMap.set(tr.entity_id, 'flat');
-        }
-      } catch (e) {
-        this.logger.debug(`[V24-trend] ${tenantSchema}: ${(e as Error).message}`);
-      }
+      // V37: trend 块整体删除（Option A）
+      //   原依赖 monthly_aggregates.payroll_yuan 上月对比，但
+      //   1) V37 已 DROP payroll_yuan 列；
+      //   2) cron 未实现 monthly_aggregates 写入，trend 一直返 'flat'，无业务价值；
+      //   3) 拍板 fields-by-role.md 全角色 home 不展示工资 → trend 失去 KPI 依据。
+      //   未来需要 trend 应改基于 lessons / rating / feedbackRate 而非 payroll。
 
       teachers = rows.map((r, idx) => ({
         rank: idx + 1,
@@ -394,16 +373,13 @@ export class DashboardRepository {
         name: r.name,
         subject: r.subject,
         avatar: r.avatar || undefined,
-        payroll: Number(r.payroll || 0),
         lessons: Number(r.lessons || 0),
         rating: ratingMap.get(r.id) ?? null,
         feedbackRate: fbRateMap.get(r.id) ?? 0,
-        trend: trendMap.get(r.id) ?? 'flat',
       }));
 
-      // 排序：按 sortBy 重新排
+      // V37: 排序键删 payroll
       const sortFn: Record<LeaderboardSortKey, (a: TeacherLeaderboardItem, b: TeacherLeaderboardItem) => number> = {
-        payroll: (a, b) => b.payroll - a.payroll,
         lessons: (a, b) => b.lessons - a.lessons,
         rating: (a, b) => (b.rating ?? -1) - (a.rating ?? -1),
         feedbackRate: (a, b) => b.feedbackRate - a.feedbackRate,
@@ -416,7 +392,7 @@ export class DashboardRepository {
       teachers = [];
     }
 
-    const totalPayroll = teachers.reduce((s, t) => s + t.payroll, 0);
+    // V37: 删 totalPayroll（薪资下线）
     const ratings = teachers.map((t) => t.rating).filter((r): r is number => r !== null);
     const avgRating =
       ratings.length === 0
@@ -427,7 +403,6 @@ export class DashboardRepository {
       activeMonth: month,
       summary: {
         count: teachers.length,
-        total: totalPayroll,
         avgRating,
       },
       teachers,

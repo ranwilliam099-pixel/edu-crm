@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PgPoolService } from './pg-pool.service';
 
 /**
@@ -73,10 +73,14 @@ export interface AuditListFilter {
 
 @Injectable()
 export class AuditLogRepository {
+  // R1: NestJS Logger 取代 console.error（pino 日志链路 + PII redact 自动生效）
+  // 注：Logger 不需要 DI（无依赖），实例化时绑定 context name 即可
+  private readonly logger = new Logger(AuditLogRepository.name);
+
   constructor(private readonly pg: PgPoolService) {}
 
   /**
-   * 写一条审计日志（不抛错；失败仅 console.error，不阻塞主业务）
+   * 写一条审计日志（不抛错；失败 this.logger.error 走 pino + PII redact，不阻塞主业务）
    */
   async log(tenantSchema: string, entry: AuditEntry): Promise<void> {
     try {
@@ -100,9 +104,22 @@ export class AuditLogRepository {
         ],
       );
     } catch (err) {
-      // 审计写失败不影响主业务流
-      // eslint-disable-next-line no-console
-      console.error('[AUDIT-LOG-FAILED]', { tenantSchema, action: entry.action, err });
+      // R1: 审计写失败不影响主业务流（fail-open）。改用 NestJS Logger →
+      // 经由 nestjs-pino 进入 pino 流水线，自动应用 REDACT_PATHS PII 脱敏
+      // （*.phone / *.id_number / *.token 等都会被 [REDACTED]；err 对象通常仅含
+      // tenantSchema/action/message/stack 无业务字段，但通配规则提供额外保险）
+      this.logger.error(
+        '[AUDIT-LOG-FAILED]',
+        {
+          tenantSchema,
+          action: entry.action,
+          targetType: entry.targetType,
+          targetId: entry.targetId ?? null,
+          err: err instanceof Error
+            ? { name: err.name, message: err.message, stack: err.stack }
+            : err,
+        },
+      );
     }
   }
 

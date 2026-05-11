@@ -117,7 +117,7 @@ describe('Feedback Services InDb (V9)', () => {
       confirmByFeedback: jest.Mock;
       lock: jest.Mock;
       cancel: jest.Mock;
-      sumPayrollForTeacher: jest.Mock;
+      // V38: 删 sumPayrollForTeacher mock（service 层方法已删，repo 层保留但 service 不再调）
     };
     const CC: CourseConsumption = {
       id: 'cc' + '0'.repeat(30),
@@ -138,7 +138,7 @@ describe('Feedback Services InDb (V9)', () => {
         confirmByFeedback: jest.fn(),
         lock: jest.fn(),
         cancel: jest.fn(),
-        sumPayrollForTeacher: jest.fn(),
+        // V38: 删 sumPayrollForTeacher mock
       };
       const m = await Test.createTestingModule({
         providers: [
@@ -193,16 +193,7 @@ describe('Feedback Services InDb (V9)', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('sumPayrollForTeacherInDb wraps repo result', async () => {
-      repo.sumPayrollForTeacher.mockResolvedValueOnce({ total: 600, count: 3 });
-      const r = await service.sumPayrollForTeacherInDb(
-        TEACHER,
-        new Date('2026-05-01'),
-        new Date('2026-06-01'),
-        TENANT,
-      );
-      expect(r).toEqual({ teacherId: TEACHER, payrollYuan: 600, count: 3 });
-    });
+    // V38: 删 sumPayrollForTeacherInDb 单测（service 层方法已删，薪资业务下线）
   });
 
   describe('MonthlyReportService', () => {

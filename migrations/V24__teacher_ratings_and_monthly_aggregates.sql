@@ -47,9 +47,11 @@ COMMENT ON COLUMN teacher_ratings.avg_stars IS '综合评分 1.00-5.00';
 -- 每月 1 号 0:30 cron 写一份：
 --   key (entity_type, entity_id, month) UNIQUE
 --   - entity_type: teacher / campus / tenant
---   - 老师维度：lessons / payroll / fb_count / fb_rate / avg_stars
+--   - 老师维度：lessons / fb_count / fb_rate / avg_stars
+--   - V37: payroll_yuan 列已 DROP（5/10 拍板"薪资全删"，见 V37__drop_monthly_aggregates_payroll.sql）
 --
 -- dashboard.getTeacherLeaderboard 用本月 vs 上月差比 → trend up/down/flat
+-- V37: trend 块已删（Option A drop trend，monthly_aggregates 无 cron 写入路径）
 -- ----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS monthly_aggregates (
     id              BIGSERIAL    PRIMARY KEY,
@@ -59,7 +61,7 @@ CREATE TABLE IF NOT EXISTS monthly_aggregates (
     month           DATE         NOT NULL,             -- 月初 1 号
     -- 通用指标（NULL = 不适用）
     lessons_count   INTEGER,
-    payroll_yuan    NUMERIC(12,2),
+    payroll_yuan    NUMERIC(12,2),  -- V37: 已 DROP（5/10 拍板，见 V37）
     feedback_count  INTEGER,
     feedback_rate   NUMERIC(5,2),                      -- 反馈率 0-100%
     avg_stars       NUMERIC(3,2),

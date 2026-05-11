@@ -266,33 +266,7 @@ describe('CourseConsumptionService - V9 BE-V9-2', () => {
     });
   });
 
-  describe('sumPayrollForTeacher - 老师工资统计', () => {
-    it('仅 confirmed 状态计入', () => {
-      const consumptions: CourseConsumption[] = [
-        {
-          id: ULID32_C1,
-          scheduleId: ULID32_SCH1,
-          studentId: ULID32_S1,
-          teacherId: ULID32_T1,
-          status: 'confirmed',
-          amountYuan: 200,
-          feedbackDueAt: new Date(),
-          createdAt: new Date(),
-        },
-        {
-          id: ULID32_C2,
-          scheduleId: ULID32_SCH2,
-          studentId: ULID32_S1,
-          teacherId: ULID32_T1,
-          status: 'locked', // 不算
-          amountYuan: 200,
-          feedbackDueAt: new Date(),
-          createdAt: new Date(),
-        },
-      ];
-      expect(service.sumPayrollForTeacher(ULID32_T1, consumptions)).toBe(200);
-    });
-  });
+  // V38: 删 sumPayrollForTeacher 单测（薪资下线，方法已删）
 });
 
 describe('MonthlyReportService - V9 BE-V9-3', () => {

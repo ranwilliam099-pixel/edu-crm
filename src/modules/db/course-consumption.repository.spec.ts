@@ -79,28 +79,7 @@ describe('CourseConsumptionRepository', () => {
     await expect(repo.cancel(TENANT, SAMPLE.id)).rejects.toThrow(NotFoundException);
   });
 
-  it('sumPayrollForTeacher returns total + count', async () => {
-    pg.tenantQuery.mockResolvedValueOnce([{ total: '600.00', count: '3' }]);
-    const r = await repo.sumPayrollForTeacher(
-      TENANT,
-      SAMPLE.teacherId,
-      new Date('2026-05-01'),
-      new Date('2026-06-01'),
-    );
-    expect(r.total).toBe(600);
-    expect(r.count).toBe(3);
-  });
-
-  it('sumPayrollForTeacher handles 0 rows', async () => {
-    pg.tenantQuery.mockResolvedValueOnce([{ total: '0', count: '0' }]);
-    const r = await repo.sumPayrollForTeacher(
-      TENANT,
-      SAMPLE.teacherId,
-      new Date(),
-      new Date(),
-    );
-    expect(r).toEqual({ total: 0, count: 0 });
-  });
+  // V38: 删 sumPayrollForTeacher 2 个单测（method 已从 repository.ts 删除，薪资业务下线）
 
   describe('findPendingFeedbackSummaryByTeacher (home-teacher 待办)', () => {
     it('返回 count + earliestDueAt（有待点评）', async () => {

@@ -180,23 +180,9 @@ export class FeedbackController {
     );
   }
 
-  /**
-   * POST /api/teachers/:teacherId/payroll — 老师工资统计
-   */
-  @Post('teachers/:teacherId/payroll')
-  @HttpCode(HttpStatus.OK)
-  teacherPayroll(
-    @Param('teacherId') teacherId: string,
-    @Body() body: { consumptions: CourseConsumption[] },
-  ): { teacherId: string; payrollYuan: number } {
-    return {
-      teacherId,
-      payrollYuan: this.consumption.sumPayrollForTeacher(
-        teacherId,
-        body.consumptions.map((c) => this.deserializeConsumption(c)),
-      ),
-    };
-  }
+  // V38: 删 POST /api/teachers/:teacherId/payroll（薪资业务下线）
+  //   依据：feedback_教培业务架构-2026-05-10.md「薪资全删」
+  //   原方法 sumPayrollForTeacher 同步删除（course-consumption.service.ts）
 
   // ==================== MonthlyReport ====================
 
@@ -427,19 +413,10 @@ export class FeedbackController {
     return this.consumption.cancelInDb(id, body.tenantSchema);
   }
 
-  @Post('db/teachers/:teacherId/payroll')
-  @HttpCode(HttpStatus.OK)
-  async teacherPayrollInDb(
-    @Param('teacherId') teacherId: string,
-    @Body() body: { rangeStartMs: number; rangeEndMs: number; tenantSchema: string },
-  ): Promise<{ teacherId: string; payrollYuan: number; count: number }> {
-    return this.consumption.sumPayrollForTeacherInDb(
-      teacherId,
-      new Date(body.rangeStartMs),
-      new Date(body.rangeEndMs),
-      body.tenantSchema,
-    );
-  }
+  // V38: 删 POST /api/db/teachers/:teacherId/payroll（薪资业务下线 + A04 R3 跨租户漏洞修复）
+  //   原方法 sumPayrollForTeacherInDb 同步删除（course-consumption.service.ts）
+  //   A04 红线：此 endpoint 历史上仅靠 body.tenantSchema 自填，无 TenantScopeGuard，
+  //   删除即修复跨租户隐患（W5）
 
   /**
    * home-teacher 待办 banner 聚合：老师待点评课消数 + 最早到期时间

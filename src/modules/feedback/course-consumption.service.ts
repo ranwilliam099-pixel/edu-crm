@@ -131,17 +131,11 @@ export class CourseConsumptionService {
     return { ...consumption, status: 'cancelled' };
   }
 
-  /**
-   * 老师工资统计：仅 confirmed 状态的课消纳入计算
-   */
-  sumPayrollForTeacher(
-    teacherId: string,
-    consumptions: ReadonlyArray<CourseConsumption>,
-  ): number {
-    return consumptions
-      .filter((c) => c.teacherId === teacherId && c.status === 'confirmed')
-      .reduce((sum, c) => sum + (c.amountYuan ?? 0), 0);
-  }
+  // V38: 删 sumPayrollForTeacher（薪资业务下线）
+  //   依据：feedback_教培业务架构-2026-05-10.md「薪资全删」
+  //   原 controller 已删 POST /api/teachers/:teacherId/payroll
+  //   repository 层 course-consumption.repository.sumPayrollForTeacher 保留
+  //   （数据库聚合能力中性，未来日报表可复用，但当前无业务调用）
 
   // ============= 真存盘版 =============
 
@@ -204,16 +198,9 @@ export class CourseConsumptionService {
     return this.repo.cancel(tenantSchema, id);
   }
 
-  async sumPayrollForTeacherInDb(
-    teacherId: string,
-    rangeStart: Date,
-    rangeEnd: Date,
-    tenantSchema: string,
-  ): Promise<{ teacherId: string; payrollYuan: number; count: number }> {
-    if (!this.repo) throw new BadRequestException('CourseConsumptionRepository not available');
-    const r = await this.repo.sumPayrollForTeacher(tenantSchema, teacherId, rangeStart, rangeEnd);
-    return { teacherId, payrollYuan: r.total, count: r.count };
-  }
+  // V38: 删 sumPayrollForTeacherInDb（薪资业务下线 + A04 R3 跨租户漏洞修复）
+  //   原 controller endpoint POST /api/db/teachers/:teacherId/payroll 已删
+  //   repository 层 course-consumption.repository.sumPayrollForTeacher 保留
 
   /**
    * home-teacher 待办 banner：聚合该老师 pending_feedback 课消

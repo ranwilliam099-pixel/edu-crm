@@ -81,12 +81,7 @@ describe('Feedback (e2e) - V9 BE-V9-1/2/3 路由暴露 + middleware 守护', () 
         .expect(401);
     });
 
-    it('POST /api/teachers/:id/payroll 无 token → 401', async () => {
-      await request(app.getHttpServer())
-        .post('/api/teachers/01HX7Y6P5K9N3M2QABCDEFGHIJKLMN01/payroll')
-        .send({})
-        .expect(401);
-    });
+    // V38: 删 POST /api/teachers/:id/payroll 401 e2e（endpoint 已删）
   });
 
   describe('MonthlyReport (V9.3)', () => {

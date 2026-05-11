@@ -117,11 +117,11 @@ describe('DashboardRepository', () => {
   });
 
   describe('getTeacherLeaderboard', () => {
-    it('returns sorted by payroll DESC by default', async () => {
+    it('returns sorted by lessons DESC by default (V37 payroll 下线)', async () => {
       pg.tenantQuery
         .mockResolvedValueOnce([
-          { id: 't1', name: '张老师', subject: '英语', avatar: null, lessons: '20', payroll: '8000' },
-          { id: 't2', name: '李老师', subject: '数学', avatar: null, lessons: '15', payroll: '6000' },
+          { id: 't1', name: '张老师', subject: '英语', avatar: null, lessons: '20' },
+          { id: 't2', name: '李老师', subject: '数学', avatar: null, lessons: '15' },
         ])
         .mockResolvedValueOnce([
           { teacher_id: 't1', fb_count: '18', cc_count: '20' },
@@ -132,18 +132,20 @@ describe('DashboardRepository', () => {
       expect(lb.teachers).toHaveLength(2);
       expect(lb.teachers[0].id).toBe('t1');
       expect(lb.teachers[0].rank).toBe(1);
-      expect(lb.teachers[0].payroll).toBe(8000);
+      // V37: payroll 字段已删 → 验 lessons 排序
+      expect(lb.teachers[0].lessons).toBe(20);
+      expect(lb.teachers[1].lessons).toBe(15);
       expect(lb.teachers[0].feedbackRate).toBe(90);
       expect(lb.teachers[1].feedbackRate).toBe(100);
       expect(lb.summary.count).toBe(2);
-      expect(lb.summary.total).toBe(14000);
+      // V37: summary.total 已删（原 totalPayroll 别名）
     });
 
     it('sorts by feedbackRate when requested', async () => {
       pg.tenantQuery
         .mockResolvedValueOnce([
-          { id: 't1', name: '张老师', subject: '英语', avatar: null, lessons: '20', payroll: '8000' },
-          { id: 't2', name: '李老师', subject: '数学', avatar: null, lessons: '15', payroll: '6000' },
+          { id: 't1', name: '张老师', subject: '英语', avatar: null, lessons: '20' },
+          { id: 't2', name: '李老师', subject: '数学', avatar: null, lessons: '15' },
         ])
         .mockResolvedValueOnce([
           { teacher_id: 't1', fb_count: '15', cc_count: '20' },
@@ -163,7 +165,8 @@ describe('DashboardRepository', () => {
       const lb = await repo.getTeacherLeaderboard(TENANT, { month: '2026-05' });
       expect(lb.teachers).toEqual([]);
       expect(lb.summary.count).toBe(0);
-      expect(lb.summary.total).toBe(0);
+      // V37: summary.total 已删
+      expect(lb.summary.avgRating).toBeNull();
     });
   });
 });

@@ -85,10 +85,11 @@ export class DashboardController {
     if (!tenantSchema) {
       throw new BadRequestException('x-tenant-schema header required');
     }
-    const validSorts: LeaderboardSortKey[] = ['payroll', 'lessons', 'rating', 'feedbackRate'];
+    // V37: 排序键删 'payroll'（薪资下线），默认 'lessons'
+    const validSorts: LeaderboardSortKey[] = ['lessons', 'rating', 'feedbackRate'];
     const safeSort: LeaderboardSortKey = validSorts.includes(sortBy as LeaderboardSortKey)
       ? (sortBy as LeaderboardSortKey)
-      : 'payroll';
+      : 'lessons';
     return this.dashRepo.getTeacherLeaderboard(tenantSchema, {
       month,
       sortBy: safeSort,

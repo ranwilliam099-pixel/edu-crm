@@ -162,28 +162,11 @@ export class CourseConsumptionRepository {
     return this.mapRow(rows[0]);
   }
 
-  /**
-   * 工资计算用：teacher 在区间内 confirmed 课消的金额合计
-   */
-  async sumPayrollForTeacher(
-    tenantSchema: string,
-    teacherId: string,
-    rangeStart: Date,
-    rangeEnd: Date,
-  ): Promise<{ total: number; count: number }> {
-    const rows = await this.pg.tenantQuery<{ total: string; count: string }>(
-      tenantSchema,
-      `SELECT COALESCE(SUM(amount_yuan), 0) AS total, COUNT(*) AS count
-       FROM course_consumptions
-       WHERE teacher_id = $1 AND status = 'confirmed'
-         AND confirmed_at >= $2 AND confirmed_at < $3`,
-      [teacherId, rangeStart, rangeEnd],
-    );
-    return {
-      total: Number(rows[0]?.total || 0),
-      count: parseInt(rows[0]?.count || '0', 10),
-    };
-  }
+  // V38: 删 sumPayrollForTeacher（薪资业务下线，5/10 拍板"薪资全删"硬红线）
+  //   原 SQL: SELECT SUM(amount_yuan) FROM course_consumptions WHERE teacher_id ...
+  //   删除范围：repository 层方法体 + 2 个对应 spec it 块
+  //   保留依据：course_consumptions.amount_yuan 字段本身是业务流水（续费/退费/财务对账依赖），不删
+  //   仅删除"以工资语义聚合"的 method
 
   async listByStatus(
     tenantSchema: string,
