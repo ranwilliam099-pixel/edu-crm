@@ -14,20 +14,26 @@ import { JwtPayload, isPlatformRole } from '../modules/auth/jwt-payload.interfac
  * 来源：
  *   - 用户 2026-05-05「有漏洞你就解决啊」
  *   - 全面测试 §5：boss / 新 endpoint 不校验 token.tenantId 与 body/query/header 一致性
+ *   - 2026-05-11 Sprint B 复审：补 body.tenantSchema 校验缺口（17 个 /db endpoint 实际用此字段传 schema 名）
  *
  * 漏洞场景：
  *   员工 A（tenantId=A）持有自己的 JWT，调用：
  *     POST /api/db/boss/subscription/upgrade { tenantId: "B", targetPlan: "growth" }
  *   后端只看 body 不看 token → 误改了 B 公司的订阅 ❌
  *
+ *   2026-05-11 新发现：admin_A JWT + body: { tenantSchema: 'tenant_B' } → 旧 Guard 放行
+ *   → 跳过 self-check（admin/boss 跳过）→ 写入 tenant_B 数据 ❌
+ *
  * 防护规则：
  *   1. 没有 req.user                       → 401（middleware 应已抛，guard 兜底）
  *   2. user.role 是平台角色（platform_admin / finance_admin）→ 放行（可跨 tenant）
- *   3. body.tenantId !== user.tenantId    → 403
- *   4. query.tenantId !== user.tenantId   → 403
- *   5. header x-tenant-schema             必须 === `tenant_${user.tenantId.toLowerCase()}`
+ *   3. body.tenantId !== user.tenantId     → 403
+ *   4. body.tenantSchema !== `tenant_${user.tenantId.toLowerCase()}`  → 403 (Sprint B 新增)
+ *      （body.tenantSchema 大小写归一化后 strip 'tenant_' 前缀 === user.tenantId.toLowerCase()）
+ *   5. query.tenantId !== user.tenantId    → 403
+ *   6. header x-tenant-schema              必须 === `tenant_${user.tenantId.toLowerCase()}`
  *      不一致 → 403
- *   6. 都没传 tenantId 标识                → 放行（让 controller 自己处理）
+ *   7. 都没传 tenantId/tenantSchema 标识    → 放行（让 controller 自己处理）
  *
  * 用法：在 controller 上 @UseGuards(TenantScopeGuard)
  *
@@ -72,7 +78,24 @@ export class TenantScopeGuard implements CanActivate {
       );
     }
 
-    // 2. query.tenantId 校验
+    // 2. body.tenantSchema 校验（Sprint B 2026-05-11 新增）
+    //   - 17 个 /db endpoint 实际用 body.tenantSchema 字段传 schema 名（不是 body.tenantId）
+    //   - 攻击：admin_A JWT + body: { tenantSchema: 'tenant_B' } → 旧 Guard 放行 → 跳过 self-check → 写入 tenant_B 数据
+    //   - 防御：strip 'tenant_' 前缀后小写比对 user.tenantId（双向 toLowerCase 避免大小写不一致）
+    const bodySchema = req.body?.tenantSchema;
+    if (bodySchema !== undefined && bodySchema !== null) {
+      const normalizedSchema = String(bodySchema).toLowerCase();
+      if (normalizedSchema !== expectedSchema) {
+        this.logger.warn(
+          `[CROSS-TENANT-DENIED] user=${user.sub} (tenant=${expectedTenantId}) tried body.tenantSchema=${bodySchema} on ${req.method} ${req.url}`,
+        );
+        throw new ForbiddenException(
+          `tenantSchema mismatch: body has '${bodySchema}', expected '${expectedSchema}'`,
+        );
+      }
+    }
+
+    // 3. query.tenantId 校验
     const queryTid = req.query?.tenantId;
     if (queryTid !== undefined && queryTid !== null && queryTid !== expectedTenantId) {
       this.logger.warn(
@@ -83,15 +106,33 @@ export class TenantScopeGuard implements CanActivate {
       );
     }
 
-    // 3. header x-tenant-schema 校验
+    // 4. query.tenantSchema 校验（与 body.tenantSchema 对称）
+    //   - 部分 controller 用 @Query('tenantSchema')（如 customer.controller.ts:115）
+    const querySchema = req.query?.tenantSchema;
+    if (querySchema !== undefined && querySchema !== null) {
+      const normalizedSchema = String(querySchema).toLowerCase();
+      if (normalizedSchema !== expectedSchema) {
+        this.logger.warn(
+          `[CROSS-TENANT-DENIED] user=${user.sub} (tenant=${expectedTenantId}) tried query.tenantSchema=${querySchema} on ${req.method} ${req.url}`,
+        );
+        throw new ForbiddenException(
+          `tenantSchema mismatch: query has '${querySchema}', expected '${expectedSchema}'`,
+        );
+      }
+    }
+
+    // 5. header x-tenant-schema 校验
     const headerSchema = req.headers?.['x-tenant-schema'];
-    if (headerSchema !== undefined && headerSchema !== null && headerSchema !== expectedSchema) {
-      this.logger.warn(
-        `[CROSS-TENANT-DENIED] user=${user.sub} (tenant=${expectedTenantId}) tried x-tenant-schema=${headerSchema} on ${req.method} ${req.url}`,
-      );
-      throw new ForbiddenException(
-        `x-tenant-schema mismatch: header '${headerSchema}', expected '${expectedSchema}'`,
-      );
+    if (headerSchema !== undefined && headerSchema !== null) {
+      const normalizedSchema = String(headerSchema).toLowerCase();
+      if (normalizedSchema !== expectedSchema) {
+        this.logger.warn(
+          `[CROSS-TENANT-DENIED] user=${user.sub} (tenant=${expectedTenantId}) tried x-tenant-schema=${headerSchema} on ${req.method} ${req.url}`,
+        );
+        throw new ForbiddenException(
+          `x-tenant-schema mismatch: header '${headerSchema}', expected '${expectedSchema}'`,
+        );
+      }
     }
 
     return true;

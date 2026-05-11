@@ -27,8 +27,13 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
  *   - 创建/状态变更：admin / boss / hr（管理类）
  *   - 查询：admin / boss / hr / sales_manager / sales_director（管理可视）
  *
+ * Sprint B (2026-05-11) 深度防御：
+ *   - class-level @UseGuards(TenantScopeGuard) — 兜底所有 endpoint 跨租户校验
+ *   - body.tenantSchema 校验由 TenantScopeGuard 完成（守护 db/list、db/archive 等）
+ *
  * USER-AUTH(2026-05-02): 条目 29 方向 B + 条目 31 #2 + 条目 32 L1
  */
+@UseGuards(TenantScopeGuard)
 @Controller('teachers')
 export class TeacherController {
   constructor(

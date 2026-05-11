@@ -1,4 +1,13 @@
-import { Body, Controller, Param, Post, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Param,
+  Post,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import {
   HomeworkService,
   HomeworkAssignment,
@@ -6,11 +15,27 @@ import {
   Difficulty,
   Grade,
 } from './homework.service';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
+import { RbacGuard } from '../../guards/rbac.guard';
+import { Roles } from '../../guards/rbac.decorator';
+import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 
 /**
  * HomeworkController — V13 作业管理 HTTP 暴露 BE-V13-1
  * 路由前缀：/api/homework
+ *
+ * Sprint B (2026-05-11) RBAC：
+ *   - 写操作（publish / grade / return）: teacher / admin / boss
+ *   - 读操作（list*）：teacher / academic / academic_admin / admin / boss / sales / sales_manager / sales_director
+ *     （拍板「教务全只读老师线」+「销售看自己客户孩子作业」）
+ *   - 老 mock 端点（无 tenantSchema 的 in-memory 版本）不上 RBAC（仅测试用）
+ *   - 家长 c 端：走 /api/homework/db/students/* 前缀，middleware isParentDbPath 已含
+ *
+ * Sprint B (2026-05-11) 深度防御：
+ *   - class-level @UseGuards(TenantScopeGuard) — 兜底所有 /db endpoint 跨租户校验
+ *   - body.tenantSchema 校验由 TenantScopeGuard 完成（参考 guard 第 4 条规则）
  */
+@UseGuards(TenantScopeGuard)
 @Controller('homework')
 export class HomeworkController {
   constructor(private readonly service: HomeworkService) {}
@@ -134,6 +159,9 @@ export class HomeworkController {
   // ================ /db 真存盘版 ================
 
   @Post('db/assignments')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.CREATED)
   async publishInDb(
     @Body()
@@ -157,7 +185,14 @@ export class HomeworkController {
     );
   }
 
+  /**
+   * Sprint B：submissions/POST 主要是家长 c 端提交作业（parent JWT 流）
+   *   - middleware isParentDbPath 已含 /api/homework/db/submissions
+   *   - 但 admin / boss / teacher 也可能代提交（运营回放）
+   *   - 不设 @Roles 让 parent JWT 也能调（RbacGuard 默认放行无 @Roles 路由）
+   */
   @Post('db/submissions')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.CREATED)
   async submitInDb(
     @Body()
@@ -176,6 +211,9 @@ export class HomeworkController {
   }
 
   @Post('db/submissions/:id/grade')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async gradeInDb(
     @Param('id') id: string,
@@ -199,6 +237,9 @@ export class HomeworkController {
   }
 
   @Post('db/submissions/:id/return')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async returnForRedoInDb(
     @Param('id') id: string,
@@ -207,7 +248,23 @@ export class HomeworkController {
     return this.service.returnForRedoInDb(id, body.teacherComment, body.tenantSchema);
   }
 
+  /**
+   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
+   *   - teacher / academic / academic_admin / admin / boss / sales / sales_manager / sales_director
+   *   - 销售可看自己客户孩子的作业 — service 层做字段过滤
+   */
   @Post('db/teachers/:teacherId/assignments')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles(
+    'teacher',
+    'academic',
+    'academic_admin',
+    'admin',
+    'boss',
+    'sales',
+    'sales_manager',
+    'sales_director',
+  )
   @HttpCode(HttpStatus.OK)
   async listAssignmentsByTeacherInDb(
     @Param('teacherId') teacherId: string,
@@ -219,7 +276,25 @@ export class HomeworkController {
     });
   }
 
+  /**
+   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
+   *   - 注：家长 c 端走独立 endpoint /api/homework/db/students/:studentId/assignments?? 不再适用
+   *     middleware isParentDbPath 含 /api/homework/db/students/ → parent JWT 也会走到此 controller
+   *     但 RbacGuard 拦截 parent role → 路由失效
+   *     → 解决：parent 应走专门的 c 端 endpoint（待 Sprint D 拆分）。当前先按 B 端 RBAC 锁
+   */
   @Post('db/students/:studentId/assignments')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles(
+    'teacher',
+    'academic',
+    'academic_admin',
+    'admin',
+    'boss',
+    'sales',
+    'sales_manager',
+    'sales_director',
+  )
   @HttpCode(HttpStatus.OK)
   async listAssignmentsByStudentInDb(
     @Param('studentId') studentId: string,
@@ -228,7 +303,23 @@ export class HomeworkController {
     return this.service.listAssignmentsByStudentInDb(studentId, body.tenantSchema);
   }
 
+  /**
+   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
+   *   - teacher 看自己待批改
+   *   - 教务双层 / 销售只读 看老师待批改 KPI
+   */
   @Post('db/teachers/:teacherId/pending-grading')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles(
+    'teacher',
+    'academic',
+    'academic_admin',
+    'admin',
+    'boss',
+    'sales',
+    'sales_manager',
+    'sales_director',
+  )
   @HttpCode(HttpStatus.OK)
   async listPendingByTeacherInDb(
     @Param('teacherId') teacherId: string,

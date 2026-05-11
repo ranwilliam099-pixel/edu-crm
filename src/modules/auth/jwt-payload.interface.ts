@@ -3,7 +3,7 @@
  *
  * - sub:        用户 ID（ULID, 32 chars）
  * - tenantId:   租户 ID（null = 平台超管，A11）
- * - role:       8 角色枚举 + platform_admin / finance_admin（A11 §角色拆分）
+ * - role:       11 角色枚举 + platform_admin / finance_admin（A11 §角色拆分 + Sprint B 老师线）
  * - campusId:   校区 ID（追加 #15 A08：标准版 ≤ 3 校区）
  * - exp / iat:  标准 JWT 字段
  */
@@ -16,6 +16,15 @@ export interface JwtPayload {
   iat?: number;
 }
 
+/**
+ * Sprint B (2026-05-11) 扩展：新增 teacher / academic / academic_admin 三个 role
+ *   - teacher：主讲老师（可改自己学生反馈、月报 finalize-teacher、showcase-meta self-edit）
+ *   - academic：普通教务（拍板「教务全只读老师线」，仅 GET 老师线对象）
+ *   - academic_admin：教务主管（5/10 拍板「教务/教务主管」双层；可批办、看全 campus 教务流）
+ *
+ * 三者均为单校 role（campusId 必填 32-char ULID），归属同一 campus。
+ * 跨校组（CROSS_CAMPUS_ROLES）仍维持 V10 拍板：admin / sales_director / hr。
+ */
 export type TenantRole =
   | 'sales'
   | 'sales_manager'
@@ -24,7 +33,10 @@ export type TenantRole =
   | 'finance'
   | 'boss'
   | 'admin'
-  | 'hr';
+  | 'hr'
+  | 'teacher'
+  | 'academic'
+  | 'academic_admin';
 
 export type PlatformRole = 'platform_admin' | 'finance_admin';
 

@@ -347,6 +347,71 @@ describe('TeacherShowcaseController (C.2)', () => {
       expect(auditCtx.actorRole).toBe('boss');
     });
 
+    // ----------------------------------------------------------
+    // Sprint B (2026-05-11) — teacher role self-check
+    // ----------------------------------------------------------
+    it('Sprint B: teacher role + teacher.user_id === req.user.sub → 放行', async () => {
+      const TEACHER_USER = 'usr_teacher_00000000000000000T01';
+      teacherRepo.findById.mockResolvedValueOnce({ ...baseTeacher, userId: TEACHER_USER });
+      metaRepo.upsertMeta.mockResolvedValueOnce(baseMeta);
+
+      const req = mkReq({
+        user: { sub: TEACHER_USER, role: 'teacher', tenantId: 'tenantA', campusId: 'campusA' },
+      } as Partial<AuthenticatedRequest>);
+
+      const r = await controller.updateShowcaseMeta(TEACHER_A, TENANT, { bio: '我的新简介' }, req);
+      expect(r.ok).toBe(true);
+      const [, , , , auditCtx] = metaRepo.upsertMeta.mock.calls[0];
+      expect(auditCtx.actorRole).toBe('teacher');
+    });
+
+    it('Sprint B: teacher role + teacher.user_id !== req.user.sub → ForbiddenException', async () => {
+      const TEACHER_USER = 'usr_teacher_00000000000000000T01';
+      const OTHER_USER = 'usr_teacher_00000000000000000T02';
+      // baseTeacher.userId = TEACHER_USER（已绑给 teacher T01）
+      teacherRepo.findById.mockResolvedValueOnce({ ...baseTeacher, userId: TEACHER_USER });
+
+      // 但 req.user.sub = OTHER_USER（攻击者：teacher T02 想改 T01 的 showcase）
+      const req = mkReq({
+        user: { sub: OTHER_USER, role: 'teacher', tenantId: 'tenantA', campusId: 'campusA' },
+      } as Partial<AuthenticatedRequest>);
+
+      await expect(
+        controller.updateShowcaseMeta(TEACHER_A, TENANT, { bio: '攻击者改我' }, req),
+      ).rejects.toThrow(/self-check.*拒绝改他人/);
+      expect(metaRepo.upsertMeta).not.toHaveBeenCalled();
+    });
+
+    it('Sprint B: teacher role + teacher.user_id 为空（未绑账号）→ ForbiddenException', async () => {
+      teacherRepo.findById.mockResolvedValueOnce({ ...baseTeacher, userId: undefined });
+      const req = mkReq({
+        user: { sub: 'usr_random_00000000000000000000A1', role: 'teacher', tenantId: 'tenantA', campusId: 'campusA' },
+      } as Partial<AuthenticatedRequest>);
+      await expect(
+        controller.updateShowcaseMeta(TEACHER_A, TENANT, { bio: 'x' }, req),
+      ).rejects.toThrow(/self-check/);
+      expect(metaRepo.upsertMeta).not.toHaveBeenCalled();
+    });
+
+    it('Sprint B: admin role 跳过 self-check（可改任意老师）', async () => {
+      // teacher.user_id 与 admin.sub 不匹配，但 admin 可改
+      teacherRepo.findById.mockResolvedValueOnce({ ...baseTeacher, userId: 'someone_else' });
+      metaRepo.upsertMeta.mockResolvedValueOnce(baseMeta);
+      const req = mkReq(); // 默认 admin
+      const r = await controller.updateShowcaseMeta(TEACHER_A, TENANT, { bio: 'x' }, req);
+      expect(r.ok).toBe(true);
+    });
+
+    it('Sprint B: boss role 跳过 self-check（可改任意老师）', async () => {
+      teacherRepo.findById.mockResolvedValueOnce({ ...baseTeacher, userId: 'someone_else' });
+      metaRepo.upsertMeta.mockResolvedValueOnce(baseMeta);
+      const req = mkReq({
+        user: { sub: ADMIN, role: 'boss', tenantId: 'tenantA', campusId: 'campusA' },
+      } as Partial<AuthenticatedRequest>);
+      const r = await controller.updateShowcaseMeta(TEACHER_A, TENANT, { bio: 'x' }, req);
+      expect(r.ok).toBe(true);
+    });
+
     it('meta view 中 updatedAt Date → ISO 字符串', async () => {
       teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
       metaRepo.upsertMeta.mockResolvedValueOnce({

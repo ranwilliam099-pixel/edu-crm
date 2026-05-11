@@ -348,6 +348,249 @@ describe('TenantMiddleware A01-CRIT P0 Parent x Tenant 绑定校验', () => {
     ).rejects.toThrow(ForbiddenException);
   });
 
+  // Sprint B (2026-05-11) — isParentDbPath 精确化：generate / pending-finalize / finalize / finalize-parent
+  // 不应被识别为"parent c 端路径"。它们是 B 端 admin/boss/teacher 走的 endpoint。
+  //
+  // 旧 bug：path.startsWith('/api/db/monthly-reports/') 会误把 generate / pending-finalize 路由到
+  // requireParentDbUser 分支 → parent JWT 进来后可能绕过 B 端 tenant 校验逻辑。
+
+  it('Sprint B: parent JWT 调 /api/db/monthly-reports/generate → 401（不是 parent path）', async () => {
+    // generate 路径不在 isParentDbPath 白名单 → 走默认 B 端 tenant 分支 → parent JWT 缺 tenantId → 抛错
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([
+      {
+        id: 'bind000000000000000000000000A1',
+        parentId: PARENT_ID,
+        studentId: STUDENT_ID,
+        tenantId: TENANT_A,
+        isPrimary: true,
+        relationship: 'mother',
+        bindingStatus: 'active',
+        boundAt: new Date(),
+      },
+    ]);
+
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeParentReq(
+      `/api/db/monthly-reports/generate`,
+      token,
+      { tenantSchema: `tenant_${TENANT_A}` },
+    );
+
+    // 走 B 端默认分支 → 解析 ParentJwt 失败 (JwtStrategy.parse 不认 parent token 的 claims)
+    // → UnauthorizedException
+    await expect(
+      middleware.use(req, {} as any, () => {}),
+    ).rejects.toThrow(UnauthorizedException);
+
+    // 确认 parent 分支没被触达（parentRepo.findChildrenByParent 不应被调）
+    expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
+  });
+
+  it('Sprint B: parent JWT 调 /api/db/monthly-reports/pending-finalize → 401（不是 parent path）', async () => {
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([
+      {
+        id: 'bind000000000000000000000000A1',
+        parentId: PARENT_ID,
+        studentId: STUDENT_ID,
+        tenantId: TENANT_A,
+        isPrimary: true,
+        relationship: 'mother',
+        bindingStatus: 'active',
+        boundAt: new Date(),
+      },
+    ]);
+
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeParentReq(
+      `/api/db/monthly-reports/pending-finalize`,
+      token,
+      { tenantSchema: `tenant_${TENANT_A}` },
+    );
+
+    await expect(
+      middleware.use(req, {} as any, () => {}),
+    ).rejects.toThrow(UnauthorizedException);
+    expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
+  });
+
+  it('Sprint B: parent JWT 调 /api/db/monthly-reports/:id/find → 走 parent 分支（合法）', async () => {
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([
+      {
+        id: 'bind000000000000000000000000A1',
+        parentId: PARENT_ID,
+        studentId: STUDENT_ID,
+        tenantId: TENANT_A,
+        isPrimary: true,
+        relationship: 'mother',
+        bindingStatus: 'active',
+        boundAt: new Date(),
+      },
+    ]);
+
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeParentReq(
+      `/api/db/monthly-reports/rep00000000000000000000000000R01/find`,
+      token,
+      { tenantSchema: `tenant_${TENANT_A}` },
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      middleware.use(req, {} as any, (err?: unknown) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    expect(parentRepo.findChildrenByParent).toHaveBeenCalledWith(PARENT_ID);
+    expect(req.user.role).toBe('parent');
+    expect(req.user.tenantId).toBe(TENANT_A);
+  });
+
+  it('Sprint B: parent JWT 调 /api/db/monthly-reports/:id/parent-read → 走 parent 分支（合法）', async () => {
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([
+      {
+        id: 'bind000000000000000000000000A1',
+        parentId: PARENT_ID,
+        studentId: STUDENT_ID,
+        tenantId: TENANT_A,
+        isPrimary: true,
+        relationship: 'mother',
+        bindingStatus: 'active',
+        boundAt: new Date(),
+      },
+    ]);
+
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeParentReq(
+      `/api/db/monthly-reports/rep00000000000000000000000000R01/parent-read`,
+      token,
+      { tenantSchema: `tenant_${TENANT_A}` },
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      middleware.use(req, {} as any, (err?: unknown) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    expect(parentRepo.findChildrenByParent).toHaveBeenCalledWith(PARENT_ID);
+    expect(req.user.role).toBe('parent');
+  });
+
+  it('Sprint B: parent JWT 调 /api/db/monthly-reports/:id/finalize-parent → 走 B 端分支（401，teacher/admin/boss 才能调）', async () => {
+    // finalize-parent 是「老师代写家长版评语」B 端操作，不让 parent JWT 走 parent 分支
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([]);
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeParentReq(
+      `/api/db/monthly-reports/rep00000000000000000000000000R01/finalize-parent`,
+      token,
+      { tenantSchema: `tenant_${TENANT_A}` },
+    );
+
+    await expect(
+      middleware.use(req, {} as any, () => {}),
+    ).rejects.toThrow(UnauthorizedException);
+    expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
+  });
+
+  // ============================================================
+  // Sprint B (2026-05-11) 二轮复审 — isParentDbPath 全前缀 → 精确正则
+  // ============================================================
+  // 旧 path.startsWith('/api/db/lesson-feedbacks/') 会让未来新增的
+  // /api/db/lesson-feedbacks/:id/update (B 端老师写) 误走 parent 分支
+  // 新精确正则：仅 /:id/find 和 /:id/parent-read 走 parent 分支
+  it('Sprint B 二轮: parent JWT 调 /api/db/lesson-feedbacks/:id/find → 走 parent 分支（合法）', async () => {
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([
+      {
+        id: 'bind000000000000000000000000A1',
+        parentId: PARENT_ID,
+        studentId: STUDENT_ID,
+        tenantId: TENANT_A,
+        isPrimary: true,
+        relationship: 'mother',
+        bindingStatus: 'active',
+        boundAt: new Date(),
+      },
+    ]);
+
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeParentReq(
+      `/api/db/lesson-feedbacks/fb00000000000000000000000000F01/find`,
+      token,
+      { tenantSchema: `tenant_${TENANT_A}` },
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      middleware.use(req, {} as any, (err?: unknown) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    expect(parentRepo.findChildrenByParent).toHaveBeenCalledWith(PARENT_ID);
+    expect(req.user.role).toBe('parent');
+  });
+
+  it('Sprint B 二轮: parent JWT 调 /api/db/lesson-feedbacks/:id/parent-read → 走 parent 分支（合法）', async () => {
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([
+      {
+        id: 'bind000000000000000000000000A1',
+        parentId: PARENT_ID,
+        studentId: STUDENT_ID,
+        tenantId: TENANT_A,
+        isPrimary: true,
+        relationship: 'mother',
+        bindingStatus: 'active',
+        boundAt: new Date(),
+      },
+    ]);
+
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeParentReq(
+      `/api/db/lesson-feedbacks/fb00000000000000000000000000F01/parent-read`,
+      token,
+      { tenantSchema: `tenant_${TENANT_A}` },
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      middleware.use(req, {} as any, (err?: unknown) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    expect(req.user.role).toBe('parent');
+  });
+
+  it('Sprint B 二轮: parent JWT 调 /api/db/lesson-feedbacks/:id/update → 走 B 端分支（401）', async () => {
+    // update 是老师 24h 内修改反馈，B 端操作 — 不应走 parent 分支
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([]);
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeParentReq(
+      `/api/db/lesson-feedbacks/fb00000000000000000000000000F01/update`,
+      token,
+      { tenantSchema: `tenant_${TENANT_A}` },
+    );
+    await expect(
+      middleware.use(req, {} as any, () => {}),
+    ).rejects.toThrow(UnauthorizedException);
+    expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
+  });
+
+  it('Sprint B 二轮: parent JWT 调 POST /api/db/lesson-feedbacks (创建) → 走 B 端分支（401）', async () => {
+    // 创建反馈 = 老师 B 端操作
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([]);
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeParentReq(
+      `/api/db/lesson-feedbacks`,
+      token,
+      { tenantSchema: `tenant_${TENANT_A}` },
+    );
+    await expect(
+      middleware.use(req, {} as any, () => {}),
+    ).rejects.toThrow(UnauthorizedException);
+    expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
+  });
+
   it('A01-CRIT: ParentRepository 未注入 (test legacy 模式) → fallback 旧行为 + WARN', async () => {
     // 模拟旧测试环境 (DbModule 未导入 — TenantMiddleware unit test 也走这个路径)
     const moduleNoRepo: TestingModule = await Test.createTestingModule({

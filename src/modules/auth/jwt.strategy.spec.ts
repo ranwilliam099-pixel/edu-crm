@@ -132,6 +132,61 @@ describe('JwtStrategy (W1 BE-W1-3 real)', () => {
       const token = jwt.sign({ sub: 'short', tenantId: ULID_32, role: 'sales', campusId: ULID_32_B });
       expect(() => strategy.parse(token)).toThrow(/sub.*ULID/);
     });
+
+    // Sprint B (2026-05-11) — TenantRole 加 teacher / academic / academic_admin
+    //   - 三者均为 single-campus role：campusId 必填 32-char ULID
+    //   - 与 boss / sales 等同分支处理（默认 fall-through 到 single-campus 校验）
+    it('accepts teacher (single-campus) with valid campusId — Sprint B', () => {
+      const token = jwt.sign({
+        sub: ULID_32,
+        tenantId: ULID_32_B,
+        role: 'teacher',
+        campusId: ULID_32_C,
+      });
+      const result = strategy.parse(token);
+      expect(result.role).toBe('teacher');
+      expect(result.campusId).toBe(ULID_32_C);
+    });
+
+    it('rejects teacher (single-campus) without campusId — Sprint B', () => {
+      const token = jwt.sign({ sub: ULID_32, tenantId: ULID_32_B, role: 'teacher', campusId: null });
+      expect(() => strategy.parse(token)).toThrow(/single-campus.*teacher.*campusId/);
+    });
+
+    it('accepts academic (single-campus 普通教务) with valid campusId — Sprint B', () => {
+      const token = jwt.sign({
+        sub: ULID_32,
+        tenantId: ULID_32_B,
+        role: 'academic',
+        campusId: ULID_32_C,
+      });
+      expect(strategy.parse(token).role).toBe('academic');
+    });
+
+    it('rejects academic without campusId — Sprint B', () => {
+      const token = jwt.sign({ sub: ULID_32, tenantId: ULID_32_B, role: 'academic', campusId: null });
+      expect(() => strategy.parse(token)).toThrow(/single-campus.*academic.*campusId/);
+    });
+
+    it('accepts academic_admin (教务主管) with valid campusId — Sprint B', () => {
+      const token = jwt.sign({
+        sub: ULID_32,
+        tenantId: ULID_32_B,
+        role: 'academic_admin',
+        campusId: ULID_32_C,
+      });
+      expect(strategy.parse(token).role).toBe('academic_admin');
+    });
+
+    it('rejects academic_admin without campusId — Sprint B', () => {
+      const token = jwt.sign({
+        sub: ULID_32,
+        tenantId: ULID_32_B,
+        role: 'academic_admin',
+        campusId: null,
+      });
+      expect(() => strategy.parse(token)).toThrow(/single-campus.*academic_admin.*campusId/);
+    });
   });
 
   describe('parse() — expiration', () => {

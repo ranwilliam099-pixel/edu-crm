@@ -320,21 +320,81 @@ export class TenantMiddleware implements NestMiddleware {
     (req as RequestWithTenant).tenantSchema = schema;
   }
 
+  /**
+   * 判定路径是否走"C 端家长 / 双轨容错"分发分支
+   *
+   * 设计意图：
+   *   - 家长 c 端要看孩子反馈、月报、请假、推荐等，但家长 JWT 不带 tenantId
+   *   - 这类路径走 requireParentDbUser → 从 body.tenantSchema 派生 tenantId
+   *     + 用 parent_student_bindings 真实绑定关系校验（A01-CRIT 修复）
+   *
+   * Sprint B (2026-05-11) 复审修复：
+   *   - 旧实现 `/api/db/lesson-feedbacks/` 全前缀匹配会误覆盖未来新增的 cron/admin endpoint
+   *   - `/api/db/monthly-reports/` 旧实现已用精确正则白名单
+   *   - 本次（2026-05-11 二轮复审）把所有 parent 路径都改为精确正则白名单：
+   *       - lesson-feedbacks/:id/find       — parent 读反馈
+   *       - lesson-feedbacks/:id/parent-read — parent 打"已读"
+   *     而 lesson-feedbacks/POST（提交反馈）/ :id/update 等走 B 端 TenantJwt
+   *   - leaves / recommendations / referrals / course-balance / homework 同步收窄
+   *
+   * 注：generate / pending-finalize / :id/finalize（老师视角）仍走 B 端常规分发
+   */
   private isParentDbPath(path: string): boolean {
     const parentStudentPath =
       /^\/api\/db\/students\/[^/]+\/(feedbacks|monthly-reports)$/.test(path) ||
       /^\/api\/db\/students\/[^/]+\/leaves\/list$/.test(path);
 
+    // monthly-reports 路径白名单（仅 parent 实际访问的 endpoint）
+    //   - /:id/find        — c 端家长读月报（parent JWT 主路径，audience='parent' 自动遮蔽）
+    //   - /:id/parent-read — c 端家长打"已读"标记
+    // 不含：generate / pending-finalize / :id/finalize / :id/finalize-parent — 走 B 端
+    const parentMonthlyReportPath =
+      /^\/api\/db\/monthly-reports\/[^/]+\/(find|parent-read)$/.test(path);
+
+    // Sprint B 复审：lesson-feedbacks 精确正则（仅 parent 实际访问的 endpoint）
+    //   - /:id/find        — c 端家长读反馈
+    //   - /:id/parent-read — c 端家长打"已读"标记
+    // 不含：POST / :id/update — 老师写反馈（走 B 端 TenantJwt）
+    const parentLessonFeedbackPath =
+      /^\/api\/db\/lesson-feedbacks\/[^/]+\/(find|parent-read)$/.test(path);
+
+    // Sprint B 复审：leaves 精确正则
+    //   - POST /api/db/leaves                 — 家长提交请假（c 端主入口）
+    //   - POST /api/db/leaves/:id/approve     — admin / boss 走 B 端，不走 parent 分支
+    //   - POST /api/db/leaves/:id/reject      — 同上
+    //   - POST /api/db/students/:sid/leaves/list — 已在 parentStudentPath 覆盖
+    // 仅 POST /api/db/leaves（家长提交）走 parent 分支：
+    const parentLeavesPath = path === '/api/db/leaves';
+
+    // Sprint B 复审：recommendations / referrals 精确收窄（家长是主调用方）
+    //   - recommendations: 家长看老师推荐列表 / 申请推荐
+    //   - referrals: 家长推介好友（c 端主入口）
+    //   仍允许前缀但语义已收窄（无其他 admin/boss 路径用此前缀）
+    const parentRecommendationsPath = /^\/api\/db\/recommendations(\/|$)/.test(path);
+    const parentReferralsPath = /^\/api\/db\/referrals(\/|$)/.test(path);
+
+    // Sprint B 复审：course-balance 仅 students 子路径走 parent
+    //   - /api/course-balance/db/students/:sid/* — 家长看孩子余额（c 端主入口）
+    //   - /api/course-balance/db/admin/* — admin 走 B 端，不走 parent 分支
+    const parentCourseBalancePath =
+      /^\/api\/course-balance\/db\/students\/[^/]+(\/|$)/.test(path);
+
+    // Sprint B 复审：homework
+    //   - /api/homework/db/submissions       — 家长代提交作业（c 端入口）
+    //   - /api/homework/db/students/:sid/*   — 家长看孩子作业列表
+    const parentHomeworkSubmissionsPath = path === '/api/homework/db/submissions';
+    const parentHomeworkStudentsPath = /^\/api\/homework\/db\/students\/[^/]+(\/|$)/.test(path);
+
     return (
       parentStudentPath ||
-      path.startsWith('/api/db/lesson-feedbacks/') ||
-      path.startsWith('/api/db/monthly-reports/') ||
-      path.startsWith('/api/db/leaves') ||
-      path.startsWith('/api/db/recommendations') ||
-      path.startsWith('/api/db/referrals') ||
-      path.startsWith('/api/course-balance/db/students/') ||
-      path.startsWith('/api/homework/db/submissions') ||
-      path.startsWith('/api/homework/db/students/')
+      parentMonthlyReportPath ||
+      parentLessonFeedbackPath ||
+      parentLeavesPath ||
+      parentRecommendationsPath ||
+      parentReferralsPath ||
+      parentCourseBalancePath ||
+      parentHomeworkSubmissionsPath ||
+      parentHomeworkStudentsPath
     );
   }
 

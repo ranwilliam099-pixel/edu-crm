@@ -2,10 +2,12 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Headers,
   HttpCode,
   HttpStatus,
+  Optional,
   Param,
   Put,
   Req,
@@ -25,7 +27,7 @@ import { Teacher } from '../teacher/teacher.service';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
-import { ActorRole } from './audit-log.repository';
+import { ActorRole, AuditLogRepository } from './audit-log.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 
@@ -71,12 +73,35 @@ export class TeacherShowcaseController {
     private readonly showcaseRepo: TeacherShowcaseRepository,
     private readonly teacherRepo: TeacherRepository,
     private readonly metaRepo: TeacherShowcaseMetaRepository,
+    // Sprint B (2026-05-11 复审): self-check 失败时写 audit_log
+    //   - @Optional：unit spec 直接 new 时可传 undefined（不破坏现有 spec test）
+    //   - fail-open：audit_log 写失败不阻塞主 ForbiddenException
+    @Optional() private readonly auditLog?: AuditLogRepository,
   ) {}
 
   // ================================================================
   // GET /api/db/teachers/:id/showcase — 三层聚合
   // ================================================================
+  /**
+   * Sprint B RBAC (2026-05-11 复审补 — 选项 C):
+   *   - 单 endpoint + RbacGuard + 8 role (B 端全角色)
+   *   - parent 走独立 c 端 endpoint (parent JWT 流), 不访问此 B 端 path
+   *   - 老师线 / 销售线 / 管理类都可看老师业务展示卡
+   *   - 双轨硬红线：summary 字段是真实 KPI（仅 admin/boss/academic/校长/老师自己有意义）
+   *     但 service 层暂未做字段级过滤 — sales 可看到完整 summary（待 Sprint D RoleFieldFilter 收尾）
+   */
   @Get(':id/showcase')
+  @UseGuards(RbacGuard)
+  @Roles(
+    'teacher',
+    'academic',
+    'academic_admin',
+    'admin',
+    'boss',
+    'sales',
+    'sales_manager',
+    'sales_director',
+  )
   async getShowcase(
     @Param('id') teacherId: string,
     @Headers('x-tenant-schema') tenantSchema: string,
@@ -135,7 +160,7 @@ export class TeacherShowcaseController {
   /**
    * 老师 / admin / boss 更新 showcase 美化数据
    *
-   * 来源：用户 2026-05-10 全局规则 #3（双轨数据）+ C.2 Sprint
+   * 来源：用户 2026-05-10 全局规则 #3（双轨数据）+ C.2 Sprint + Sprint B 2026-05-11
    *
    * Body（UpsertShowcaseMetaPayload）：
    *   avatarUrl?: string | null
@@ -154,20 +179,16 @@ export class TeacherShowcaseController {
    *      仅用于代码可读性 / 单元测试上下文 — 实际拦截在全局注册器
    *      （多重注册 NestJS 也会按 reflect 元数据去重，不会重复执行）
    *
-   * RBAC（C.2 Sprint 范围）：
-   *   - admin / boss：可改任意老师的 showcase meta
-   *   - TODO（C.3+ teacher JWT role 引入后）：
-   *     1. 把 'teacher' 加入 JwtPayload.TenantRole（src/modules/auth/jwt-payload.interface.ts）
-   *     2. 在本 @Roles 上加 'teacher'
-   *     3. 在 controller 加 self-check：req.user.sub === teachers.user_id（拒绝改他人）
-   *     4. 同时 audit_log actor_role 已支持 'teacher'（V33 中已枚举）
-   *   - 当前阶段：teachers 表的 user_id 字段就绪但 JWT 端尚未签发 role=teacher。
-   *     admin/boss 走运管代填 showcase meta（拍板：教务/admin 全只读老师线 ≠ showcase
-   *     可写：showcase meta 是「老师业务卡」非 KPI，所以 admin 可写不破坏双轨红线）。
+   * RBAC (Sprint B 2026-05-11 落地)：
+   *   - admin / boss：可改任意老师的 showcase meta（拍板「老板校长 ✅ 全权」）
+   *   - teacher: 只能改自己 — req.user.sub === teachers.user_id WHERE teachers.id = :id
+   *     （即 self-check：req.user.sub 反查 teacher.userId，比对 :id）
+   *   - 其他 role: RbacGuard 拒绝
+   *   - audit_log actor_role: 透传 JWT 实际 role（admin / boss / teacher）
    */
   @Put(':id/showcase-meta')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss')
+  @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async updateShowcaseMeta(
@@ -187,13 +208,49 @@ export class TeacherShowcaseController {
     if (!operatorUserId) {
       throw new BadRequestException('user sub required (auth middleware)');
     }
-    // C.2: actor_role 取 JWT 实际 role（admin/boss）；C.3+ 加入 teacher 时本字段会承接
+    // Sprint B: actor_role 取 JWT 实际 role（admin/boss/teacher）— V33 已枚举三者
     const actorRole = (req.user?.role ?? 'admin') as ActorRole;
 
     // 验证 :id 是已存在的老师（避免对不存在 teacher 写入 meta 行触发外键报错）
     const teacher = await this.teacherRepo.findById(tenantSchema, teacherId);
     if (!teacher) {
       throw new BadRequestException(`teacher ${teacherId} not found`);
+    }
+
+    // Sprint B self-check: teacher role 只能改自己
+    //   - admin / boss: 跳过 self-check
+    //   - teacher: teacher.userId 必须 === req.user.sub
+    //     （teacher.userId 缺失 → 视为未绑定用户账号 → 拒绝；不能让"无人认领"的档案被任意人改）
+    //
+    // Sprint B 复审 (2026-05-11): self-check 失败前写 audit_log（fail-open）
+    if (req.user?.role === 'teacher') {
+      if (!teacher.userId || teacher.userId !== operatorUserId) {
+        // audit_log 失败不阻塞 ForbiddenException
+        try {
+          await this.auditLog?.log(tenantSchema, {
+            actorUserId: operatorUserId,
+            actorRole: 'teacher',
+            action: 'teacher.self-check-failed',
+            targetType: 'teacher_showcase_meta',
+            targetId: teacherId,
+            before: null,
+            after: {
+              attempted_teacher_id: teacherId,
+              bound_user_id: teacher.userId ?? null,
+              own_user_id: operatorUserId,
+            },
+            ip: req.ip ?? null,
+            userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+            requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+          });
+        } catch {
+          // audit fail-open
+        }
+        throw new ForbiddenException(
+          `teacher self-check: teacher ${teacherId} bound to user=${teacher.userId ?? '(null)'} ` +
+            `but req.user.sub=${operatorUserId} — 拒绝改他人 showcase`,
+        );
+      }
     }
 
     // 字段级业务校验（class-validator 暂未引入 controller 层；走显式 BadRequest）

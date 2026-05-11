@@ -310,4 +310,37 @@ describe('TeacherRepository (V28 archive + V34 字段加密双写双读)', () =>
       });
     });
   });
+
+  // ============================================================
+  // Sprint B (2026-05-11) — findByUserId（teacher self-check 反查）
+  // ============================================================
+  describe('findByUserId (Sprint B self-check 反查)', () => {
+    const USER_X = 'usr00000000000000000000000000U00X';
+
+    it('user_id 命中 → 返回 Teacher（mapRow 走 phone 解密链）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...teacherRow({ id: TEACHER_A }), user_id: USER_X },
+      ]);
+      const t = await repo.findByUserId(TENANT, USER_X);
+      expect(t).not.toBeNull();
+      expect(t!.id).toBe(TEACHER_A);
+      expect(t!.userId).toBe(USER_X);
+    });
+
+    it('user_id 未命中（0 行）→ 返回 null', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      const t = await repo.findByUserId(TENANT, 'usr_no_match_xxxxxxxxxxxxxxxxxxxx');
+      expect(t).toBeNull();
+    });
+
+    it('SQL 用 user_id = $1 + LIMIT 1（兜底多绑情况取最早一条）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.findByUserId(TENANT, USER_X);
+      const [schema, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(schema).toBe(TENANT);
+      expect(sql).toMatch(/WHERE user_id = \$1/);
+      expect(sql).toMatch(/LIMIT 1/);
+      expect(params).toEqual([USER_X]);
+    });
+  });
 });

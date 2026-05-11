@@ -189,6 +189,64 @@ describe('AuthController - 登录接口', () => {
         }),
       ).toThrow(/single-campus.*finance/);
     });
+
+    // Sprint B (2026-05-11) — TenantRole 加 teacher / academic / academic_admin
+    it('teacher (单校) 合法登录 → 返回 JWT — Sprint B', () => {
+      const result = controller.login({
+        phone: '13800001111',
+        tenantId: ULID32_T,
+        role: 'teacher',
+        campusId: ULID32_C,
+        userId: ULID32,
+      });
+      expect(result.token).toBeTruthy();
+      expect(result.payload.role).toBe('teacher');
+      expect(result.payload.campusId).toBe(ULID32_C);
+    });
+
+    it('teacher (单校) 不传 campusId → BadRequestException — Sprint B', () => {
+      expect(() =>
+        controller.login({
+          phone: '13800001111',
+          tenantId: ULID32_T,
+          role: 'teacher',
+          userId: ULID32,
+        }),
+      ).toThrow(/single-campus.*teacher/);
+    });
+
+    it('academic (单校 普通教务) 合法登录 → 返回 JWT — Sprint B', () => {
+      const result = controller.login({
+        phone: '13800001111',
+        tenantId: ULID32_T,
+        role: 'academic',
+        campusId: ULID32_C,
+        userId: ULID32,
+      });
+      expect(result.payload.role).toBe('academic');
+    });
+
+    it('academic_admin (单校 教务主管) 合法登录 → 返回 JWT — Sprint B', () => {
+      const result = controller.login({
+        phone: '13800001111',
+        tenantId: ULID32_T,
+        role: 'academic_admin',
+        campusId: ULID32_C,
+        userId: ULID32,
+      });
+      expect(result.payload.role).toBe('academic_admin');
+    });
+
+    it('academic 不传 campusId → BadRequestException — Sprint B', () => {
+      expect(() =>
+        controller.login({
+          phone: '13800001111',
+          tenantId: ULID32_T,
+          role: 'academic',
+          userId: ULID32,
+        }),
+      ).toThrow(/single-campus.*academic/);
+    });
   });
 
   describe('wechatLogin - C 端家长微信登录', () => {

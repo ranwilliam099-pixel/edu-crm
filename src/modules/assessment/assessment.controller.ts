@@ -1,4 +1,13 @@
-import { Body, Controller, Param, Post, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Param,
+  Post,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import {
   AssessmentService,
   Assessment,
@@ -6,11 +15,24 @@ import {
   AssessmentType,
   KnowledgePointScore,
 } from './assessment.service';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
+import { RbacGuard } from '../../guards/rbac.guard';
+import { Roles } from '../../guards/rbac.decorator';
+import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 
 /**
  * AssessmentController — V14 测评/考试 HTTP 暴露 BE-V14-1
  * 路由前缀：/api/assessments
+ *
+ * Sprint B (2026-05-11) RBAC：
+ *   - 写操作（create / record / publish / close）: teacher / admin / boss
+ *   - 读操作（list*）: teacher / academic / academic_admin / admin / boss
+ *   - 老 mock 端点（无 tenantSchema 的 in-memory 版本）不上 RBAC（仅测试用）
+ *
+ * Sprint B (2026-05-11) 深度防御：
+ *   - class-level @UseGuards(TenantScopeGuard) — 兜底所有 /db endpoint 跨租户校验
  */
+@UseGuards(TenantScopeGuard)
 @Controller('assessments')
 export class AssessmentController {
   constructor(private readonly service: AssessmentService) {}
@@ -107,6 +129,9 @@ export class AssessmentController {
   // ================ /db 真存盘版 ================
 
   @Post('db')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.CREATED)
   async createInDb(
     @Body()
@@ -129,6 +154,9 @@ export class AssessmentController {
   }
 
   @Post('db/:id/results')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.CREATED)
   async recordResultInDb(
     @Param('id') assessmentId: string,
@@ -148,6 +176,9 @@ export class AssessmentController {
   }
 
   @Post('db/:id/publish')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async publishInDb(
     @Param('id') id: string,
@@ -157,6 +188,9 @@ export class AssessmentController {
   }
 
   @Post('db/:id/close')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async closeInDb(
     @Param('id') id: string,
@@ -165,7 +199,22 @@ export class AssessmentController {
     return this.service.closeAssessmentInDb(id, body.tenantSchema);
   }
 
+  /**
+   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
+   *   - teacher / academic / academic_admin / admin / boss / sales / sales_manager / sales_director
+   */
   @Post('db/:id/results/list')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles(
+    'teacher',
+    'academic',
+    'academic_admin',
+    'admin',
+    'boss',
+    'sales',
+    'sales_manager',
+    'sales_director',
+  )
   @HttpCode(HttpStatus.OK)
   async listResultsByAssessmentInDb(
     @Param('id') assessmentId: string,
@@ -174,7 +223,21 @@ export class AssessmentController {
     return this.service.listResultsByAssessmentInDb(assessmentId, body.tenantSchema);
   }
 
+  /**
+   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
+   */
   @Post('db/teachers/:teacherId/list')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles(
+    'teacher',
+    'academic',
+    'academic_admin',
+    'admin',
+    'boss',
+    'sales',
+    'sales_manager',
+    'sales_director',
+  )
   @HttpCode(HttpStatus.OK)
   async listByTeacherInDb(
     @Param('teacherId') teacherId: string,
@@ -183,7 +246,22 @@ export class AssessmentController {
     return this.service.listAssessmentsByTeacherInDb(teacherId, body.tenantSchema);
   }
 
+  /**
+   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
+   *   - 注：家长 c 端不走此 endpoint，走专门 c 端 path（待 Sprint D 拆分）
+   */
   @Post('db/students/:studentId/results')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles(
+    'teacher',
+    'academic',
+    'academic_admin',
+    'admin',
+    'boss',
+    'sales',
+    'sales_manager',
+    'sales_director',
+  )
   @HttpCode(HttpStatus.OK)
   async listResultsByStudentInDb(
     @Param('studentId') studentId: string,

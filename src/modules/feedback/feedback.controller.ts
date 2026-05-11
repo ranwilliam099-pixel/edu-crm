@@ -7,9 +7,11 @@ import {
   Req,
   HttpCode,
   HttpStatus,
+  Optional,
   UseGuards,
   UseInterceptors,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   LessonFeedbackService,
@@ -36,7 +38,8 @@ import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
-import { ActorRole } from '../db/audit-log.repository';
+import { ActorRole, AuditLogRepository } from '../db/audit-log.repository';
+import { TeacherRepository } from '../db/teacher.repository';
 
 /**
  * FeedbackController — V9 教学反馈 + 课消 + 月报 HTTP 暴露 BE-V9-1/2/3
@@ -46,14 +49,28 @@ import { ActorRole } from '../db/audit-log.repository';
  *   - /api/course-consumptions
  *   - /api/monthly-reports
  *
+ * Sprint B (2026-05-11) 深度防御：
+ *   - class-level @UseGuards(TenantScopeGuard) — 兜底所有 /db endpoint 跨租户校验
+ *   - method-level @UseGuards(TenantScopeGuard, RbacGuard) 仍保留（不重复执行，NestJS 已去重）
+ *   - 注：parent c 端走 isParentDbPath 分流，middleware 注入 parent 用户后 guard 也能正确跑（tenantId 来自 parent JWT）
+ *
  * USER-AUTH(2026-05-02): PD §4 + P6 24h 必填 + P7 月报自动
  */
+@UseGuards(TenantScopeGuard)
 @Controller()
 export class FeedbackController {
   constructor(
     private readonly feedback: LessonFeedbackService,
     private readonly consumption: CourseConsumptionService,
     private readonly report: MonthlyReportService,
+    // Sprint B (2026-05-11): self-check 需要把 req.user.sub 映射回 teachers.user_id
+    //   - teacher role JWT 的 sub = 用户表 users.id（V32 teachers.user_id 引用此字段）
+    //   - 用此 repo 反查老师档案，判定该 user 是否是 report.teacher_id 的真实所有者
+    private readonly teacherRepo: TeacherRepository,
+    // Sprint B (2026-05-11 复审): self-check 失败时写 audit_log
+    //   - @Optional：unit spec 直接 new 时可传 undefined（不破坏现有 spec test）
+    //   - fail-open：audit_log 写失败不阻塞主 ForbiddenException
+    @Optional() private readonly auditLog?: AuditLogRepository,
   ) {}
 
   // ==================== LessonFeedback ====================
@@ -266,7 +283,16 @@ export class FeedbackController {
 
   // ----- LessonFeedback -----
 
+  /**
+   * Sprint B RBAC: teacher / admin / boss 可创建反馈
+   *   - 拍板「教务全只读老师线」→ academic 不在写列表
+   *   - 拍板「家长不能写反馈」→ parent 不在写列表
+   *   - teacher self-check: feedback.teacherId === req.user 反查的 teachers.id
+   */
   @Post('db/lesson-feedbacks')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.CREATED)
   async submitFeedbackInDb(
     @Body()
@@ -301,7 +327,27 @@ export class FeedbackController {
     );
   }
 
+  /**
+   * Sprint B RBAC (2026-05-11 复审补): 读反馈
+   *   - 老师 ✅ / 教务（双层）👁 / 销售（自己客户的孩子）👁 / 老板校长 ✅
+   *   - 家长走 c 端独立 endpoint（parent JWT 流），middleware isParentDbPath 已含 lesson-feedbacks
+   *     parent JWT 进入时 req.user.role='parent'，RbacGuard 不在 @Roles 列表 → 拒绝
+   *     但 isParentDbPath 分流前已用 requireParentDbUser 校验，parent 实际访问的是同 controller 但走 parent 视角
+   *     ⚠ 风险：parent role 不在 @Roles → RbacGuard 拦截 parent → 路由失效
+   *     → 解决：parent 走独立 controller 路径（c 端独立 endpoint）；本 endpoint 仅 B 端 role 访问
+   */
   @Post('db/lesson-feedbacks/:id/find')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles(
+    'teacher',
+    'academic',
+    'academic_admin',
+    'admin',
+    'boss',
+    'sales',
+    'sales_manager',
+    'sales_director',
+  )
   @HttpCode(HttpStatus.OK)
   async findFeedbackInDb(
     @Param('id') id: string,
@@ -311,6 +357,17 @@ export class FeedbackController {
   }
 
   @Post('db/students/:studentId/feedbacks')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles(
+    'teacher',
+    'academic',
+    'academic_admin',
+    'admin',
+    'boss',
+    'sales',
+    'sales_manager',
+    'sales_director',
+  )
   @HttpCode(HttpStatus.OK)
   async listFeedbacksByStudentInDb(
     @Param('studentId') studentId: string,
@@ -322,7 +379,13 @@ export class FeedbackController {
     });
   }
 
+  /**
+   * Sprint B RBAC: 24h 内改反馈（老师 / admin / boss；教务只读不能改）
+   */
   @Post('db/lesson-feedbacks/:id/update')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async updateFeedbackInDb(
     @Param('id') id: string,
@@ -358,6 +421,11 @@ export class FeedbackController {
     );
   }
 
+  /**
+   * Sprint B: parent-read 由家长 c 端打"已读"，但 endpoint 仍可被 admin / boss 调（运营回放）
+   *   - 走 middleware isParentDbPath 分支（/api/db/lesson-feedbacks/ 前缀），parent JWT 也能调
+   *   - RbacGuard 这道闸默认放行无 @Roles 路由（含 parent role 走 parent JWT 流时 req.user.role='parent'）
+   */
   @Post('db/lesson-feedbacks/:id/parent-read')
   @HttpCode(HttpStatus.OK)
   async markParentReadFeedbackInDb(
@@ -369,7 +437,15 @@ export class FeedbackController {
 
   // ----- CourseConsumption -----
 
+  /**
+   * Sprint B RBAC: 创建课消 — schedule.complete 时由 admin / boss / teacher 触发
+   *   - 拍板「教务全只读老师线」→ academic 不在写列表
+   *   - cron 调 service 直接绕过 controller，不影响
+   */
   @Post('db/course-consumptions')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.CREATED)
   async createConsumptionInDb(
     @Body()
@@ -390,7 +466,15 @@ export class FeedbackController {
     );
   }
 
+  /**
+   * Sprint B RBAC (2026-05-11 复审补): cron / admin / boss 调用
+   *   - 反馈提交时由 lesson-feedback 内联调用 → admin / boss 可重放
+   *   - teacher 不能直接调（schedule.complete 时反馈服务自动 confirm）
+   */
   @Post('db/course-consumptions/:id/confirm')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async confirmConsumptionInDb(
     @Param('id') id: string,
@@ -399,7 +483,14 @@ export class FeedbackController {
     return this.consumption.confirmByFeedbackInDb(id, body.feedbackId, body.tenantSchema);
   }
 
+  /**
+   * Sprint B RBAC (2026-05-11 复审补): cron / admin / boss 调用
+   *   - 通常 CronJobsService 定时调，HTTP endpoint 仅运营回放
+   */
   @Post('db/course-consumptions/scan-and-lock')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async scanAndLockInDb(
     @Body() body: { tenantSchema: string; nowMs?: number },
@@ -410,7 +501,14 @@ export class FeedbackController {
     );
   }
 
+  /**
+   * Sprint B RBAC (2026-05-11 复审补): teacher / admin / boss
+   *   - 老师超期补填时恢复（self-check 在 service 层）
+   */
   @Post('db/course-consumptions/:id/unlock-late')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async unlockLateInDb(
     @Param('id') id: string,
@@ -419,7 +517,13 @@ export class FeedbackController {
     return this.consumption.unlockByLateFeedbackInDb(id, body.feedbackId, body.tenantSchema);
   }
 
+  /**
+   * Sprint B RBAC (2026-05-11 复审补): admin / boss
+   */
   @Post('db/course-consumptions/:id/cancel')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async cancelConsumptionInDb(
     @Param('id') id: string,
@@ -436,8 +540,15 @@ export class FeedbackController {
   /**
    * home-teacher 待办 banner 聚合：老师待点评课消数 + 最早到期时间
    * UI 据 earliestDueAt 显示「剩 X 小时锁课消」或「已超期」
+   *
+   * Sprint B RBAC (2026-05-11 复审补): teacher / academic / academic_admin / admin / boss
+   *   - teacher 自己看待办（home banner）
+   *   - 教务双层只读（看全 campus 老师待办）
+   *   - admin / boss 全权
    */
   @Post('db/teachers/:teacherId/pending-feedback-summary')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async teacherPendingFeedbackSummaryInDb(
     @Param('teacherId') teacherId: string,
@@ -451,7 +562,16 @@ export class FeedbackController {
 
   // ----- MonthlyReport -----
 
+  /**
+   * Sprint B RBAC: 月报生成 — cron / admin / boss 调用
+   *   - cron 走 CronJobsService.generateMonthlyReports 直接调 service，绕过 controller
+   *   - 此 HTTP endpoint 仅给运营 / boss 重跑用，所以 admin / boss
+   *   - parent 不应能调（V36 漏洞修复配套：middleware isParentDbPath /generate 已排除）
+   */
   @Post('db/monthly-reports/generate')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.CREATED)
   async generateReportInDb(
     @Body()
@@ -473,12 +593,11 @@ export class FeedbackController {
    * 兼容：body.audience 可选；audience='parent' → 转走 finalize-parent 路径（合并接口）
    *      但官方推荐：c 端用专门的 POST /db/monthly-reports/:id/finalize-parent
    *
-   * RBAC (2026-05-11 修复): @Roles('admin','boss') 跟 finalize-parent 一致
-   *   - 临时只放行 admin/boss (TenantRole 枚举暂未含 'teacher'/'academic', Sprint B 债)
-   *   - TODO Sprint B: 加 'teacher' 到 TenantRole 枚举后, @Roles 增加 'teacher'
-   *     并在 service 层加 self-check (req.user.sub === report.teacher_id),
-   *     老师只能 finalize 自己写的报告
-   *   - audit_log 仍记 actorRole='teacher' (V33 actorRole 已枚举 teacher), 兜底审计链
+   * RBAC (Sprint B 2026-05-11): TenantRole 加 'teacher' 后放行 teacher，
+   *   并在 controller 层做 self-check（teacher 只能 finalize 自己学生的报告）
+   *   - admin / boss：任意 teacher_id 的月报
+   *   - teacher：req.user.sub 必须 = teachers.user_id WHERE teachers.id = report.teacher_id
+   *   - parent / sales / academic 等：RbacGuard 拒绝（不在 @Roles 列表）
    *
    * 漏洞修复 (A01-CRIT 配套):
    *   旧实现仅 @UseGuards(TenantScopeGuard) 无 @Roles, parent role JWT 可调此 endpoint
@@ -486,7 +605,7 @@ export class FeedbackController {
    */
   @Post('db/monthly-reports/:id/finalize')
   @UseGuards(TenantScopeGuard, RbacGuard)
-  @Roles('admin', 'boss')
+  @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async finalizeReportInDb(
@@ -507,6 +626,12 @@ export class FeedbackController {
     @Req() req: AuthenticatedRequest,
   ): Promise<MonthlyReport> {
     const auditCtx = this.buildFinalizeAuditCtx(req);
+
+    // Sprint B self-check: teacher role 只能 finalize 自己学生的报告
+    //   - 先 SELECT 出 report 拿 teacher_id，再核对 teachers.user_id 是否 = req.user.sub
+    //   - 如果 report 不存在 → repo 层会抛 NotFoundException；先做 self-check 才能拿到 teacher_id
+    //   - admin / boss 跳过 self-check（拍板：boss 是校长，admin 是老板，都能改全 campus 数据）
+    await this.assertTeacherSelfOrPrivileged(req, body.tenantSchema, id);
 
     // V36 audience='parent' 合并路径 → 转走 finalize-parent
     if (body.audience === 'parent') {
@@ -544,8 +669,10 @@ export class FeedbackController {
    * 与 POST /db/monthly-reports/:id/finalize { audience: 'parent' } 等价
    * 但更清晰地把 parent 版分离，audit_log action 锁定 'monthly-report.finalize-parent'
    *
-   * RBAC: teacher / academic / academic_admin / admin / boss
-   *      （家长 c 端不应能补写自己的"家长版评语"，所以 parent role 不在允许列表）
+   * RBAC (Sprint B 2026-05-11 复审): teacher / admin / boss
+   *   - 注释与代码一致 — academic / academic_admin 不能 finalize（拍板「教务全只读老师线」）
+   *   - 家长 c 端不应能补写自己的"家长版评语"，所以 parent role 不在允许列表
+   *   - teacher self-check: 只能补自己学生的家长版
    *
    * Body:
    *   - parentBlessing required
@@ -557,7 +684,7 @@ export class FeedbackController {
    */
   @Post('db/monthly-reports/:id/finalize-parent')
   @UseGuards(TenantScopeGuard, RbacGuard)
-  @Roles('admin', 'boss')
+  @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async finalizeReportParentInDb(
@@ -572,6 +699,9 @@ export class FeedbackController {
     },
     @Req() req: AuthenticatedRequest,
   ): Promise<MonthlyReport> {
+    // Sprint B self-check: teacher role 只能补写自己学生的家长版评语
+    await this.assertTeacherSelfOrPrivileged(req, body.tenantSchema, id);
+
     const auditCtx = this.buildFinalizeAuditCtx(req);
     const payload: FinalizeParentPayload = {
       parentBlessing: body.parentBlessing,
@@ -668,18 +798,28 @@ export class FeedbackController {
 
   /**
    * 2026-05-11 修复 (P1): 添加 TenantScopeGuard + RbacGuard
-   *   - 该 endpoint 用于 admin/boss 看老师 finalize 待办列表 (校长 / 老板视角)
-   *   - 暂不含 'teacher' (TenantRole 枚举未含, Sprint B 加后, teacher 应自动按 teacherId 过滤)
+   *   - 该 endpoint 用于 admin/boss/academic 看老师 finalize 待办列表 (校长 / 老板 / 教务 视角)
+   *   - Sprint B 扩展：teacher / academic / academic_admin 也允许（拍板「教务全只读老师线」+ 老师看自己）
+   *     - teacher: 强制按 teacherId=req.user 映射的 teachers.id 过滤
+   *     - academic / academic_admin / admin / boss: 任意 teacherId 或不传
    *   - 添加 IdempotencyInterceptor 跟其他 finalize 系列对齐 (虽然这是读请求, 但走 POST + body 模式)
    */
   @Post('db/monthly-reports/pending-finalize')
   @UseGuards(TenantScopeGuard, RbacGuard)
-  @Roles('admin', 'boss')
+  @Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async listPendingFinalizeInDb(
     @Body() body: { tenantSchema: string; teacherId?: string },
+    @Req() req: AuthenticatedRequest,
   ): Promise<MonthlyReport[]> {
-    return this.report.listPendingFinalizeInDb(body.tenantSchema, body.teacherId);
+    // Sprint B: teacher role 强制按自己 teacher_id 过滤（防越权看他人待办列表）
+    let effectiveTeacherId = body.teacherId;
+    if (req.user?.role === 'teacher') {
+      const ownTeacherId = await this.resolveOwnTeacherId(req, body.tenantSchema);
+      // 即便 body 传了 teacherId，teacher role 也强制覆盖为自己 — UX 友好（前端不必判断 role）
+      effectiveTeacherId = ownTeacherId;
+    }
+    return this.report.listPendingFinalizeInDb(body.tenantSchema, effectiveTeacherId);
   }
 
   /**
@@ -699,6 +839,95 @@ export class FeedbackController {
     @Body() body: { tenantSchema: string },
   ): Promise<MonthlyReport> {
     return this.report.markParentReadInDb(id, body.tenantSchema);
+  }
+
+  // -- Sprint B (2026-05-11) self-check helpers --
+
+  /**
+   * 把 req.user.sub（B 端用户表 users.id）映射回 teachers.id
+   *
+   * 来源：teachers.user_id 在 V7 schema 中作为软链，记录该 teacher 档案绑定的用户账号
+   *
+   * 用法：
+   *   - finalize / finalize-parent self-check：拿到 ownTeacherId 后核对 report.teacherId
+   *   - pending-finalize 强制按 teacher_id 过滤：返回值替换 body.teacherId
+   *
+   * @throws ForbiddenException 找不到对应 teachers 行（用户表里有，但 teachers 表里未绑定）
+   */
+  private async resolveOwnTeacherId(
+    req: AuthenticatedRequest,
+    tenantSchema: string,
+  ): Promise<string> {
+    const userId = req.user?.sub;
+    if (!userId) {
+      throw new ForbiddenException('teacher self-check: req.user.sub missing');
+    }
+    const teacher = await this.teacherRepo.findByUserId(tenantSchema, userId);
+    if (!teacher) {
+      throw new ForbiddenException(
+        `teacher self-check: no teachers row bound to user ${userId} ` +
+          `(teachers.user_id missing — 拒绝写月报/反馈)`,
+      );
+    }
+    return teacher.id;
+  }
+
+  /**
+   * finalize / finalize-parent self-check:
+   *   - teacher role: 必须 = teachers.user_id ↔ report.teacher_id
+   *   - admin / boss: 跳过 self-check（拍板「老板校长 ✅ 全权」）
+   *   - 其他 role: RbacGuard 已挡，此处不会触达
+   *
+   * 流程：
+   *   1. SELECT report by id → 拿 teacher_id（若不存在抛 NotFound — repo 后续 finalize 会兜底）
+   *   2. 若 req.user.role === 'teacher': resolveOwnTeacherId 反查再比对
+   *
+   * Sprint B (2026-05-11 复审): self-check 失败前写 audit_log
+   *   - try-catch 包裹（audit fail-open，不阻塞主 ForbiddenException）
+   *   - action='teacher.self-check-failed'
+   *
+   * @throws ForbiddenException teacher role 但报告 teacher_id !== 自己 teachers.id
+   */
+  private async assertTeacherSelfOrPrivileged(
+    req: AuthenticatedRequest,
+    tenantSchema: string,
+    reportId: string,
+  ): Promise<void> {
+    if (req.user?.role !== 'teacher') {
+      // admin / boss 走特权路径，无需 self-check
+      return;
+    }
+    // teacher role: 先反查 report 拿 teacher_id
+    //   - 用 audience='teacher' 拉完整字段（含 teacherId）
+    //   - finalize 操作语义就是 teacher 视角，audience='teacher' 是天然搭档
+    const report = await this.report.findInDb(reportId, tenantSchema, 'teacher');
+    const ownTeacherId = await this.resolveOwnTeacherId(req, tenantSchema);
+    if (report.teacherId !== ownTeacherId) {
+      // Sprint B 复审：self-check 失败写 audit_log（fail-open）
+      try {
+        await this.auditLog?.log(tenantSchema, {
+          actorUserId: req.user?.sub ?? null,
+          actorRole: 'teacher',
+          action: 'teacher.self-check-failed',
+          targetType: 'monthly_report',
+          targetId: reportId,
+          before: null,
+          after: {
+            attempted_report_teacher_id: report.teacherId,
+            own_teacher_id: ownTeacherId,
+          },
+          ip: req.ip ?? null,
+          userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+          requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+        });
+      } catch {
+        // audit fail-open — 不阻塞主 ForbiddenException
+      }
+      throw new ForbiddenException(
+        `teacher self-check: report.teacher_id=${report.teacherId} ` +
+          `but req.user maps to teachers.id=${ownTeacherId} — 拒绝改他人月报`,
+      );
+    }
   }
 
   // -- helpers: JSON Date 反序列化 --

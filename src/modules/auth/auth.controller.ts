@@ -54,6 +54,9 @@ export class AuthController {
     if (!body.tenantId || body.tenantId.length !== 32) {
       throw new BadRequestException('tenantId must be 32-char ULID');
     }
+    // Sprint B (2026-05-11): TenantRole 加 teacher / academic / academic_admin
+    //   - teacher / academic / academic_admin 均为单校 role，campusId 必填
+    //   - 校验逻辑通过下方 isCrossCampusRole 分支自动覆盖（fall-through 到 single-campus 分支）
     const validRoles = [
       'sales',
       'sales_manager',
@@ -63,6 +66,9 @@ export class AuthController {
       'boss',
       'admin',
       'hr',
+      'teacher',
+      'academic',
+      'academic_admin',
     ];
     if (!validRoles.includes(body.role)) {
       throw new BadRequestException(`role must be one of ${validRoles.join('/')}`);

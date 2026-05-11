@@ -103,6 +103,33 @@ export class TeacherRepository {
   }
 
   /**
+   * Sprint B (2026-05-11): 按 user_id 反查老师档案
+   *
+   * 用途：
+   *   - feedback / homework / assessment / learning-profile 等老师线 endpoint 的 self-check
+   *   - JWT.sub（= users.id）→ teachers.user_id → teachers.id
+   *
+   * 规则：
+   *   - user_id 在 schema 中 nullable（V7），未绑定老师档案的 user 查不到
+   *   - 同一 user_id 应唯一绑定一个 teacher 行；上层不应假设多行（teachers.user_id 应建唯一索引；
+   *     如未建则该方法返回第一条，多绑情况记 WARN）
+   *
+   * 注意：本方法不解密 phone（self-check 只看 id 不看敏感字段）
+   *   — 但 mapRow 仍走解密链路（V34 fail-open），所以无副作用
+   */
+  async findByUserId(tenantSchema: string, userId: string): Promise<Teacher | null> {
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
+       FROM teachers WHERE user_id = $1
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [userId],
+    );
+    return rows.length === 0 ? null : this.mapRow(rows[0]);
+  }
+
+  /**
    * 列表（分页）
    */
   async list(
