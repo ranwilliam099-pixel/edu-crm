@@ -93,7 +93,7 @@ describe('端到端业务流 e2e — 用户 2026-05-02「测试呢」', () => {
           phone: '13800001111',
           userId: TEACHER_USER_ID,
           subjects: ['数学'],
-          hourlyRateYuan: 200,
+          hourlyPriceYuan: 200,
           operator: OPERATOR_ID,
         });
       expect(res.status).toBe(403);
@@ -114,7 +114,7 @@ describe('端到端业务流 e2e — 用户 2026-05-02「测试呢」', () => {
           phone: '13800001111',
           userId: TEACHER_USER_ID,
           subjects: ['数学'],
-          hourlyRateYuan: 200,
+          hourlyPriceYuan: 200,
           operator: OPERATOR_ID,
         });
       expect(res.status).toBe(201);

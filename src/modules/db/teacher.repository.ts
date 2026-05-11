@@ -20,7 +20,7 @@ export interface TeacherArchiveResult {
  *
  * tenant schema 内的 teachers 表（V7 已建 + V34 加 phone_encrypted）：
  *   id / campus_id / name / phone / phone_encrypted (V34) / user_id / subjects(JSONB)
- *   bio / hourly_rate_yuan / status / created_at / updated_at / created_by / updated_by
+ *   bio / hourly_price_yuan (V39 RENAMED from hourly_rate_yuan) / status / created_at / updated_at / created_by / updated_by
  *
  * V34 双写双读模式（A02-1，2026-05-11）：
  *   - INSERT/UPDATE：phone 明文列 + phone_encrypted BYTEA 列同时写
@@ -54,9 +54,9 @@ export class TeacherRepository {
     const sql = `
       INSERT INTO teachers (
         id, campus_id, name, phone, phone_encrypted, user_id, subjects,
-        hourly_rate_yuan, status, created_by, updated_by
+        hourly_price_yuan, status, created_by, updated_by
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status
+      RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
     `;
     const params = [
       teacher.id,
@@ -66,7 +66,7 @@ export class TeacherRepository {
       phoneEncrypted,
       teacher.userId || null,
       JSON.stringify(teacher.subjects || []),
-      teacher.hourlyRateYuan ?? null,
+      teacher.hourlyPriceYuan ?? null,
       teacher.status,
       operator,
       operator,
@@ -81,7 +81,7 @@ export class TeacherRepository {
   async listActiveInTenant(tenantSchema: string): Promise<Teacher[]> {
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status
+      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
        FROM teachers
        WHERE status = '在职'
        ORDER BY created_at DESC`,
@@ -95,7 +95,7 @@ export class TeacherRepository {
   async findById(tenantSchema: string, id: string): Promise<Teacher | null> {
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status
+      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
        FROM teachers WHERE id = $1`,
       [id],
     );
@@ -113,7 +113,7 @@ export class TeacherRepository {
     const offset = options.offset ?? 0;
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status
+      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
        FROM teachers
        ORDER BY created_at DESC
        LIMIT $1 OFFSET $2`,
@@ -138,7 +138,7 @@ export class TeacherRepository {
       `UPDATE teachers
        SET status = $1, updated_by = $2, updated_at = NOW()
        WHERE id = $3
-       RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status`,
+       RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status`,
       [newStatus, operator, id],
     );
     if (rows.length === 0) {
@@ -208,7 +208,7 @@ export class TeacherRepository {
           `UPDATE teachers
               SET status = '归档', updated_by = $2, updated_at = NOW()
             WHERE id = $1 AND status <> '归档'
-          RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status`,
+          RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status`,
           [teacherId, operator],
         );
         if (teacherRows.rowCount === 0) {
@@ -298,7 +298,7 @@ export class TeacherRepository {
       phone: this.decryptPhone(row.id, row.phone_encrypted, row.phone),
       userId: row.user_id || undefined,
       subjects: typeof row.subjects === 'string' ? JSON.parse(row.subjects) : row.subjects || [],
-      hourlyRateYuan: row.hourly_rate_yuan !== null ? Number(row.hourly_rate_yuan) : undefined,
+      hourlyPriceYuan: row.hourly_price_yuan !== null ? Number(row.hourly_price_yuan) : undefined,
       status: row.status,
     };
   }

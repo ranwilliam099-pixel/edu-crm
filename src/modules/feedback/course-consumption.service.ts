@@ -6,7 +6,7 @@ import { CourseConsumptionRepository } from '../db/course-consumption.repository
  *
  * 来源：
  *   - 《PD设计稿-排课-教学反馈-家长订阅-V1-2026-05-02.md》§4.2
- *   - PD 硬规则 P6（24h 必填 → 课消锁定 → 老师工资不算）
+ *   - PD 硬规则 P6（24h 必填 → 课消锁定 → 课消金额暂不计入机构账面；V37/V38 后薪资已下线）
  */
 export type ConsumptionStatus = 'pending_feedback' | 'confirmed' | 'locked' | 'cancelled';
 
@@ -34,7 +34,7 @@ export class CourseConsumptionService {
    * schedule.completed 时为每个 present/late 学员创建一条 course_consumptions
    *
    * @param scheduleEndAt 排课结束时间（用于计算 feedback_due_at = end_at + 24h）
-   * @param amountYuan 课时单价（来自 teacher.hourly_rate_yuan × duration_hour）
+   * @param amountYuan 课消金额（来自 teacher.hourly_price_yuan × duration_hour；V39 列已 RENAME from hourly_rate_yuan）
    */
   createConsumption(input: {
     id: string;
@@ -61,7 +61,7 @@ export class CourseConsumptionService {
   }
 
   /**
-   * 反馈提交时把课消标记为 confirmed（老师工资计入）
+   * 反馈提交时把课消标记为 confirmed（课消金额计入机构账面，V37/V38 后薪资业务已下线，仅留课消金额聚合）
    */
   confirmByFeedback(
     consumption: CourseConsumption,
@@ -81,7 +81,7 @@ export class CourseConsumptionService {
   }
 
   /**
-   * cron 每 10 分钟扫一次：超期未填反馈 → status=locked（老师工资暂不算）
+   * cron 每 10 分钟扫一次：超期未填反馈 → status=locked（课消金额暂不计入机构账面）
    *
    * @returns 应被锁定的 consumption ID 列表（外部更新 DB）
    */
@@ -102,7 +102,7 @@ export class CourseConsumptionService {
   }
 
   /**
-   * 老师超期补填反馈 → 从 locked 恢复 confirmed（下个工资周期补发）
+   * 老师超期补填反馈 → 从 locked 恢复 confirmed（课消金额恢复计入机构账面）
    */
   unlockByLateFeedback(
     consumption: CourseConsumption,

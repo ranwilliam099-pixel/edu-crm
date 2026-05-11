@@ -26,7 +26,8 @@ export interface Teacher {
   userId?: string;
   subjects: ReadonlyArray<string>;
   bio?: string;
-  hourlyRateYuan?: number;
+  /** 课时单价（机构对老师的定价，元） — V39 renamed from hourlyRateYuan */
+  hourlyPriceYuan?: number;
   status: TeacherStatus;
 }
 
@@ -58,8 +59,8 @@ export class TeacherService {
     if (dto.userId !== undefined && dto.userId.length !== 32) {
       throw new BadRequestException('userId (if provided) must be 32-char ULID');
     }
-    if (dto.hourlyRateYuan !== undefined && dto.hourlyRateYuan < 0) {
-      throw new BadRequestException('hourlyRateYuan must be >= 0');
+    if (dto.hourlyPriceYuan !== undefined && dto.hourlyPriceYuan < 0) {
+      throw new BadRequestException('hourlyPriceYuan must be >= 0');
     }
     if (!dto.operator || dto.operator.length !== 32) {
       throw new BadRequestException('operator must be 32-char ULID');
@@ -82,7 +83,7 @@ export class TeacherService {
       userId: dto.userId,
       subjects: dto.subjects ?? [],
       bio: dto.bio,
-      hourlyRateYuan: dto.hourlyRateYuan,
+      hourlyPriceYuan: dto.hourlyPriceYuan,
       status,
     };
   }

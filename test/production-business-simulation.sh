@@ -91,16 +91,16 @@ T_USER_WANG=$(U "TUSRWANG")
 T_USER_LI=$(U "TUSRLI01")
 OPERATOR=$HR_ID
 
-S=$(post /teachers "{\"id\":\"$T_WANG\",\"campusId\":\"$CAMPUS_CY\",\"name\":\"王老师\",\"phone\":\"13800010001\",\"userId\":\"$T_USER_WANG\",\"subjects\":[\"数学\",\"物理\"],\"hourlyRateYuan\":200,\"operator\":\"$OPERATOR\"}" "$HR_TOKEN")
+S=$(post /teachers "{\"id\":\"$T_WANG\",\"campusId\":\"$CAMPUS_CY\",\"name\":\"王老师\",\"phone\":\"13800010001\",\"userId\":\"$T_USER_WANG\",\"subjects\":[\"数学\",\"物理\"],\"hourlyPriceYuan\":200,\"operator\":\"$OPERATOR\"}" "$HR_TOKEN")
 [ "$S" = "201" ] && echo "  ✓ 王老师 (数学/物理, ¥200/课时, 全职可登录)" || echo "  ✗ 王老师 HTTP $S → $(body | head -c 80)"
 
-S=$(post /teachers "{\"id\":\"$T_LI\",\"campusId\":\"$CAMPUS_CY\",\"name\":\"李老师\",\"phone\":\"13800010002\",\"userId\":\"$T_USER_LI\",\"subjects\":[\"英语\"],\"hourlyRateYuan\":180,\"operator\":\"$OPERATOR\"}" "$HR_TOKEN")
+S=$(post /teachers "{\"id\":\"$T_LI\",\"campusId\":\"$CAMPUS_CY\",\"name\":\"李老师\",\"phone\":\"13800010002\",\"userId\":\"$T_USER_LI\",\"subjects\":[\"英语\"],\"hourlyPriceYuan\":180,\"operator\":\"$OPERATOR\"}" "$HR_TOKEN")
 [ "$S" = "201" ] && echo "  ✓ 李老师 (英语, ¥180/课时, 全职可登录)"
 
-S=$(post /teachers "{\"id\":\"$T_ZHANG\",\"campusId\":\"$CAMPUS_CY\",\"name\":\"张老师(兼职)\",\"phone\":\"13800010003\",\"subjects\":[\"物理\"],\"hourlyRateYuan\":150,\"operator\":\"$OPERATOR\"}" "$HR_TOKEN")
+S=$(post /teachers "{\"id\":\"$T_ZHANG\",\"campusId\":\"$CAMPUS_CY\",\"name\":\"张老师(兼职)\",\"phone\":\"13800010003\",\"subjects\":[\"物理\"],\"hourlyPriceYuan\":150,\"operator\":\"$OPERATOR\"}" "$HR_TOKEN")
 [ "$S" = "201" ] && echo "  ✓ 张老师 (物理, ¥150/课时, 兼职纯档案不登录)"
 
-S=$(post /teachers "{\"id\":\"$T_LIU\",\"campusId\":\"$CAMPUS_HD\",\"name\":\"刘老师(兼职)\",\"subjects\":[\"化学\"],\"hourlyRateYuan\":160,\"operator\":\"$OPERATOR\"}" "$HR_TOKEN")
+S=$(post /teachers "{\"id\":\"$T_LIU\",\"campusId\":\"$CAMPUS_HD\",\"name\":\"刘老师(兼职)\",\"subjects\":[\"化学\"],\"hourlyPriceYuan\":160,\"operator\":\"$OPERATOR\"}" "$HR_TOKEN")
 [ "$S" = "201" ] && echo "  ✓ 刘老师 (化学, ¥160/课时, 兼职纯档案不登录)"
 
 # ============== 4. 学员档案 ==============

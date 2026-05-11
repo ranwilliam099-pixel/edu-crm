@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS teachers (
     user_id          VARCHAR(32)   REFERENCES users(id),                -- 可空（条目 31 #2 部分老师纯档案）
     subjects         JSONB         NOT NULL DEFAULT '[]'::jsonb,        -- 教学科目数组 ["数学","英语"]
     bio              TEXT,
-    hourly_rate_yuan NUMERIC(10,2),                                     -- 课时单价（用于工资计算）
+    hourly_rate_yuan NUMERIC(10,2),                                     -- 课时单价（机构对老师的定价 / V39 已 RENAME 为 hourly_price_yuan）
     status           VARCHAR(16)   NOT NULL DEFAULT '在职'
                      CHECK (status IN ('在职','请假','归档')),
     created_at       TIMESTAMPTZ   NOT NULL DEFAULT NOW(),

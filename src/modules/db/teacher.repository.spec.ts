@@ -47,7 +47,7 @@ describe('TeacherRepository (V28 archive + V34 字段加密双写双读)', () =>
         : MOCK_CIPHER,
     user_id: null,
     subjects: ['数学'],
-    hourly_rate_yuan: 200,
+    hourly_price_yuan: 200,
     status: overrides.status || '在职',
   });
 

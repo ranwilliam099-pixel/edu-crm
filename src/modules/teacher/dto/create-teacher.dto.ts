@@ -34,8 +34,8 @@ export interface CreateTeacherDto {
   /** 教师简介 */
   readonly bio?: string;
 
-  /** 课时单价（元），用于工资计算 */
-  readonly hourlyRateYuan?: number;
+  /** 课时单价（机构对老师的定价，单位元）— V39 renamed from hourlyRateYuan，语义解耦自「工资」 */
+  readonly hourlyPriceYuan?: number;
 
   /** 状态，默认 '在职' */
   readonly status?: TeacherStatus;

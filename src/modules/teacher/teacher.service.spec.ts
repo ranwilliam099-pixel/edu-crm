@@ -34,7 +34,7 @@ describe('TeacherService - V7 BE-V7-1 PD §2 + 用户拍板条目 29/31', () => 
         phone: '13800001111',
         userId: ULID32_U1,
         subjects: ['数学', '物理'],
-        hourlyRateYuan: 200,
+        hourlyPriceYuan: 200,
         operator: ULID32_OP,
       };
       const teacher = service.createTeacher(dto);
@@ -113,9 +113,9 @@ describe('TeacherService - V7 BE-V7-1 PD §2 + 用户拍板条目 29/31', () => 
       ).toThrow(BadRequestException);
     });
 
-    it('hourlyRateYuan 负数 → BadRequestException', () => {
+    it('hourlyPriceYuan 负数 → BadRequestException', () => {
       expect(() =>
-        service.createTeacher({ ...baseDto, hourlyRateYuan: -10 }),
+        service.createTeacher({ ...baseDto, hourlyPriceYuan: -10 }),
       ).toThrow(BadRequestException);
     });
 

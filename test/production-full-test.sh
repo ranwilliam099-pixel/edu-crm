@@ -121,7 +121,7 @@ TEACHER_ID=$(U "TEACHER1")
 TEACHER_USER_ID=$(U "TUSER001")
 OPERATOR=$(U "OPRTR001")
 
-S=$(post /teachers "{\"id\":\"$TEACHER_ID\",\"campusId\":\"$CAMPUS_ID\",\"name\":\"全面测试王老师\",\"phone\":\"13800003333\",\"userId\":\"$TEACHER_USER_ID\",\"subjects\":[\"数学\",\"物理\"],\"hourlyRateYuan\":200,\"operator\":\"$OPERATOR\"}" "$ADMIN_TOKEN")
+S=$(post /teachers "{\"id\":\"$TEACHER_ID\",\"campusId\":\"$CAMPUS_ID\",\"name\":\"全面测试王老师\",\"phone\":\"13800003333\",\"userId\":\"$TEACHER_USER_ID\",\"subjects\":[\"数学\",\"物理\"],\"hourlyPriceYuan\":200,\"operator\":\"$OPERATOR\"}" "$ADMIN_TOKEN")
 chk "4.1 admin 创建教师" 201 "$S" '在职' "$(body)"
 
 S=$(post /teachers "{\"id\":\"$TEACHER_ID\",\"campusId\":\"$CAMPUS_ID\",\"name\":\"x\",\"phone\":\"x\",\"subjects\":[],\"operator\":\"$OPERATOR\"}" "$SALES_TOKEN")

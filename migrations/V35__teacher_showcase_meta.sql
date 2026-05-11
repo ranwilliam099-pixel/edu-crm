@@ -13,7 +13,7 @@
 --
 -- 设计哲学（双轨数据 critical 决策）：
 --   teacher 表（V7，不动）= 系统真实数据
---     - phone / hourly_rate_yuan / status / subjects
+--     - phone / hourly_price_yuan (V39 renamed from hourly_rate_yuan) / status / subjects
 --     - 给 dashboard / 工资 / KPI / 排课资源池用
 --
 --   teacher_showcase_meta 表（V35，本 migration）= 老师可美化数据
