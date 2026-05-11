@@ -85,6 +85,11 @@ import { UploadController } from './upload.controller';
 // ===== V33 审计日志（生产架构 P0 第 1 项）=====
 import { AuditLogRepository } from './audit-log.repository';
 
+// ===== V34 字段加密（生产架构 P0 第 2 项）=====
+// FieldEncryptor 通过 useFactory 注入，构造时读 process.env.ENCRYPTION_KEY
+// 测试环境由 jest.setup.ts 注入 TEST_ENCRYPTION_KEY；生产由 .env 注入真实 key
+import { FieldEncryptor } from '../../common/crypto/field-encryptor';
+
 /**
  * DbModule — 全局持久化基础设施层
  *
@@ -179,6 +184,11 @@ import { AuditLogRepository } from './audit-log.repository';
     CourseProductRepository,
     // V33 审计日志
     AuditLogRepository,
+    // V34 字段加密（A02-1 仅 teacher 落地；A02-2 parent/customer 复用同一 provider）
+    {
+      provide: FieldEncryptor,
+      useFactory: () => new FieldEncryptor(),
+    },
   ],
   exports: [
     PgPoolService,
@@ -213,6 +223,7 @@ import { AuditLogRepository } from './audit-log.repository';
     StudentRepository,
     CourseProductRepository,
     AuditLogRepository,
+    FieldEncryptor,
   ],
 })
 export class DbModule {}

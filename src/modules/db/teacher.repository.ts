@@ -1,6 +1,7 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { PgPoolService, PgRow } from './pg-pool.service';
 import { Teacher } from '../teacher/teacher.service';
+import { FieldEncryptor } from '../../common/crypto/field-encryptor';
 
 /**
  * V28 老师归档结果（注销老师 + 关联学生主带老师转移）
@@ -17,34 +18,52 @@ export interface TeacherArchiveResult {
  *
  * 来源：用户 2026-05-02「做啊」（首个真接 PG 的 Repository）
  *
- * tenant schema 内的 teachers 表（V7 已建）：
- *   id / campus_id / name / phone / user_id / subjects(JSONB)
+ * tenant schema 内的 teachers 表（V7 已建 + V34 加 phone_encrypted）：
+ *   id / campus_id / name / phone / phone_encrypted (V34) / user_id / subjects(JSONB)
  *   bio / hourly_rate_yuan / status / created_at / updated_at / created_by / updated_by
+ *
+ * V34 双写双读模式（A02-1，2026-05-11）：
+ *   - INSERT/UPDATE：phone 明文列 + phone_encrypted BYTEA 列同时写
+ *   - SELECT：优先解密 phone_encrypted；解密失败或为 NULL → fallback 明文 phone
+ *   - 对外接口（Teacher.phone）始终是解密后的明文，前端透明
+ *   - 解密失败 logger.warn，不抛主流程（fail-open）
+ *   - 旧数据（V38 backfill 前 phone_encrypted=NULL）走明文 fallback
+ *   - 灰度完毕 + V38 backfill 全量后，V35+ DROP 明文列
  */
 @Injectable()
 export class TeacherRepository {
-  constructor(private readonly pg: PgPoolService) {}
+  private readonly logger = new Logger(TeacherRepository.name);
+
+  constructor(
+    private readonly pg: PgPoolService,
+    private readonly encryptor: FieldEncryptor,
+  ) {}
 
   /**
    * INSERT 一行 teacher 到 tenant_xxx.teachers
+   *
+   * V34 双写：phone 明文 + phone_encrypted 密文（同事务，保证一致）
    */
   async insert(
     tenantSchema: string,
     teacher: Teacher,
     operator: string,
   ): Promise<Teacher> {
+    const phonePlain = teacher.phone || null;
+    const phoneEncrypted = this.encryptPhone(phonePlain);
     const sql = `
       INSERT INTO teachers (
-        id, campus_id, name, phone, user_id, subjects,
+        id, campus_id, name, phone, phone_encrypted, user_id, subjects,
         hourly_rate_yuan, status, created_by, updated_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING id, campus_id, name, phone, user_id, subjects, hourly_rate_yuan, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status
     `;
     const params = [
       teacher.id,
       teacher.campusId,
       teacher.name,
-      teacher.phone || null,
+      phonePlain,
+      phoneEncrypted,
       teacher.userId || null,
       JSON.stringify(teacher.subjects || []),
       teacher.hourlyRateYuan ?? null,
@@ -62,7 +81,7 @@ export class TeacherRepository {
   async listActiveInTenant(tenantSchema: string): Promise<Teacher[]> {
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, campus_id, name, phone, user_id, subjects, hourly_rate_yuan, status
+      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status
        FROM teachers
        WHERE status = '在职'
        ORDER BY created_at DESC`,
@@ -76,7 +95,7 @@ export class TeacherRepository {
   async findById(tenantSchema: string, id: string): Promise<Teacher | null> {
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, campus_id, name, phone, user_id, subjects, hourly_rate_yuan, status
+      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status
        FROM teachers WHERE id = $1`,
       [id],
     );
@@ -94,7 +113,7 @@ export class TeacherRepository {
     const offset = options.offset ?? 0;
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, campus_id, name, phone, user_id, subjects, hourly_rate_yuan, status
+      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status
        FROM teachers
        ORDER BY created_at DESC
        LIMIT $1 OFFSET $2`,
@@ -105,6 +124,8 @@ export class TeacherRepository {
 
   /**
    * 状态推进（状态机由 Service 校验，本层只 UPDATE）
+   *
+   * V34：状态更新不改 phone，所以无需重新加密；RETURNING 仍读 phone_encrypted 保持解密路径
    */
   async updateStatus(
     tenantSchema: string,
@@ -117,7 +138,7 @@ export class TeacherRepository {
       `UPDATE teachers
        SET status = $1, updated_by = $2, updated_at = NOW()
        WHERE id = $3
-       RETURNING id, campus_id, name, phone, user_id, subjects, hourly_rate_yuan, status`,
+       RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status`,
       [newStatus, operator, id],
     );
     if (rows.length === 0) {
@@ -187,7 +208,7 @@ export class TeacherRepository {
           `UPDATE teachers
               SET status = '归档', updated_by = $2, updated_at = NOW()
             WHERE id = $1 AND status <> '归档'
-          RETURNING id, campus_id, name, phone, user_id, subjects, hourly_rate_yuan, status`,
+          RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_rate_yuan, status`,
           [teacherId, operator],
         );
         if (teacherRows.rowCount === 0) {
@@ -229,12 +250,52 @@ export class TeacherRepository {
   }
 
   // ---- helpers ----
+
+  /**
+   * V34: 加密 phone 明文 → BYTEA Buffer（fail-fast；plaintext null → null）
+   * encrypt 自身不会抛（FieldEncryptor.encrypt 对 null/undefined 返回 null），
+   * 异常仅可能在 ENCRYPTION_KEY 错误时抛构造器，已在 module 启动期挡住
+   */
+  private encryptPhone(plaintext: string | null): Buffer | null {
+    return this.encryptor.encrypt(plaintext);
+  }
+
+  /**
+   * V34: 解密 phone_encrypted → 明文。fallback 路径：
+   *   - phone_encrypted = null/undefined → 返回明文 phone
+   *   - phone_encrypted 解密抛错（key 不匹配 / 数据损坏）→ logger.warn + 返回明文 phone
+   *   - 都没有 → undefined
+   *
+   * 注：PG node-pg 驱动会把 BYTEA 自动转为 Buffer，但部分代码路径（如老 spec mock）
+   * 可能传 null/undefined/string。一律安全处理。
+   */
+  private decryptPhone(
+    rowId: string,
+    encrypted: Buffer | null | undefined,
+    fallbackPlain: string | null | undefined,
+  ): string | undefined {
+    if (encrypted && Buffer.isBuffer(encrypted) && encrypted.length > 0) {
+      try {
+        const decoded = this.encryptor.decrypt(encrypted);
+        if (decoded !== null && decoded !== undefined) {
+          return decoded;
+        }
+      } catch (err) {
+        // V34 fail-open：解密失败不阻塞业务，logger.warn + 走明文 fallback
+        this.logger.warn(
+          `[V34-decrypt-fallback] teacher ${rowId} phone_encrypted decrypt failed: ${(err as Error).message}; using plaintext fallback`,
+        );
+      }
+    }
+    return fallbackPlain || undefined;
+  }
+
   private mapRow(row: PgRow): Teacher {
     return {
       id: row.id,
       campusId: row.campus_id,
       name: row.name,
-      phone: row.phone || undefined,
+      phone: this.decryptPhone(row.id, row.phone_encrypted, row.phone),
       userId: row.user_id || undefined,
       subjects: typeof row.subjects === 'string' ? JSON.parse(row.subjects) : row.subjects || [],
       hourlyRateYuan: row.hourly_rate_yuan !== null ? Number(row.hourly_rate_yuan) : undefined,

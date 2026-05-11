@@ -2,8 +2,9 @@ import { Test } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { TeacherRepository } from './teacher.repository';
 import { PgPoolService } from './pg-pool.service';
+import { FieldEncryptor } from '../../common/crypto/field-encryptor';
 
-describe('TeacherRepository (V28 archive)', () => {
+describe('TeacherRepository (V28 archive + V34 字段加密双写双读)', () => {
   let repo: TeacherRepository;
   let pg: {
     tenantQuery: jest.Mock;
@@ -12,17 +13,38 @@ describe('TeacherRepository (V28 archive)', () => {
     transaction: jest.Mock;
   };
   let txClient: { query: jest.Mock };
+  // V34 mock: 短确定 buffer 便于断言（不需真正加解密）
+  let encryptor: { encrypt: jest.Mock; decrypt: jest.Mock };
+  const MOCK_CIPHER = Buffer.from([0xaa, 0xbb, 0xcc, 0xdd]);
+  const MOCK_PHONE_PLAINTEXT = '13800000000';
 
   const TENANT = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const CAMPUS_A = 'campus_A_00000000000000000000A001';
   const TEACHER_A = 'teacherA00000000000000000000A001';
   const TEACHER_B = 'teacherB00000000000000000000A002';
 
-  const teacherRow = (overrides: Partial<{ id: string; status: string; campus_id: string; name: string }> = {}) => ({
+  /**
+   * V34: 默认 row 含 phone_encrypted = MOCK_CIPHER（双轨已就位的常态行）。
+   * 测试可通过 overrides 覆写 phone / phone_encrypted 验证不同 fallback 路径。
+   */
+  const teacherRow = (
+    overrides: Partial<{
+      id: string;
+      status: string;
+      campus_id: string;
+      name: string;
+      phone: string | null;
+      phone_encrypted: Buffer | null;
+    }> = {},
+  ) => ({
     id: overrides.id || TEACHER_A,
     campus_id: overrides.campus_id || CAMPUS_A,
     name: overrides.name || '王老师',
-    phone: '13800000000',
+    phone: overrides.phone !== undefined ? overrides.phone : MOCK_PHONE_PLAINTEXT,
+    phone_encrypted:
+      overrides.phone_encrypted !== undefined
+        ? overrides.phone_encrypted
+        : MOCK_CIPHER,
     user_id: null,
     subjects: ['数学'],
     hourly_rate_yuan: 200,
@@ -37,8 +59,18 @@ describe('TeacherRepository (V28 archive)', () => {
       withClient: jest.fn(),
       transaction: jest.fn().mockImplementation(async (fn: any) => fn(txClient)),
     };
+    encryptor = {
+      encrypt: jest.fn((plain: string | null | undefined) =>
+        plain === null || plain === undefined ? null : MOCK_CIPHER,
+      ),
+      decrypt: jest.fn(() => MOCK_PHONE_PLAINTEXT),
+    };
     const m = await Test.createTestingModule({
-      providers: [TeacherRepository, { provide: PgPoolService, useValue: pg }],
+      providers: [
+        TeacherRepository,
+        { provide: PgPoolService, useValue: pg },
+        { provide: FieldEncryptor, useValue: encryptor },
+      ],
     }).compile();
     repo = m.get(TeacherRepository);
   });
@@ -160,6 +192,122 @@ describe('TeacherRepository (V28 archive)', () => {
       await expect(
         repo.archive(TENANT, TEACHER_A, 'sales01', { role: 'sales', campusId: CAMPUS_A }),
       ).rejects.toThrow(/sales.*无老师归档权限/);
+    });
+  });
+
+  // =====================================================================
+  // V34 字段加密双写双读 — A02-1
+  // =====================================================================
+  describe('V34 INSERT 双写 phone + phone_encrypted', () => {
+    it('insert 一行带 phone → 调 encrypt 1 次 + SQL 含 phone_encrypted 列', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([teacherRow({ id: TEACHER_A })]);
+      const teacher = {
+        id: TEACHER_A,
+        campusId: CAMPUS_A,
+        name: '王老师',
+        phone: MOCK_PHONE_PLAINTEXT,
+        subjects: ['数学'],
+        status: '在职' as const,
+      };
+      await repo.insert(TENANT, teacher, 'admin01');
+      // encrypt 被调用 1 次 + 传入明文
+      expect(encryptor.encrypt).toHaveBeenCalledTimes(1);
+      expect(encryptor.encrypt).toHaveBeenCalledWith(MOCK_PHONE_PLAINTEXT);
+      // SQL 含 phone_encrypted 列名 + params 含密文 buffer
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(sql).toMatch(/phone_encrypted/);
+      // params 顺序：id, campusId, name, phone, phone_encrypted, user_id, ...
+      expect(params[3]).toBe(MOCK_PHONE_PLAINTEXT); // phone 明文
+      expect(params[4]).toEqual(MOCK_CIPHER); // phone_encrypted Buffer
+    });
+
+    it('insert 无 phone（undefined）→ encrypt 收 null → params 全 null', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        teacherRow({ id: TEACHER_A, phone: null, phone_encrypted: null }),
+      ]);
+      const teacher = {
+        id: TEACHER_A,
+        campusId: CAMPUS_A,
+        name: '王老师',
+        subjects: ['数学'],
+        status: '在职' as const,
+      };
+      await repo.insert(TENANT, teacher, 'admin01');
+      expect(encryptor.encrypt).toHaveBeenCalledWith(null);
+      const [, , params] = pg.tenantQuery.mock.calls[0];
+      expect(params[3]).toBeNull(); // phone
+      expect(params[4]).toBeNull(); // phone_encrypted
+    });
+  });
+
+  describe('V34 SELECT 双读 phone_encrypted 优先', () => {
+    it('findById 行带 phone_encrypted → 调 decrypt + Teacher.phone = 解密结果', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([teacherRow()]);
+      const t = await repo.findById(TENANT, TEACHER_A);
+      expect(encryptor.decrypt).toHaveBeenCalledTimes(1);
+      expect(encryptor.decrypt).toHaveBeenCalledWith(MOCK_CIPHER);
+      expect(t!.phone).toBe(MOCK_PHONE_PLAINTEXT);
+    });
+
+    it('findById 行 phone_encrypted=null → 不调 decrypt + Teacher.phone = 明文 fallback', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        teacherRow({ phone_encrypted: null, phone: '13911111111' }),
+      ]);
+      const t = await repo.findById(TENANT, TEACHER_A);
+      expect(encryptor.decrypt).not.toHaveBeenCalled();
+      expect(t!.phone).toBe('13911111111');
+    });
+
+    it('findById 行 phone_encrypted=null + phone=null → Teacher.phone = undefined', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        teacherRow({ phone_encrypted: null, phone: null }),
+      ]);
+      const t = await repo.findById(TENANT, TEACHER_A);
+      expect(t!.phone).toBeUndefined();
+    });
+
+    it('findById decrypt 抛错 → logger.warn + fallback 明文 phone（不阻塞）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        teacherRow({ phone_encrypted: MOCK_CIPHER, phone: '13988888888' }),
+      ]);
+      encryptor.decrypt.mockImplementationOnce(() => {
+        throw new Error('GCM auth tag mismatch');
+      });
+      const warnSpy = jest.spyOn(repo['logger'], 'warn').mockImplementation(() => undefined as any);
+      const t = await repo.findById(TENANT, TEACHER_A);
+      expect(t!.phone).toBe('13988888888');
+      expect(warnSpy).toHaveBeenCalled();
+      expect(warnSpy.mock.calls[0][0]).toMatch(/V34-decrypt-fallback/);
+      warnSpy.mockRestore();
+    });
+
+    it('listActiveInTenant 多行 → 每行解密 + 全部返回明文 phone', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        teacherRow({ id: TEACHER_A }),
+        teacherRow({ id: TEACHER_B, phone: '13900000000' }),
+      ]);
+      // 第二次 decrypt 返回第二个号码
+      encryptor.decrypt
+        .mockReturnValueOnce(MOCK_PHONE_PLAINTEXT)
+        .mockReturnValueOnce('13900000000');
+      const list = await repo.listActiveInTenant(TENANT);
+      expect(list).toHaveLength(2);
+      expect(encryptor.decrypt).toHaveBeenCalledTimes(2);
+      expect(list[0].phone).toBe(MOCK_PHONE_PLAINTEXT);
+      expect(list[1].phone).toBe('13900000000');
+    });
+
+    it('SELECT 语句中包含 phone_encrypted 列（findById / list / listActive）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.findById(TENANT, TEACHER_A);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.list(TENANT);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listActiveInTenant(TENANT);
+      const sqls = pg.tenantQuery.mock.calls.map((c) => c[1] as string);
+      sqls.forEach((sql) => {
+        expect(sql).toMatch(/phone_encrypted/);
+      });
     });
   });
 });
