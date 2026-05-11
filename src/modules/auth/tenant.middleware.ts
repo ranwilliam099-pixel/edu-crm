@@ -1,8 +1,17 @@
-import { Injectable, NestMiddleware, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NestMiddleware,
+  UnauthorizedException,
+  ForbiddenException,
+  Optional,
+  Logger,
+} from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { JwtStrategy } from './jwt.strategy';
 import { ParentJwtStrategy } from './parent-jwt.strategy';
 import { JwtPayload, isPlatformRole } from './jwt-payload.interface';
+import { ParentRepository } from '../db/parent.repository';
+import { AuditLogRepository } from '../db/audit-log.repository';
 
 /**
  * 租户中间件（A01 schema-per-tenant + 接口清单 V1 §6.2 网关层）
@@ -20,15 +29,27 @@ import { JwtPayload, isPlatformRole } from './jwt-payload.interface';
  * §0 不猜测：实际 ORM session 切换由 W1 BE-W1-4/T-W2-... 落地，当前仅做 req 注入
  *
  * 项目隔离（追加 #8）：本中间件不引用企业管理系统主项目任何 auth 实现
+ *
+ * SECURITY-FIX 2026-05-11 (A01-CRIT P0 Parent JWT 跨租户循环验证漏洞):
+ *   - 旧 requireParentDbUser 仅信任客户端 body.tenantSchema 派生 tenantId
+ *   - TenantScopeGuard 比对 body.tenantId === user.tenantId, 同源 → 循环验证失效
+ *   - 修复：从 public.parent_student_bindings 查 parent 真实绑定的 tenant_id 集合
+ *     客户端传入的 tenantSchema 必须落在此集合内, 否则 403 + 写 audit_log
+ *   - 注：ParentRepository / AuditLogRepository 来自 @Global() DbModule，
+ *     用 @Optional() 注入容错——TenantMiddleware unit test 不 import DbModule 仍可跑通
  */
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {
+  private readonly logger = new Logger(TenantMiddleware.name);
+
   constructor(
     private readonly jwt: JwtStrategy,
     private readonly parentJwt: ParentJwtStrategy,
+    @Optional() private readonly parentRepo?: ParentRepository,
+    @Optional() private readonly auditLog?: AuditLogRepository,
   ) {}
 
-  use(req: Request, _res: Response, next: NextFunction): void {
+  async use(req: Request, _res: Response, next: NextFunction): Promise<void> {
     // 用 originalUrl 而非 req.path：NestJS setGlobalPrefix('api') 后，全局 middleware
     // 在路由解析前执行；req.path 在某些 Express 内部路由层可能去掉 prefix。
     // originalUrl 保留 ?query，需先去 query 段再做前缀匹配。
@@ -64,7 +85,8 @@ export class TenantMiddleware implements NestMiddleware {
     }
 
     if (this.isParentDbPath(path)) {
-      this.requireParentDbUser(req);
+      // SECURITY-FIX 2026-05-11: 改为 async — 必须查 DB 校验 parent x tenant 真实绑定关系
+      await this.requireParentDbUser(req);
       return next();
     }
 
@@ -136,28 +158,166 @@ export class TenantMiddleware implements NestMiddleware {
   /**
    * C 端页面复用部分 tenant DB 查询：家长 token 本身不带 tenantId，
    * 因此通过绑定二维码/孩子档案保存的 tenantSchema 限定 schema。
+   *
+   * SECURITY-FIX 2026-05-11 (A01-CRIT P0):
+   *   旧实现仅信任客户端 body.tenantSchema 派生 tenantId 挂到 req.user.tenantId,
+   *   导致 TenantScopeGuard 比对 body.tenantId === user.tenantId 循环验证失效.
+   *
+   *   攻击场景:
+   *     家长 P 持合法 ParentJwt, 但 P 仅订阅 tenant A;
+   *     P 可调用 POST /api/db/students/STU_OF_B/monthly-reports
+   *     { tenantSchema: 'tenant_b' }, 旧逻辑放行 → 越权读 tenant B 数据.
+   *
+   *   修复:
+   *     1. 从 ParentJwt 拿 parentId (token 签名验证保证真实身份)
+   *     2. 从客户端拿 body.tenantSchema (允许传, 因 c 端要切租户)
+   *     3. 查 public.parent_student_bindings WHERE parent_id=? AND binding_status='active'
+   *        拿到该 parent 真实绑定的 tenant_id 集合 (跨机构家长共享支持多个)
+   *     4. 派生的 tenantId 必须落在此集合内, 否则 403 + audit_log
+   *
+   *   方案 (选项 C 通过孩子关系反查):
+   *     - 选项 A (parent_bindings 表) — 不存在, 命名是 parent_student_bindings
+   *     - 选项 B (parent_subscriptions) — 跨机构家长共享 1 笔订阅, 但订阅本身不含 tenant_id
+   *       (V10 §5.1 拍板: parent_subscriptions 表 unique by parent_id, 无 tenant_id 列),
+   *       所以订阅状态无法直接给"该家长能访问哪些 tenant"的答案
+   *     - 选项 C (parent_student_bindings) — ✅ 选定:
+   *       该表 (id, parent_id, student_id, tenant_id, binding_status) 明确告知
+   *       "parent X 在 tenant Y 内绑了哪个 student". 这是数据级 ground truth.
+   *
+   *   边界:
+   *     - parent role 但客户端没传 tenantSchema → 401 (旧行为保留)
+   *     - parent role + 无任何 active binding → 403 (没绑过任何孩子, 无 tenant 权限)
+   *     - ParentRepository 未注入 (test 模式) → fallback 旧行为 + WARN log
+   *       (生产环境 DbModule @Global 必定注入, 此路径不会走到)
    */
-  private requireParentDbUser(req: Request): void {
+  private async requireParentDbUser(req: Request): Promise<void> {
     const token = this.extractToken(req);
     if (!token) throw new UnauthorizedException('Missing Authorization header');
+
+    // 1. 解析 ParentJwt (token 签名是真实身份证明)
+    let parent: { parentId: string };
     try {
-      const parent = this.parentJwt.parse(token);
-      const schema = this.extractTenantSchema(req);
-      if (!schema) throw new UnauthorizedException('x-tenant-schema or body.tenantSchema required');
-      const tenantId = schema.replace(/^tenant_/, '');
-      (req as RequestWithUser).user = {
-        sub: parent.parentId,
-        tenantId,
-        role: 'parent' as any,
-        campusId: null,
-      };
-      (req as RequestWithTenant).tenantSchema = schema;
-      return;
+      parent = this.parentJwt.parse(token);
     } catch (e) {
-      if (e instanceof UnauthorizedException) throw e;
+      if (e instanceof UnauthorizedException) {
+        // 不是 parent token, 尝试 B 端 TenantJwt 兜底 (legacy 兼容)
+        const user = this.jwt.parse(token);
+        (req as RequestWithUser).user = user;
+        return;
+      }
+      throw e;
     }
-    const user = this.jwt.parse(token);
-    (req as RequestWithUser).user = user;
+
+    // 2. 客户端必须传 tenantSchema (c 端切租户标识)
+    const schema = this.extractTenantSchema(req);
+    if (!schema) {
+      throw new UnauthorizedException(
+        'x-tenant-schema or body.tenantSchema required for parent c-side',
+      );
+    }
+    const requestedTenantId = schema.replace(/^tenant_/, '');
+
+    // 3. 查 DB 校验 parent x tenant 真实绑定关系
+    //    若 ParentRepository 未注入 (test 模式) 走 fail-open 路径并 WARN
+    if (!this.parentRepo) {
+      this.logger.warn(
+        `[A01-FALLBACK] ParentRepository not injected, skipping cross-tenant check ` +
+          `(parent=${parent.parentId} requestedTenant=${requestedTenantId}). ` +
+          `生产环境此路径不应触发 — DbModule @Global 必定注入.`,
+      );
+      this.attachParentUser(req, parent.parentId, requestedTenantId, schema);
+      return;
+    }
+
+    let bindings: Array<{ tenantId: string; bindingStatus: string }>;
+    try {
+      bindings = await this.parentRepo.findChildrenByParent(parent.parentId);
+    } catch (e) {
+      // DB 异常 → 不放行 (fail-close on critical security path).
+      // 注: 这与生产架构其他模块"fail-open"哲学不同, 此处是跨租户隔离硬红线
+      this.logger.error(
+        `[A01-DB-ERROR] parent_student_bindings 查询失败, 拒绝放行: ` +
+          `parent=${parent.parentId} tenant=${requestedTenantId} err=${
+            e instanceof Error ? e.message : String(e)
+          }`,
+      );
+      throw new ForbiddenException(
+        'parent x tenant 绑定关系校验失败 (db error), 请重试',
+      );
+    }
+
+    const allowedTenantIds = new Set(
+      bindings
+        .filter((b) => b.bindingStatus === 'active')
+        .map((b) => b.tenantId.toLowerCase()),
+    );
+
+    if (!allowedTenantIds.has(requestedTenantId.toLowerCase())) {
+      // 越权: parent 没绑过该 tenant 的任何 student
+      // 写 audit_log 留证据 (fail-open: audit_log 写失败不阻塞 403)
+      // 注: audit_log 写到 parent 已绑定的第一个 tenant schema (parent 至少绑过 1 个);
+      // 若 parent 一个 tenant 都没绑 → 不写 audit_log (没有任何合法 schema 可写)
+      if (this.auditLog && allowedTenantIds.size > 0) {
+        const auditSchema = `tenant_${Array.from(allowedTenantIds)[0]}`;
+        try {
+          await this.auditLog.log(auditSchema, {
+            actorUserId: parent.parentId,
+            actorRole: 'parent',
+            action: 'parent.cross-tenant-denied',
+            targetType: 'tenant',
+            targetId: requestedTenantId,
+            before: null,
+            after: {
+              requestedTenant: requestedTenantId,
+              allowedTenants: Array.from(allowedTenantIds),
+              path: req.originalUrl || req.url,
+            },
+            ip: req.ip ?? null,
+            userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+            requestId:
+              (req.headers?.['x-request-id'] as string | undefined) ?? null,
+          });
+        } catch {
+          // audit_log 失败不阻塞主拒绝路径
+        }
+      }
+      this.logger.warn(
+        `[A01-CROSS-TENANT-DENIED] parent=${parent.parentId} tried tenant=${requestedTenantId} ` +
+          `but only bound to [${Array.from(allowedTenantIds).join(',')}] ` +
+          `on ${req.method} ${req.originalUrl || req.url}`,
+      );
+      throw new ForbiddenException(
+        `parent ${parent.parentId} is not bound to tenant ${requestedTenantId}`,
+      );
+    }
+
+    // 4. 校验通过 → 挂上下文
+    this.attachParentUser(req, parent.parentId, requestedTenantId, schema);
+  }
+
+  /**
+   * 把 parent 信息挂到 req (供 controller / guard 后续用)
+   * 与旧行为兼容: req.user 含 sub=parentId / tenantId / role='parent' / campusId=null
+   */
+  private attachParentUser(
+    req: Request,
+    parentId: string,
+    tenantId: string,
+    schema: string,
+  ): void {
+    (req as RequestWithUser).user = {
+      sub: parentId,
+      tenantId,
+      role: 'parent' as any,
+      campusId: null,
+    };
+    // V36 双轨 audience 守护: 让 controller 通过 req.parent 识别 c 端 JWT 流
+    (req as RequestWithUser & { parent?: any }).parent = {
+      sub: parentId,
+      parentId,
+      role: 'parent',
+    };
+    (req as RequestWithTenant).tenantSchema = schema;
   }
 
   private isParentDbPath(path: string): boolean {

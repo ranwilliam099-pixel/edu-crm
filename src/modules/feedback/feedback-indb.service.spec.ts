@@ -198,7 +198,7 @@ describe('Feedback Services InDb (V9)', () => {
 
   describe('MonthlyReportService', () => {
     let service: MonthlyReportService;
-    let repo: { insert: jest.Mock; findById: jest.Mock; listByStudent: jest.Mock; listPendingFinalize: jest.Mock; finalize: jest.Mock; markParentRead: jest.Mock };
+    let repo: { insert: jest.Mock; findById: jest.Mock; listByStudent: jest.Mock; listPendingFinalize: jest.Mock; finalizeTeacher: jest.Mock; finalizeParent: jest.Mock; markParentRead: jest.Mock };
     let feedbackRepo: { listByStudentTeacherInRange: jest.Mock };
     const REPORT: MonthlyReport = {
       id: 'rpt' + '0'.repeat(29),
@@ -218,7 +218,8 @@ describe('Feedback Services InDb (V9)', () => {
         findById: jest.fn(),
         listByStudent: jest.fn(),
         listPendingFinalize: jest.fn(),
-        finalize: jest.fn(),
+        finalizeTeacher: jest.fn(),
+        finalizeParent: jest.fn(),
         markParentRead: jest.fn(),
       };
       feedbackRepo = { listByStudentTeacherInRange: jest.fn() };
@@ -257,9 +258,83 @@ describe('Feedback Services InDb (V9)', () => {
 
     it('finalizeInDb requires non-empty blessing + suggestion', async () => {
       await expect(
-        service.finalizeInDb(REPORT.id, '', '续报建议', TENANT),
+        service.finalizeInDb(REPORT.id, '', '续报建议', TENANT, {
+          operatorUserId: 'u1',
+          actorRole: 'teacher',
+        }),
       ).rejects.toThrow(BadRequestException);
-      expect(repo.finalize).not.toHaveBeenCalled();
+      expect(repo.finalizeTeacher).not.toHaveBeenCalled();
+    });
+
+    it('finalizeInDb requires operatorUserId (audit_log chain integrity, P2 fix)', async () => {
+      await expect(
+        service.finalizeInDb(REPORT.id, '加油', '续报建议', TENANT, {
+          operatorUserId: '',
+          actorRole: 'teacher',
+        }),
+      ).rejects.toThrow(/operatorUserId required/);
+      expect(repo.finalizeTeacher).not.toHaveBeenCalled();
+    });
+
+    it('finalizeParentInDb requires parentBlessing', async () => {
+      await expect(
+        service.finalizeParentInDb(
+          REPORT.id,
+          { parentBlessing: '' },
+          TENANT,
+          { operatorUserId: 'u1', actorRole: 'teacher' },
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(repo.finalizeParent).not.toHaveBeenCalled();
+    });
+
+    it('finalizeParentInDb requires operatorUserId (audit_log chain)', async () => {
+      await expect(
+        service.finalizeParentInDb(
+          REPORT.id,
+          { parentBlessing: '简短' },
+          TENANT,
+          { operatorUserId: '', actorRole: 'teacher' },
+        ),
+      ).rejects.toThrow(/operatorUserId required/);
+      expect(repo.finalizeParent).not.toHaveBeenCalled();
+    });
+
+    it('finalizeParentInDb 正常路径 → 委托给 repo.finalizeParent', async () => {
+      repo.finalizeParent.mockResolvedValueOnce(REPORT);
+      const result = await service.finalizeParentInDb(
+        REPORT.id,
+        { parentBlessing: '家长版' },
+        TENANT,
+        { operatorUserId: 'u1', actorRole: 'teacher' },
+      );
+      expect(result).toBe(REPORT);
+      expect(repo.finalizeParent).toHaveBeenCalledTimes(1);
+      const args = repo.finalizeParent.mock.calls[0];
+      expect(args[0]).toBe(TENANT);
+      expect(args[1]).toBe(REPORT.id);
+      expect(args[2].parentBlessing).toBe('家长版');
+      expect(args[3].operatorUserId).toBe('u1');
+    });
+
+    it('findInDb 默认 audience=teacher，可传 parent 透传 repo', async () => {
+      repo.findById.mockResolvedValueOnce(REPORT);
+      await service.findInDb(REPORT.id, TENANT);
+      expect(repo.findById).toHaveBeenLastCalledWith(TENANT, REPORT.id, 'teacher');
+
+      repo.findById.mockResolvedValueOnce(REPORT);
+      await service.findInDb(REPORT.id, TENANT, 'parent');
+      expect(repo.findById).toHaveBeenLastCalledWith(TENANT, REPORT.id, 'parent');
+    });
+
+    it('listByStudentInDb 默认 audience=teacher，可传 parent', async () => {
+      repo.listByStudent.mockResolvedValueOnce([REPORT]);
+      await service.listByStudentInDb(STUDENT, TENANT);
+      expect(repo.listByStudent).toHaveBeenLastCalledWith(TENANT, STUDENT, 'teacher');
+
+      repo.listByStudent.mockResolvedValueOnce([REPORT]);
+      await service.listByStudentInDb(STUDENT, TENANT, 'parent');
+      expect(repo.listByStudent).toHaveBeenLastCalledWith(TENANT, STUDENT, 'parent');
     });
 
     it('listPendingFinalizeInDb filters by teacherId when provided', async () => {

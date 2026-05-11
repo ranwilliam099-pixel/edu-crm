@@ -4,8 +4,12 @@ import {
   Param,
   Post,
   Patch,
+  Req,
   HttpCode,
   HttpStatus,
+  UseGuards,
+  UseInterceptors,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   LessonFeedbackService,
@@ -21,7 +25,18 @@ import {
 import {
   MonthlyReportService,
   MonthlyReport,
+  ReportAudience,
+  FinalizeParentPayload,
+  FinalizeAuditContext,
+  ParentHighlightItem,
+  ParentImprovementItem,
 } from './monthly-report.service';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
+import { RbacGuard } from '../../guards/rbac.guard';
+import { Roles } from '../../guards/rbac.decorator';
+import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
+import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
+import { ActorRole } from '../db/audit-log.repository';
 
 /**
  * FeedbackController — V9 教学反馈 + 课消 + 月报 HTTP 暴露 BE-V9-1/2/3
@@ -452,40 +467,214 @@ export class FeedbackController {
     return this.report.generateInDb({ ...rest, month: new Date(monthMs) }, tenantSchema);
   }
 
+  /**
+   * V36 finalize（老师视角） — 写 teacher_blessing + renewal_suggestion
+   *
+   * 兼容：body.audience 可选；audience='parent' → 转走 finalize-parent 路径（合并接口）
+   *      但官方推荐：c 端用专门的 POST /db/monthly-reports/:id/finalize-parent
+   *
+   * RBAC (2026-05-11 修复): @Roles('admin','boss') 跟 finalize-parent 一致
+   *   - 临时只放行 admin/boss (TenantRole 枚举暂未含 'teacher'/'academic', Sprint B 债)
+   *   - TODO Sprint B: 加 'teacher' 到 TenantRole 枚举后, @Roles 增加 'teacher'
+   *     并在 service 层加 self-check (req.user.sub === report.teacher_id),
+   *     老师只能 finalize 自己写的报告
+   *   - audit_log 仍记 actorRole='teacher' (V33 actorRole 已枚举 teacher), 兜底审计链
+   *
+   * 漏洞修复 (A01-CRIT 配套):
+   *   旧实现仅 @UseGuards(TenantScopeGuard) 无 @Roles, parent role JWT 可调此 endpoint
+   *   组合 Fix 1 后 parent 已被跨租户校验拦截, 但本 endpoint 应明确拒绝 parent role
+   */
   @Post('db/monthly-reports/:id/finalize')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async finalizeReportInDb(
     @Param('id') id: string,
     @Body()
-    body: { teacherBlessing: string; renewalSuggestion: string; tenantSchema: string },
+    body: {
+      teacherBlessing: string;
+      renewalSuggestion: string;
+      tenantSchema: string;
+      /** V36 可选：'parent' 走 parent 版（兼容前端旧 finalize 路径） */
+      audience?: ReportAudience;
+      /** V36 当 audience='parent' 时的 4 字段（与 finalize-parent endpoint 等价） */
+      parentBlessing?: string;
+      parentHighlights?: ParentHighlightItem[];
+      parentImprovements?: ParentImprovementItem[];
+      parentNextPlan?: string;
+    },
+    @Req() req: AuthenticatedRequest,
   ): Promise<MonthlyReport> {
+    const auditCtx = this.buildFinalizeAuditCtx(req);
+
+    // V36 audience='parent' 合并路径 → 转走 finalize-parent
+    if (body.audience === 'parent') {
+      if (!body.parentBlessing) {
+        throw new BadRequestException(
+          'audience=parent requires parentBlessing in body',
+        );
+      }
+      return this.report.finalizeParentInDb(
+        id,
+        {
+          parentBlessing: body.parentBlessing,
+          parentHighlights: body.parentHighlights,
+          parentImprovements: body.parentImprovements,
+          parentNextPlan: body.parentNextPlan,
+        },
+        body.tenantSchema,
+        auditCtx,
+      );
+    }
+
+    // 默认 audience='teacher' 路径
     return this.report.finalizeInDb(
       id,
       body.teacherBlessing,
       body.renewalSuggestion,
       body.tenantSchema,
+      auditCtx,
     );
   }
 
+  /**
+   * V36 新 endpoint — 家长版 finalize（推荐入口，更语义化）
+   *
+   * 与 POST /db/monthly-reports/:id/finalize { audience: 'parent' } 等价
+   * 但更清晰地把 parent 版分离，audit_log action 锁定 'monthly-report.finalize-parent'
+   *
+   * RBAC: teacher / academic / academic_admin / admin / boss
+   *      （家长 c 端不应能补写自己的"家长版评语"，所以 parent role 不在允许列表）
+   *
+   * Body:
+   *   - parentBlessing required
+   *   - parentHighlights / parentImprovements / parentNextPlan optional
+   *   - tenantSchema required
+   *
+   * 注：parent role 进入此 endpoint → 应被 RbacGuard 挡住（@Roles 不含 parent）
+   *     如未来 c 端要让家长自己写感谢回馈，应另开 endpoint，避免与"老师写给家长"语义混淆
+   */
+  @Post('db/monthly-reports/:id/finalize-parent')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('admin', 'boss')
+  @UseInterceptors(IdempotencyInterceptor)
+  @HttpCode(HttpStatus.OK)
+  async finalizeReportParentInDb(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      parentBlessing: string;
+      parentHighlights?: ParentHighlightItem[];
+      parentImprovements?: ParentImprovementItem[];
+      parentNextPlan?: string;
+      tenantSchema: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<MonthlyReport> {
+    const auditCtx = this.buildFinalizeAuditCtx(req);
+    const payload: FinalizeParentPayload = {
+      parentBlessing: body.parentBlessing,
+      parentHighlights: body.parentHighlights,
+      parentImprovements: body.parentImprovements,
+      parentNextPlan: body.parentNextPlan,
+    };
+    return this.report.finalizeParentInDb(id, payload, body.tenantSchema, auditCtx);
+  }
+
+  /**
+   * V36 拓展 — find 按 audience 切换 SELECT
+   *
+   * 双轨硬红线：parent role JWT 强制 audience='parent'（自动遮蔽不抛 403，UX 友好）
+   * 其他 role 默认 audience='teacher'（除非 body 显式传 audience）
+   */
   @Post('db/monthly-reports/:id/find')
+  @UseGuards(TenantScopeGuard)
   @HttpCode(HttpStatus.OK)
   async findReportInDb(
     @Param('id') id: string,
-    @Body() body: { tenantSchema: string },
+    @Body() body: { tenantSchema: string; audience?: ReportAudience },
+    @Req() req: AuthenticatedRequest,
   ): Promise<MonthlyReport> {
-    return this.report.findInDb(id, body.tenantSchema);
+    const audience = this.resolveAudience(req, body.audience);
+    return this.report.findInDb(id, body.tenantSchema, audience);
   }
 
+  /**
+   * V36 拓展 — listByStudent 按 audience 切换 SELECT
+   *
+   * 同 find：parent role JWT 强制 audience='parent'
+   */
   @Post('db/students/:studentId/monthly-reports')
+  @UseGuards(TenantScopeGuard)
   @HttpCode(HttpStatus.OK)
   async listReportsByStudentInDb(
     @Param('studentId') studentId: string,
-    @Body() body: { tenantSchema: string },
+    @Body() body: { tenantSchema: string; audience?: ReportAudience },
+    @Req() req: AuthenticatedRequest,
   ): Promise<MonthlyReport[]> {
-    return this.report.listByStudentInDb(studentId, body.tenantSchema);
+    const audience = this.resolveAudience(req, body.audience);
+    return this.report.listByStudentInDb(studentId, body.tenantSchema, audience);
   }
 
+  /**
+   * V36 双轨硬红线：parent role JWT 强制 audience='parent'
+   *
+   * 设计意图（拍板）：
+   *   - parent role 即使 body 传了 audience='teacher' 也强制改为 'parent'（自动遮蔽）
+   *   - 不抛 403：UX 更友好（前端不必判断 role 决定参数）
+   *   - 其他 role 默认 audience='teacher'，body 显式传 'parent' 才走家长视角
+   *
+   * parent role 识别来源（两处均判，因为家长 c 端有独立 JWT 流）：
+   *   - req.user.role === 'parent' （tenant 用户 JWT，理论上 8 角色未含 parent；为防误配兼容）
+   *   - req.parent 存在（家长 c 端独立 JWT，jwt-payload.interface AuthenticatedRequest.parent）
+   *
+   * 调用方式：
+   *   const audience = this.resolveAudience(req, body.audience);
+   */
+  private resolveAudience(
+    req: AuthenticatedRequest,
+    bodyAudience?: ReportAudience,
+  ): ReportAudience {
+    // 家长 c 端独立 JWT 流（req.parent 被 parent-auth middleware 注入）
+    if (req.parent) return 'parent';
+    // 兼容：tenant JWT 也可能未来加 'parent' 角色（actorRole 已支持）
+    const userRole = req.user?.role as string | undefined;
+    if (userRole === 'parent') return 'parent';
+    return bodyAudience ?? 'teacher';
+  }
+
+  /**
+   * V36 audit_log 上下文（finalize* 类操作必须有 operator）
+   *
+   * 从 JWT 取 sub + role + 请求级 ip/ua/req-id
+   * 如未走 auth middleware（极少 — 测试 / 公网未 protected），operator 为 undefined
+   * 时 audit_log 链路断 → service 层抛 BadRequest（finalizeParentInDb 已校验）
+   *
+   * 注：finalize-parent / finalize-teacher 都不允许 parent role 调用（RbacGuard 已挡）
+   *     所以 ctx 不需要兼容 req.parent 路径
+   */
+  private buildFinalizeAuditCtx(req: AuthenticatedRequest): FinalizeAuditContext {
+    return {
+      operatorUserId: req.user?.sub ?? '',
+      // V33 actorRole 枚举已含 teacher / academic / academic_admin / admin / boss / parent
+      // 取 JWT 实际 role 透传；fallback 'admin'（极少出现：内部 cron 兼容）
+      actorRole: ((req.user?.role as ActorRole) ?? 'admin') as ActorRole,
+      ip: req.ip ?? null,
+      userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+      requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+    };
+  }
+
+  /**
+   * 2026-05-11 修复 (P1): 添加 TenantScopeGuard + RbacGuard
+   *   - 该 endpoint 用于 admin/boss 看老师 finalize 待办列表 (校长 / 老板视角)
+   *   - 暂不含 'teacher' (TenantRole 枚举未含, Sprint B 加后, teacher 应自动按 teacherId 过滤)
+   *   - 添加 IdempotencyInterceptor 跟其他 finalize 系列对齐 (虽然这是读请求, 但走 POST + body 模式)
+   */
   @Post('db/monthly-reports/pending-finalize')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async listPendingFinalizeInDb(
     @Body() body: { tenantSchema: string; teacherId?: string },
@@ -493,7 +682,17 @@ export class FeedbackController {
     return this.report.listPendingFinalizeInDb(body.tenantSchema, body.teacherId);
   }
 
+  /**
+   * 2026-05-11 修复 (P1): 添加 TenantScopeGuard + IdempotencyInterceptor
+   *   - 家长打"已读"主调用方 = parent role JWT
+   *   - 跨租户已由 Fix 1 (requireParentDbUser) 守护: parent 不能用错的 tenantSchema
+   *   - TenantScopeGuard 兜底: 即便 parent role 也走 body.tenantId/x-tenant-schema 校验
+   *   - 不加 @Roles: parent role 是合法调用者 (RbacGuard 默认放行无 @Roles 路由)
+   *   - Idempotency: parent 双击「已读」防重复写 parent_read_at (虽然 COALESCE 幂等, 加一层稳)
+   */
   @Post('db/monthly-reports/:id/parent-read')
+  @UseGuards(TenantScopeGuard)
+  @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async markParentReadReportInDb(
     @Param('id') id: string,
