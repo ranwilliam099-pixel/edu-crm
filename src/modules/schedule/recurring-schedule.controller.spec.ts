@@ -21,6 +21,7 @@ import {
 } from './recurring-schedule.service';
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
+import { AuditLogRepository } from '../db/audit-log.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () => {
@@ -34,6 +35,8 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
   };
   let teacherRepo: { findById: jest.Mock };
   let studentRepo: { findBrief: jest.Mock };
+  // Sprint E backlog #3: audit_log mock
+  let auditLog: { log: jest.Mock };
 
   const TENANT = 'tenant_b41_recur_xxxxxxxxxxxxxxxx';
   const BINDING_ID = 'bnd00000000000000000000000000B001';
@@ -99,10 +102,12 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
     };
     teacherRepo = { findById: jest.fn() };
     studentRepo = { findBrief: jest.fn() };
+    auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = new RecurringScheduleController(
       svc as unknown as RecurringScheduleService,
       teacherRepo as unknown as TeacherRepository,
       studentRepo as unknown as StudentRepository,
+      auditLog as unknown as AuditLogRepository,
     );
   });
 
@@ -477,11 +482,11 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
       boundByUserId: USER_SALES_U1,
     };
 
-    it('JWT role=admin → 403 ONLY_TEACHER_OR_SALES（早于 service）', () => {
-      expect(() =>
+    it('JWT role=admin → 403 ONLY_TEACHER_OR_SALES（早于 service）', async () => {
+      await expect(
         controller.unbindBinding(
           BINDING_ID,
-          { binding: dummyBinding },
+          { binding: dummyBinding, tenantSchema: TENANT },
           mkReq({
             user: {
               sub: 'admin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1',
@@ -491,15 +496,24 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
             },
           }),
         ),
-      ).toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
       expect(svc.unbindBinding).not.toHaveBeenCalled();
+      // Sprint E backlog #3: 拒绝路径 audit_log
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'recurring-binding.unbind.denied',
+          targetType: 'student_teacher_binding',
+          targetId: BINDING_ID,
+        }),
+      );
     });
 
-    it('JWT role=finance → 403 ONLY_TEACHER_OR_SALES', () => {
-      expect(() =>
+    it('JWT role=finance → 403 ONLY_TEACHER_OR_SALES', async () => {
+      await expect(
         controller.unbindBinding(
           BINDING_ID,
-          { binding: dummyBinding },
+          { binding: dummyBinding, tenantSchema: TENANT },
           mkReq({
             user: {
               sub: 'finance_ffffffffffffffffffffffffffffff1',
@@ -509,14 +523,14 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
             },
           }),
         ),
-      ).toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
     });
 
-    it('JWT role=academic → 403 ONLY_TEACHER_OR_SALES', () => {
-      expect(() =>
+    it('JWT role=academic → 403 ONLY_TEACHER_OR_SALES', async () => {
+      await expect(
         controller.unbindBinding(
           BINDING_ID,
-          { binding: dummyBinding },
+          { binding: dummyBinding, tenantSchema: TENANT },
           mkReq({
             user: {
               sub: 'acad_ccccccccccccccccccccccccccccccc1',
@@ -526,28 +540,41 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
             },
           }),
         ),
-      ).toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
     });
 
-    it('JWT role=sales → 调用 service', () => {
+    it('JWT role=sales → 调用 service + 成功 audit_log', async () => {
       svc.unbindBinding.mockReturnValueOnce({
         ...dummyBinding,
         status: 'unbound',
         unboundAt: new Date(),
       } as StudentTeacherBinding);
-      controller.unbindBinding(BINDING_ID, { binding: dummyBinding }, mkReq());
-      expect(svc.unbindBinding).toHaveBeenCalledTimes(1);
-    });
-
-    it('JWT role=teacher → 调用 service', () => {
-      svc.unbindBinding.mockReturnValueOnce({
-        ...dummyBinding,
-        status: 'unbound',
-        unboundAt: new Date(),
-      } as StudentTeacherBinding);
-      controller.unbindBinding(
+      await controller.unbindBinding(
         BINDING_ID,
-        { binding: dummyBinding },
+        { binding: dummyBinding, tenantSchema: TENANT },
+        mkReq(),
+      );
+      expect(svc.unbindBinding).toHaveBeenCalledTimes(1);
+      // Sprint E backlog #3: 成功路径 audit_log
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'recurring-binding.unbind',
+          targetType: 'student_teacher_binding',
+          targetId: BINDING_ID,
+        }),
+      );
+    });
+
+    it('JWT role=teacher → 调用 service', async () => {
+      svc.unbindBinding.mockReturnValueOnce({
+        ...dummyBinding,
+        status: 'unbound',
+        unboundAt: new Date(),
+      } as StudentTeacherBinding);
+      await controller.unbindBinding(
+        BINDING_ID,
+        { binding: dummyBinding, tenantSchema: TENANT },
         mkReq({
           user: {
             sub: USER_TEACHER_U3,
@@ -577,11 +604,11 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
       createdAt: new Date('2026-05-01T00:00:00Z'),
     };
 
-    it('JWT role=admin → 403 ONLY_TEACHER_OR_SALES（早于 service）', () => {
-      expect(() =>
+    it('JWT role=admin → 403 ONLY_TEACHER_OR_SALES（早于 service）', async () => {
+      await expect(
         controller.archiveRecurring(
           REC_ID,
-          { recurring: dummyRecurring },
+          { recurring: dummyRecurring, tenantSchema: TENANT },
           mkReq({
             user: {
               sub: 'admin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1',
@@ -591,15 +618,24 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
             },
           }),
         ),
-      ).toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
       expect(svc.archiveRecurring).not.toHaveBeenCalled();
+      // Sprint E backlog #3: 拒绝路径 audit_log
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'recurring-schedule.archive.denied',
+          targetType: 'recurring_schedule',
+          targetId: REC_ID,
+        }),
+      );
     });
 
-    it('JWT role=parent → 403 ONLY_TEACHER_OR_SALES', () => {
-      expect(() =>
+    it('JWT role=parent → 403 ONLY_TEACHER_OR_SALES', async () => {
+      await expect(
         controller.archiveRecurring(
           REC_ID,
-          { recurring: dummyRecurring },
+          { recurring: dummyRecurring, tenantSchema: TENANT },
           mkReq({
             user: {
               sub: 'parent_ppppppppppppppppppppppppppppp1',
@@ -609,28 +645,40 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
             },
           }),
         ),
-      ).toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
     });
 
-    it('JWT role=sales → 调用 service', () => {
+    it('JWT role=sales → 调用 service + 成功 audit_log', async () => {
       svc.archiveRecurring.mockReturnValueOnce({
         ...dummyRecurring,
         status: 'archived',
         archivedAt: new Date(),
       } as RecurringSchedule);
-      controller.archiveRecurring(REC_ID, { recurring: dummyRecurring }, mkReq());
-      expect(svc.archiveRecurring).toHaveBeenCalledTimes(1);
-    });
-
-    it('JWT role=teacher → 调用 service', () => {
-      svc.archiveRecurring.mockReturnValueOnce({
-        ...dummyRecurring,
-        status: 'archived',
-        archivedAt: new Date(),
-      } as RecurringSchedule);
-      controller.archiveRecurring(
+      await controller.archiveRecurring(
         REC_ID,
-        { recurring: dummyRecurring },
+        { recurring: dummyRecurring, tenantSchema: TENANT },
+        mkReq(),
+      );
+      expect(svc.archiveRecurring).toHaveBeenCalledTimes(1);
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'recurring-schedule.archive',
+          targetType: 'recurring_schedule',
+          targetId: REC_ID,
+        }),
+      );
+    });
+
+    it('JWT role=teacher → 调用 service', async () => {
+      svc.archiveRecurring.mockReturnValueOnce({
+        ...dummyRecurring,
+        status: 'archived',
+        archivedAt: new Date(),
+      } as RecurringSchedule);
+      await controller.archiveRecurring(
+        REC_ID,
+        { recurring: dummyRecurring, tenantSchema: TENANT },
         mkReq({
           user: {
             sub: USER_TEACHER_U3,
@@ -641,6 +689,215 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
         }),
       );
       expect(svc.archiveRecurring).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ===========================================================
+  // Sprint E backlog #3: createBinding / createRecurring 成功 audit_log
+  // ===========================================================
+  describe('createBinding / createRecurring — 成功路径 audit_log (Sprint E #3)', () => {
+    it('createBinding 成功 → audit_log action=recurring-binding.create + 含 studentId/teacherId', async () => {
+      studentRepo.findBrief.mockResolvedValueOnce(studentS1OwnerU1);
+      svc.createBinding.mockResolvedValueOnce({
+        id: BINDING_ID,
+        studentId: STUDENT_S1,
+        teacherId: TEACHER_T1,
+        status: 'active',
+        boundAt: new Date('2026-05-13T00:00:00Z'),
+        boundByUserId: USER_SALES_U1,
+      } as StudentTeacherBinding);
+
+      await controller.createBinding(
+        {
+          id: BINDING_ID,
+          studentId: STUDENT_S1,
+          teacherId: TEACHER_T1,
+          tenantSchema: TENANT,
+        },
+        mkReq(),
+      );
+
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'recurring-binding.create',
+          targetType: 'student_teacher_binding',
+          targetId: BINDING_ID,
+          actorUserId: USER_SALES_U1,
+          actorRole: 'sales',
+          before: null,
+          after: expect.objectContaining({
+            id: BINDING_ID,
+            studentId: STUDENT_S1,
+            teacherId: TEACHER_T1,
+            status: 'active',
+          }),
+        }),
+      );
+    });
+
+    it('createBinding 403 (admin) → audit_log action=recurring-binding.create.denied', async () => {
+      await expect(
+        controller.createBinding(
+          {
+            id: BINDING_ID,
+            studentId: STUDENT_S1,
+            teacherId: TEACHER_T1,
+            tenantSchema: TENANT,
+          },
+          mkReq({
+            user: {
+              sub: 'admin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1',
+              role: 'admin',
+              tenantId: null,
+              campusId: null,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'recurring-binding.create.denied',
+          targetType: 'student_teacher_binding',
+          targetId: BINDING_ID,
+        }),
+      );
+    });
+
+    it('createBinding 缺 tenantSchema → audit_log denied + tenantSchema=unknown', async () => {
+      await expect(
+        controller.createBinding(
+          {
+            id: BINDING_ID,
+            studentId: STUDENT_S1,
+            teacherId: TEACHER_T1,
+          } as any,
+          mkReq(),
+        ),
+      ).rejects.toThrow(/TENANT_SCHEMA_REQUIRED/);
+      expect(auditLog.log).toHaveBeenCalledWith(
+        'unknown',
+        expect.objectContaining({
+          action: 'recurring-binding.create.denied',
+          after: expect.objectContaining({
+            reason: 'TENANT_SCHEMA_REQUIRED',
+          }),
+        }),
+      );
+    });
+
+    it('createRecurring 成功 → audit_log action=recurring-schedule.create', async () => {
+      studentRepo.findBrief.mockResolvedValueOnce(studentS1OwnerU1);
+      svc.createRecurring.mockResolvedValueOnce({
+        id: REC_ID,
+        bindingId: BINDING_ID,
+        studentId: STUDENT_S1,
+        teacherId: TEACHER_T1,
+        byDay: ['MO'],
+        startMinutes: 18 * 60,
+        durationMin: 60,
+        startDate: new Date('2026-05-04T00:00:00Z'),
+        status: 'active',
+        createdByUserId: USER_SALES_U1,
+        createdByRole: 'sales',
+        createdAt: new Date('2026-05-13T00:00:00Z'),
+      } as RecurringSchedule);
+
+      await controller.createRecurring(
+        {
+          input: {
+            id: REC_ID,
+            bindingId: BINDING_ID,
+            studentId: STUDENT_S1,
+            teacherId: TEACHER_T1,
+            byDay: ['MO' as const],
+            startMinutes: 18 * 60,
+            durationMin: 60,
+            startDate: '2026-05-04T00:00:00Z',
+          },
+          expandRangeDays: 30,
+          existingSchedules: [],
+          tenantSchema: TENANT,
+        },
+        mkReq(),
+      );
+
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'recurring-schedule.create',
+          targetType: 'recurring_schedule',
+          targetId: REC_ID,
+          before: null,
+        }),
+      );
+    });
+
+    it('createRecurring 403 → audit_log denied', async () => {
+      await expect(
+        controller.createRecurring(
+          {
+            input: {
+              id: REC_ID,
+              bindingId: BINDING_ID,
+              studentId: STUDENT_S1,
+              teacherId: TEACHER_T1,
+              byDay: ['MO' as const],
+              startMinutes: 18 * 60,
+              durationMin: 60,
+              startDate: '2026-05-04T00:00:00Z',
+            },
+            expandRangeDays: 30,
+            existingSchedules: [],
+            tenantSchema: TENANT,
+          },
+          mkReq({
+            user: {
+              sub: 'acad_ccccccccccccccccccccccccccccccc1',
+              role: 'academic',
+              tenantId: 'tenant-x',
+              campusId: 'campus-x',
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'recurring-schedule.create.denied',
+          targetType: 'recurring_schedule',
+          targetId: REC_ID,
+        }),
+      );
+    });
+
+    it('auditLog 不存在（@Optional 未注入）→ 主业务流不阻塞', async () => {
+      const ctrlNoAudit = new RecurringScheduleController(
+        svc as unknown as RecurringScheduleService,
+        teacherRepo as unknown as TeacherRepository,
+        studentRepo as unknown as StudentRepository,
+        // auditLog 不传
+      );
+      studentRepo.findBrief.mockResolvedValueOnce(studentS1OwnerU1);
+      svc.createBinding.mockResolvedValueOnce({
+        id: BINDING_ID,
+        studentId: STUDENT_S1,
+        teacherId: TEACHER_T1,
+        status: 'active',
+        boundAt: new Date(),
+        boundByUserId: USER_SALES_U1,
+      } as StudentTeacherBinding);
+      await ctrlNoAudit.createBinding(
+        {
+          id: BINDING_ID,
+          studentId: STUDENT_S1,
+          teacherId: TEACHER_T1,
+          tenantSchema: TENANT,
+        },
+        mkReq(),
+      );
+      expect(svc.createBinding).toHaveBeenCalledTimes(1);
     });
   });
 });

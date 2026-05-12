@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Optional,
   Param,
   Post,
   Req,
@@ -22,6 +23,7 @@ import {
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
+import { ActorRole, AuditLogRepository } from '../db/audit-log.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 /**
@@ -54,6 +56,17 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
  *
  * Sprint B.6 mini (2026-05-11) 深度防御：
  *   - class-level @UseGuards(TenantScopeGuard) — 兜底所有 /db endpoint body.tenantSchema 跨租户校验
+ *
+ * Sprint E backlog #3 (2026-05-13) audit_log 整体补齐：
+ *   - 5 写 endpoint × 2 路径（成功 + 拒绝）= 10 处 audit_log 调用
+ *   - action 命名：schedule.create / schedule.cancel / schedule.complete /
+ *                  schedule.mark-attendance + 同名 .denied 后缀
+ *   - targetType: 'schedule'
+ *   - 拒绝路径含 BadRequestException(TENANT_SCHEMA_REQUIRED / JWT sub/role required)
+ *     + ForbiddenException(ONLY_TEACHER_OR_SALES / TEACHER_USER_NOT_BOUND)
+ *   - 5 个原同步方法 (cancel/complete/attendance) → 全 async（audit 必须 await
+ *     避免主业务流先返但 audit 还未写）
+ *   - schedule 模块无 PII（仅 ID/时间），不需要 maskPhone
  */
 @UseGuards(TenantScopeGuard)
 @Controller('schedules')
@@ -62,6 +75,10 @@ export class ScheduleController {
     private readonly service: ScheduleService,
     private readonly teacherRepo: TeacherRepository,
     private readonly studentRepo: StudentRepository,
+    // Sprint E backlog #3: audit_log 注入
+    //   - @Optional 兼容现有 spec 直接 new ScheduleController(svc, teacherRepo, studentRepo)
+    //   - fail-open: audit 失败不阻塞主业务（AuditLogRepository.log 内部 catch；这里 tryAudit 再加一层）
+    @Optional() private readonly auditLog?: AuditLogRepository,
   ) {}
 
   /**
@@ -96,30 +113,84 @@ export class ScheduleController {
     @Req() req: AuthenticatedRequest,
   ): Promise<{ schedule: Schedule; students: ScheduleStudent[] }> {
     if (!body.tenantSchema) {
+      await this.tryAuditDenied(req, 'unknown', 'schedule.create.denied', body.input?.id ?? null, {
+        reason: 'TENANT_SCHEMA_REQUIRED',
+        endpoint: 'createSchedule',
+      });
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
-    const { callerRole, currentUser } = this.assertCallerRoleAndDeriveContext(req);
+    let callerRole: SchedulerRole;
+    let currentUser: CurrentUser;
+    try {
+      ({ callerRole, currentUser } = this.assertCallerRoleAndDeriveContext(req));
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'schedule.create.denied',
+        body.input?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createSchedule' },
+      );
+      throw err;
+    }
     const inputDeserialized = this.deserializeInput(body.input, callerRole, currentUser);
 
     // Sprint B.4-1 round 2: server-derive（A04 修复，不再接受 body 注入）
-    const schedulableTeachers = await this.deriveSchedulableTeachers(
-      body.tenantSchema,
-      callerRole,
-      currentUser,
-    );
-    const studentResponsibleSalesMap = await this.deriveStudentResponsibleSalesMap(
-      body.tenantSchema,
-      callerRole,
-      inputDeserialized.studentIds,
-    );
+    let schedulableTeachers: Array<{ id: string; userId?: string }>;
+    let studentResponsibleSalesMap: Map<string, string>;
+    try {
+      schedulableTeachers = await this.deriveSchedulableTeachers(
+        body.tenantSchema,
+        callerRole,
+        currentUser,
+      );
+      studentResponsibleSalesMap = await this.deriveStudentResponsibleSalesMap(
+        body.tenantSchema,
+        callerRole,
+        inputDeserialized.studentIds,
+      );
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'schedule.create.denied',
+        body.input?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createSchedule' },
+      );
+      throw err;
+    }
 
-    return this.service.createSchedule(
-      inputDeserialized,
-      body.existingSchedules.map((s) => this.deserializeSchedule(s)),
-      body.existingStudentsAttachment,
-      studentResponsibleSalesMap,
-      schedulableTeachers,
-    );
+    let result: { schedule: Schedule; students: ScheduleStudent[] };
+    try {
+      result = this.service.createSchedule(
+        inputDeserialized,
+        body.existingSchedules.map((s) => this.deserializeSchedule(s)),
+        body.existingStudentsAttachment,
+        studentResponsibleSalesMap,
+        schedulableTeachers,
+      );
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'schedule.create.denied',
+        body.input?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createSchedule' },
+      );
+      throw err;
+    }
+
+    await this.tryAudit(req, body.tenantSchema, {
+      action: 'schedule.create',
+      targetType: 'schedule',
+      targetId: result.schedule.id,
+      before: null,
+      after: this.scheduleSnapshot(result.schedule, {
+        endpoint: 'createSchedule',
+        ...this.studentIdsForAudit(inputDeserialized.studentIds),
+      }),
+    });
+    return result;
   }
 
   /**
@@ -132,32 +203,89 @@ export class ScheduleController {
    * teacher 是否归属该 schedule 的老师），仅做角色限制。完整 ownership 校验需
    * service 内反查 schedule.teacherId / studentIds → owner_sales_id 等，本轮 scope
    * 仅缩小到 {teacher, sales}，ownership 校验记 Sprint X backlog
+   *
+   * Sprint E backlog #3: 成功路径 audit_log 'schedule.cancel'；拒绝路径 'schedule.cancel.denied'
+   *   - tenantSchema 缺时 audit 用 'unknown' 占位（拒绝路径 audit 写不进 tenant schema，
+   *     AuditLogRepository.log 内部 catch fail-open，不抛错）
+   *   - cancel/complete/attendance 路径 service 是同步，但本方法因 audit 需 await 而改 async
    */
   @Post(':id/cancel')
   @HttpCode(HttpStatus.OK)
-  cancelSchedule(
+  async cancelSchedule(
     @Param('id') _id: string,
-    @Body() body: { schedule: Schedule; reason?: string },
+    @Body() body: { schedule: Schedule; reason?: string; tenantSchema?: string },
     @Req() req: AuthenticatedRequest,
-  ): Schedule {
-    this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
-    return this.service.cancelSchedule(this.deserializeSchedule(body.schedule), body.reason);
+  ): Promise<Schedule> {
+    try {
+      this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema ?? 'unknown',
+        'schedule.cancel.denied',
+        body.schedule?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'cancelSchedule' },
+      );
+      throw err;
+    }
+    const before = this.scheduleSnapshot(this.deserializeSchedule(body.schedule), {
+      endpoint: 'cancelSchedule',
+    });
+    const result = this.service.cancelSchedule(
+      this.deserializeSchedule(body.schedule),
+      body.reason,
+    );
+    await this.tryAudit(req, body.tenantSchema ?? 'unknown', {
+      action: 'schedule.cancel',
+      targetType: 'schedule',
+      targetId: result.id,
+      before,
+      after: this.scheduleSnapshot(result, {
+        endpoint: 'cancelSchedule',
+        reason: body.reason ?? null,
+      }),
+    });
+    return result;
   }
 
   /**
    * POST /api/schedules/:id/complete — 标记排课完成（触发课消生成）
    *
    * Sprint B.4-1 round 2 (business P1-A): 同上 cancelSchedule，早期 403
+   *
+   * Sprint E backlog #3: 成功路径 audit_log 'schedule.complete'；拒绝 'schedule.complete.denied'
    */
   @Post(':id/complete')
   @HttpCode(HttpStatus.OK)
-  completeSchedule(
+  async completeSchedule(
     @Param('id') _id: string,
-    @Body() body: { schedule: Schedule },
+    @Body() body: { schedule: Schedule; tenantSchema?: string },
     @Req() req: AuthenticatedRequest,
-  ): Schedule {
-    this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
-    return this.service.completeSchedule(this.deserializeSchedule(body.schedule));
+  ): Promise<Schedule> {
+    try {
+      this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema ?? 'unknown',
+        'schedule.complete.denied',
+        body.schedule?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'completeSchedule' },
+      );
+      throw err;
+    }
+    const before = this.scheduleSnapshot(this.deserializeSchedule(body.schedule), {
+      endpoint: 'completeSchedule',
+    });
+    const result = this.service.completeSchedule(this.deserializeSchedule(body.schedule));
+    await this.tryAudit(req, body.tenantSchema ?? 'unknown', {
+      action: 'schedule.complete',
+      targetType: 'schedule',
+      targetId: result.id,
+      before,
+      after: this.scheduleSnapshot(result, { endpoint: 'completeSchedule' }),
+    });
+    return result;
   }
 
   /**
@@ -165,6 +293,8 @@ export class ScheduleController {
    *
    * Sprint B.4-1: callerRole / currentUser / schedulableTeachers / studentResponsibleSalesPairs
    * 全部 server 派生，body 字段已 deprecated。
+   *
+   * Sprint E backlog #3: 成功路径 'schedule.create'；拒绝 'schedule.create.denied'
    */
   @Post('db')
   @HttpCode(HttpStatus.CREATED)
@@ -180,26 +310,81 @@ export class ScheduleController {
     },
     @Req() req: AuthenticatedRequest,
   ): Promise<{ schedule: Schedule; students: ScheduleStudent[] }> {
-    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
-    const { callerRole, currentUser } = this.assertCallerRoleAndDeriveContext(req);
+    if (!body.tenantSchema) {
+      await this.tryAuditDenied(req, 'unknown', 'schedule.create.denied', body.input?.id ?? null, {
+        reason: 'TENANT_SCHEMA_REQUIRED',
+        endpoint: 'createScheduleInDb',
+      });
+      throw new BadRequestException('tenantSchema required');
+    }
+    let callerRole: SchedulerRole;
+    let currentUser: CurrentUser;
+    try {
+      ({ callerRole, currentUser } = this.assertCallerRoleAndDeriveContext(req));
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'schedule.create.denied',
+        body.input?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createScheduleInDb' },
+      );
+      throw err;
+    }
     const inputDeserialized = this.deserializeInput(body.input, callerRole, currentUser);
-    const schedulableTeachers = await this.deriveSchedulableTeachers(
-      body.tenantSchema,
-      callerRole,
-      currentUser,
-    );
-    const studentResponsibleSalesMap = await this.deriveStudentResponsibleSalesMap(
-      body.tenantSchema,
-      callerRole,
-      inputDeserialized.studentIds,
-    );
+    let schedulableTeachers: Array<{ id: string; userId?: string }>;
+    let studentResponsibleSalesMap: Map<string, string>;
+    try {
+      schedulableTeachers = await this.deriveSchedulableTeachers(
+        body.tenantSchema,
+        callerRole,
+        currentUser,
+      );
+      studentResponsibleSalesMap = await this.deriveStudentResponsibleSalesMap(
+        body.tenantSchema,
+        callerRole,
+        inputDeserialized.studentIds,
+      );
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'schedule.create.denied',
+        body.input?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createScheduleInDb' },
+      );
+      throw err;
+    }
 
-    return this.service.createScheduleInDb(
-      inputDeserialized,
-      body.tenantSchema,
-      studentResponsibleSalesMap,
-      schedulableTeachers,
-    );
+    let result: { schedule: Schedule; students: ScheduleStudent[] };
+    try {
+      result = await this.service.createScheduleInDb(
+        inputDeserialized,
+        body.tenantSchema,
+        studentResponsibleSalesMap,
+        schedulableTeachers,
+      );
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'schedule.create.denied',
+        body.input?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createScheduleInDb' },
+      );
+      throw err;
+    }
+    await this.tryAudit(req, body.tenantSchema, {
+      action: 'schedule.create',
+      targetType: 'schedule',
+      targetId: result.schedule.id,
+      before: null,
+      after: this.scheduleSnapshot(result.schedule, {
+        endpoint: 'createScheduleInDb',
+        ...this.studentIdsForAudit(inputDeserialized.studentIds),
+      }),
+    });
+    return result;
   }
 
   /**
@@ -212,6 +397,8 @@ export class ScheduleController {
    *     都能查别人销售归属的老师课表，违反「教务全只读老师线」+ sales 不跨域）
    *   - 本轮仅做角色级 trust boundary 收紧（同 cancel/complete/attendance 模式），
    *     teacher self-only 反查 / sales ownership 校验留 Sprint X backlog（service 层）
+   *
+   * Sprint E backlog #3: read-only 不补 audit_log（本拍板范围仅写操作）
    */
   @Post('db/list-by-teacher')
   @HttpCode(HttpStatus.OK)
@@ -234,17 +421,59 @@ export class ScheduleController {
    *
    * Sprint B.4-1 round 2 (business P1-A): 早期 403 — 考勤标记仅 {teacher, sales} 可调
    * （admin/finance/parent/academic 任何登录用户原本可调，trust boundary 修复）
+   *
+   * Sprint E backlog #3: 成功路径 'schedule.mark-attendance'；拒绝 'schedule.mark-attendance.denied'
+   *   - 该 endpoint 操作 schedule_students 子记录，targetType 仍用 'schedule'（拍板锚定到父 schedule.id）
+   *   - after 含 studentId / newStatus / scheduleId（便于 audit_log 列出某 schedule 全考勤变更）
    */
   @Post(':scheduleId/students/:studentId/attendance')
   @HttpCode(HttpStatus.OK)
-  markAttendance(
-    @Param('scheduleId') _scheduleId: string,
-    @Param('studentId') _studentId: string,
-    @Body() body: { scheduleStudent: ScheduleStudent; newStatus: AttendanceStatus },
+  async markAttendance(
+    @Param('scheduleId') scheduleId: string,
+    @Param('studentId') studentId: string,
+    @Body() body: {
+      scheduleStudent: ScheduleStudent;
+      newStatus: AttendanceStatus;
+      tenantSchema?: string;
+    },
     @Req() req: AuthenticatedRequest,
-  ): ScheduleStudent {
-    this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
-    return this.service.markAttendance(body.scheduleStudent, body.newStatus);
+  ): Promise<ScheduleStudent> {
+    try {
+      this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema ?? 'unknown',
+        'schedule.mark-attendance.denied',
+        scheduleId,
+        {
+          reason: this.reasonFromError(err),
+          endpoint: 'markAttendance',
+          studentId,
+          attemptedStatus: body.newStatus,
+        },
+      );
+      throw err;
+    }
+    const before = {
+      scheduleId,
+      studentId,
+      attendanceStatus: body.scheduleStudent.attendanceStatus,
+    };
+    const result = this.service.markAttendance(body.scheduleStudent, body.newStatus);
+    await this.tryAudit(req, body.tenantSchema ?? 'unknown', {
+      action: 'schedule.mark-attendance',
+      targetType: 'schedule',
+      targetId: scheduleId,
+      before,
+      after: {
+        scheduleId,
+        studentId,
+        attendanceStatus: result.attendanceStatus,
+        previousStatus: body.scheduleStudent.attendanceStatus,
+      },
+    });
+    return result;
   }
 
   // -- helpers: server-derived RBAC context（Sprint B.4-1 拍板）--
@@ -354,6 +583,120 @@ export class ScheduleController {
       ...s,
       startAt: new Date(s.startAt as unknown as string),
       endAt: new Date(s.endAt as unknown as string),
+    };
+  }
+
+  // -- helpers: audit_log (Sprint E backlog #3) --
+
+  /**
+   * 写成功路径 audit_log，从 req 取 ip/ua/req-id，fail-open
+   */
+  private async tryAudit(
+    req: AuthenticatedRequest,
+    tenantSchema: string,
+    entry: {
+      action: string;
+      targetType: string;
+      targetId: string | null;
+      before: Record<string, unknown> | null;
+      after: Record<string, unknown> | null;
+    },
+  ): Promise<void> {
+    try {
+      await this.auditLog?.log(tenantSchema, {
+        actorUserId: req.user?.sub ?? null,
+        actorRole: this.actorRole(req),
+        action: entry.action,
+        targetType: entry.targetType,
+        targetId: entry.targetId,
+        before: entry.before,
+        after: entry.after,
+        ip: req.ip ?? null,
+        userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+        requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+      });
+    } catch {
+      // fail-open: AuditLogRepository.log 已内部 catch，此层为兜底
+    }
+  }
+
+  /**
+   * 写拒绝路径 audit_log（与 tryAudit 区分语义；reason 入 after 便于检索）
+   *
+   * 拒绝路径含三类：
+   *   - tenantSchema 缺：reason='TENANT_SCHEMA_REQUIRED'，tenantSchema 占位 'unknown'
+   *   - JWT 缺/role 非 {teacher,sales}：reason='ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE: role=xxx'
+   *     或 'JWT sub/role required'
+   *   - service 业务校验失败（SALES_ONLY_OWN_STUDENTS / SCHEDULE_CONFLICT 等）：
+   *     reason 取 err.message
+   */
+  private async tryAuditDenied(
+    req: AuthenticatedRequest,
+    tenantSchema: string,
+    action: string,
+    targetId: string | null,
+    after: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.auditLog?.log(tenantSchema, {
+        actorUserId: req.user?.sub ?? null,
+        actorRole: this.actorRole(req),
+        action,
+        targetType: 'schedule',
+        targetId,
+        before: null,
+        after,
+        ip: req.ip ?? null,
+        userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+        requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+      });
+    } catch {
+      // fail-open
+    }
+  }
+
+  private actorRole(req: AuthenticatedRequest): ActorRole {
+    return ((req.user?.role as ActorRole) ?? 'system') as ActorRole;
+  }
+
+  private reasonFromError(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    return String(err);
+  }
+
+  /**
+   * schedule snapshot for audit_log
+   *
+   * 无 PII（schedule 表只有 ID + 时间 + 状态字段，studentIds 是 ID 不是名字）
+   *
+   * 注：Schedule 接口本身不含 studentIds（join 表 schedule_students），所以
+   * studentIds 由调用方通过 extra 注入（来自 createSchedule 双值返回的 input 或 students）
+   */
+  private scheduleSnapshot(
+    s: Schedule,
+    extra?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      id: s.id,
+      teacherId: s.teacherId,
+      startAt: s.startAt instanceof Date ? s.startAt.toISOString() : s.startAt,
+      endAt: s.endAt instanceof Date ? s.endAt.toISOString() : s.endAt,
+      durationMin: s.durationMin,
+      status: s.status,
+      source: s.source,
+      classType: s.classType ?? null,
+      maxStudents: s.maxStudents ?? null,
+      ...(extra ?? {}),
+    };
+  }
+
+  /**
+   * studentIds 裁剪（控制 audit_log 大小：> 5 时仅记前 5 + length）
+   */
+  private studentIdsForAudit(ids: ReadonlyArray<string>): Record<string, unknown> {
+    return {
+      studentIds: ids.length > 5 ? ids.slice(0, 5) : ids,
+      studentIdsLength: ids.length,
     };
   }
 }

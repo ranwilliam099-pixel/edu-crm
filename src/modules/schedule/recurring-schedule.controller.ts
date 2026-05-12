@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Optional,
   Param,
   Post,
   Req,
@@ -20,6 +21,7 @@ import {
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
+import { ActorRole, AuditLogRepository } from '../db/audit-log.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 /**
@@ -45,6 +47,15 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
  *
  * Sprint B.6 mini (2026-05-11) 深度防御：
  *   - class-level @UseGuards(TenantScopeGuard) — 兜底跨租户校验
+ *
+ * Sprint E backlog #3 (2026-05-13) audit_log 整体补齐：
+ *   - 4 写 endpoint × 2 路径（成功 + 拒绝）= 8 处 audit_log 调用
+ *   - createBinding/unbindBinding → targetType='student_teacher_binding'
+ *     action='recurring-binding.create' / 'recurring-binding.unbind' / .denied
+ *   - createRecurring/archiveRecurring → targetType='recurring_schedule'
+ *     action='recurring-schedule.create' / 'recurring-schedule.archive' / .denied
+ *   - unbind / archive 同步方法 → 改 async（audit 必须 await）
+ *   - 拒绝路径 audit 写入相同 targetType（即使 tenantSchema='unknown' 写不进，fail-open）
  */
 @UseGuards(TenantScopeGuard)
 @Controller('recurring')
@@ -53,6 +64,8 @@ export class RecurringScheduleController {
     private readonly service: RecurringScheduleService,
     private readonly teacherRepo: TeacherRepository,
     private readonly studentRepo: StudentRepository,
+    // Sprint E backlog #3: audit_log 注入
+    @Optional() private readonly auditLog?: AuditLogRepository,
   ) {}
 
   /**
@@ -62,6 +75,8 @@ export class RecurringScheduleController {
    *   - tenantSchema 改为必填（缺则抛 BadRequestException('TENANT_SCHEMA_REQUIRED')）
    *   - 不再有 "fixture 模式跳过 RBAC" 路径（client 控制安全级别 = A04 硬违规）
    *   - 所有调用都走 server-derive RBAC + rbacContext 强制传给 service
+   *
+   * Sprint E backlog #3: 成功 'recurring-binding.create' / 拒绝 'recurring-binding.create.denied'
    */
   @Post('bindings')
   @HttpCode(HttpStatus.CREATED)
@@ -79,25 +94,83 @@ export class RecurringScheduleController {
     @Req() req: AuthenticatedRequest,
   ): Promise<StudentTeacherBinding> {
     if (!body.tenantSchema) {
+      await this.tryAuditDenied(
+        req,
+        'unknown',
+        'recurring-binding.create.denied',
+        'student_teacher_binding',
+        body.id ?? null,
+        { reason: 'TENANT_SCHEMA_REQUIRED', endpoint: 'createBinding' },
+      );
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
-    const { callerRole, currentUserId } = this.assertCallerRoleAndDeriveContext(req);
-    const rbacContext = await this.deriveRbacContext(
-      body.tenantSchema,
-      callerRole,
-      currentUserId,
-      { studentId: body.studentId, teacherId: body.teacherId },
-    );
-    return this.service.createBinding(
-      {
-        id: body.id,
-        studentId: body.studentId,
-        teacherId: body.teacherId,
-        subject: body.subject,
-        boundByUserId: currentUserId, // Sprint B.4-1: 强制覆盖
-      },
-      rbacContext,
-    );
+    let callerRole: 'teacher' | 'sales';
+    let currentUserId: string;
+    try {
+      ({ callerRole, currentUserId } = this.assertCallerRoleAndDeriveContext(req));
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'recurring-binding.create.denied',
+        'student_teacher_binding',
+        body.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createBinding' },
+      );
+      throw err;
+    }
+    let rbacContext: RecurringRbacContext;
+    try {
+      rbacContext = await this.deriveRbacContext(
+        body.tenantSchema,
+        callerRole,
+        currentUserId,
+        { studentId: body.studentId, teacherId: body.teacherId },
+      );
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'recurring-binding.create.denied',
+        'student_teacher_binding',
+        body.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createBinding' },
+      );
+      throw err;
+    }
+
+    let result: StudentTeacherBinding;
+    try {
+      result = await this.service.createBinding(
+        {
+          id: body.id,
+          studentId: body.studentId,
+          teacherId: body.teacherId,
+          subject: body.subject,
+          boundByUserId: currentUserId, // Sprint B.4-1: 强制覆盖
+        },
+        rbacContext,
+      );
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'recurring-binding.create.denied',
+        'student_teacher_binding',
+        body.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createBinding' },
+      );
+      throw err;
+    }
+
+    await this.tryAudit(req, body.tenantSchema, {
+      action: 'recurring-binding.create',
+      targetType: 'student_teacher_binding',
+      targetId: result.id,
+      before: null,
+      after: this.bindingSnapshot(result, { endpoint: 'createBinding' }),
+    });
+    return result;
   }
 
   /**
@@ -109,16 +182,41 @@ export class RecurringScheduleController {
    * NOTE: 暂不做 binding ownership 校验（sales 是否归属该 binding 的学员销售 /
    * teacher 是否归属该 binding 的老师），仅做角色限制。完整 ownership 校验记
    * Sprint X backlog。
+   *
+   * Sprint E backlog #3: 成功 'recurring-binding.unbind' / 拒绝 'recurring-binding.unbind.denied'
+   *   - service 是同步方法，本方法因 audit 改 async
    */
   @Post('bindings/:id/unbind')
   @HttpCode(HttpStatus.OK)
-  unbindBinding(
+  async unbindBinding(
     @Param('id') _id: string,
-    @Body() body: { binding: StudentTeacherBinding },
+    @Body() body: { binding: StudentTeacherBinding; tenantSchema?: string },
     @Req() req: AuthenticatedRequest,
-  ): StudentTeacherBinding {
-    this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
-    return this.service.unbindBinding(this.deserializeBinding(body.binding));
+  ): Promise<StudentTeacherBinding> {
+    try {
+      this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema ?? 'unknown',
+        'recurring-binding.unbind.denied',
+        'student_teacher_binding',
+        body.binding?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'unbindBinding' },
+      );
+      throw err;
+    }
+    const beforeBinding = this.deserializeBinding(body.binding);
+    const before = this.bindingSnapshot(beforeBinding, { endpoint: 'unbindBinding' });
+    const result = this.service.unbindBinding(beforeBinding);
+    await this.tryAudit(req, body.tenantSchema ?? 'unknown', {
+      action: 'recurring-binding.unbind',
+      targetType: 'student_teacher_binding',
+      targetId: result.id,
+      before,
+      after: this.bindingSnapshot(result, { endpoint: 'unbindBinding' }),
+    });
+    return result;
   }
 
   /**
@@ -130,6 +228,8 @@ export class RecurringScheduleController {
    *   - rbacContext 强制传给 service
    *
    * @returns active 模板（创建时未来 N 天展开预检通过）
+   *
+   * Sprint E backlog #3: 成功 'recurring-schedule.create' / 拒绝 'recurring-schedule.create.denied'
    */
   @Post('schedules')
   @HttpCode(HttpStatus.CREATED)
@@ -165,34 +265,94 @@ export class RecurringScheduleController {
     @Req() req: AuthenticatedRequest,
   ): Promise<RecurringSchedule> {
     if (!body.tenantSchema) {
+      await this.tryAuditDenied(
+        req,
+        'unknown',
+        'recurring-schedule.create.denied',
+        'recurring_schedule',
+        body.input?.id ?? null,
+        { reason: 'TENANT_SCHEMA_REQUIRED', endpoint: 'createRecurring' },
+      );
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
-    const { callerRole, currentUserId } = this.assertCallerRoleAndDeriveContext(req);
-    const rbacContext = await this.deriveRbacContext(
-      body.tenantSchema,
-      callerRole,
-      currentUserId,
-      { studentId: body.input.studentId, teacherId: body.input.teacherId },
-    );
+    let callerRole: 'teacher' | 'sales';
+    let currentUserId: string;
+    try {
+      ({ callerRole, currentUserId } = this.assertCallerRoleAndDeriveContext(req));
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'recurring-schedule.create.denied',
+        'recurring_schedule',
+        body.input?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createRecurring' },
+      );
+      throw err;
+    }
+    let rbacContext: RecurringRbacContext;
+    try {
+      rbacContext = await this.deriveRbacContext(
+        body.tenantSchema,
+        callerRole,
+        currentUserId,
+        { studentId: body.input.studentId, teacherId: body.input.teacherId },
+      );
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'recurring-schedule.create.denied',
+        'recurring_schedule',
+        body.input?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createRecurring' },
+      );
+      throw err;
+    }
 
-    return this.service.createRecurring(
-      {
-        ...body.input,
-        startDate: new Date(body.input.startDate),
-        endDate: body.input.endDate ? new Date(body.input.endDate) : undefined,
-        // Sprint B.4-1: server 派生覆盖
-        createdByUserId: currentUserId,
-        createdByRole: callerRole,
-      },
-      body.expandRangeDays,
-      body.existingSchedules.map((s) => ({
-        ...s,
-        startAt: new Date(s.startAt),
-        endAt: new Date(s.endAt),
-      })),
-      undefined, // now 默认值
-      rbacContext,
-    );
+    let result: RecurringSchedule;
+    try {
+      result = await this.service.createRecurring(
+        {
+          ...body.input,
+          startDate: new Date(body.input.startDate),
+          endDate: body.input.endDate ? new Date(body.input.endDate) : undefined,
+          // Sprint B.4-1: server 派生覆盖
+          createdByUserId: currentUserId,
+          createdByRole: callerRole,
+        },
+        body.expandRangeDays,
+        body.existingSchedules.map((s) => ({
+          ...s,
+          startAt: new Date(s.startAt),
+          endAt: new Date(s.endAt),
+        })),
+        undefined, // now 默认值
+        rbacContext,
+      );
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema,
+        'recurring-schedule.create.denied',
+        'recurring_schedule',
+        body.input?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'createRecurring' },
+      );
+      throw err;
+    }
+
+    await this.tryAudit(req, body.tenantSchema, {
+      action: 'recurring-schedule.create',
+      targetType: 'recurring_schedule',
+      targetId: result.id,
+      before: null,
+      after: this.recurringSnapshot(result, {
+        endpoint: 'createRecurring',
+        expandRangeDays: body.expandRangeDays,
+      }),
+    });
+    return result;
   }
 
   /**
@@ -203,22 +363,49 @@ export class RecurringScheduleController {
    *
    * NOTE: 暂不做 recurring schedule ownership 校验，仅做角色限制。完整
    * ownership 校验记 Sprint X backlog。
+   *
+   * Sprint E backlog #3: 成功 'recurring-schedule.archive' / 拒绝 'recurring-schedule.archive.denied'
+   *   - service 是同步方法，本方法因 audit 改 async
    */
   @Post('schedules/:id/archive')
   @HttpCode(HttpStatus.OK)
-  archiveRecurring(
+  async archiveRecurring(
     @Param('id') _id: string,
-    @Body() body: { recurring: RecurringSchedule },
+    @Body() body: { recurring: RecurringSchedule; tenantSchema?: string },
     @Req() req: AuthenticatedRequest,
-  ): RecurringSchedule {
-    this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
-    return this.service.archiveRecurring(this.deserializeRecurring(body.recurring));
+  ): Promise<RecurringSchedule> {
+    try {
+      this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
+    } catch (err) {
+      await this.tryAuditDenied(
+        req,
+        body.tenantSchema ?? 'unknown',
+        'recurring-schedule.archive.denied',
+        'recurring_schedule',
+        body.recurring?.id ?? null,
+        { reason: this.reasonFromError(err), endpoint: 'archiveRecurring' },
+      );
+      throw err;
+    }
+    const beforeRec = this.deserializeRecurring(body.recurring);
+    const before = this.recurringSnapshot(beforeRec, { endpoint: 'archiveRecurring' });
+    const result = this.service.archiveRecurring(beforeRec);
+    await this.tryAudit(req, body.tenantSchema ?? 'unknown', {
+      action: 'recurring-schedule.archive',
+      targetType: 'recurring_schedule',
+      targetId: result.id,
+      before,
+      after: this.recurringSnapshot(result, { endpoint: 'archiveRecurring' }),
+    });
+    return result;
   }
 
   /**
    * POST /api/recurring/schedules/expand-preview
    *
    * 用于前端创建模板前预览展开时段（不写入 DB）
+   *
+   * Sprint E backlog #3: pure calc read-only，不补 audit_log（本拍板范围仅写操作）
    */
   @Post('schedules/expand-preview')
   @HttpCode(HttpStatus.OK)
@@ -323,6 +510,125 @@ export class RecurringScheduleController {
       endDate: r.endDate ? new Date(r.endDate as unknown as string) : undefined,
       createdAt: new Date(r.createdAt as unknown as string),
       archivedAt: r.archivedAt ? new Date(r.archivedAt as unknown as string) : undefined,
+    };
+  }
+
+  // -- helpers: audit_log (Sprint E backlog #3) --
+
+  private async tryAudit(
+    req: AuthenticatedRequest,
+    tenantSchema: string,
+    entry: {
+      action: string;
+      targetType: string;
+      targetId: string | null;
+      before: Record<string, unknown> | null;
+      after: Record<string, unknown> | null;
+    },
+  ): Promise<void> {
+    try {
+      await this.auditLog?.log(tenantSchema, {
+        actorUserId: req.user?.sub ?? null,
+        actorRole: this.actorRole(req),
+        action: entry.action,
+        targetType: entry.targetType,
+        targetId: entry.targetId,
+        before: entry.before,
+        after: entry.after,
+        ip: req.ip ?? null,
+        userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+        requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+      });
+    } catch {
+      // fail-open
+    }
+  }
+
+  private async tryAuditDenied(
+    req: AuthenticatedRequest,
+    tenantSchema: string,
+    action: string,
+    targetType: string,
+    targetId: string | null,
+    after: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.auditLog?.log(tenantSchema, {
+        actorUserId: req.user?.sub ?? null,
+        actorRole: this.actorRole(req),
+        action,
+        targetType,
+        targetId,
+        before: null,
+        after,
+        ip: req.ip ?? null,
+        userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+        requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+      });
+    } catch {
+      // fail-open
+    }
+  }
+
+  private actorRole(req: AuthenticatedRequest): ActorRole {
+    return ((req.user?.role as ActorRole) ?? 'system') as ActorRole;
+  }
+
+  private reasonFromError(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    return String(err);
+  }
+
+  /**
+   * binding snapshot for audit_log（无 PII）
+   */
+  private bindingSnapshot(
+    b: StudentTeacherBinding,
+    extra?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      id: b.id,
+      studentId: b.studentId,
+      teacherId: b.teacherId,
+      subject: b.subject ?? null,
+      status: b.status,
+      boundByUserId: b.boundByUserId ?? null,
+      boundAt: b.boundAt instanceof Date ? b.boundAt.toISOString() : b.boundAt,
+      unboundAt: b.unboundAt
+        ? b.unboundAt instanceof Date
+          ? b.unboundAt.toISOString()
+          : b.unboundAt
+        : null,
+      ...(extra ?? {}),
+    };
+  }
+
+  /**
+   * recurring snapshot for audit_log（无 PII；byDay 数组小不裁剪）
+   */
+  private recurringSnapshot(
+    r: RecurringSchedule,
+    extra?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      id: r.id,
+      bindingId: r.bindingId,
+      studentId: r.studentId,
+      teacherId: r.teacherId,
+      courseProductId: r.courseProductId ?? null,
+      byDay: r.byDay,
+      startMinutes: r.startMinutes,
+      durationMin: r.durationMin,
+      startDate: r.startDate instanceof Date ? r.startDate.toISOString() : r.startDate,
+      endDate: r.endDate
+        ? r.endDate instanceof Date
+          ? r.endDate.toISOString()
+          : r.endDate
+        : null,
+      status: r.status,
+      createdByUserId: r.createdByUserId,
+      createdByRole: r.createdByRole,
+      ...(extra ?? {}),
     };
   }
 }
