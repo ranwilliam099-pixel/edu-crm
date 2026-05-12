@@ -204,13 +204,23 @@ export class ScheduleController {
 
   /**
    * POST /api/schedules/db/list-by-teacher
+   *
+   * Sprint B.4-1 round 3 (Sprint E backlog #7 — A01 hardening 2026-05-13):
+   *   - 加 @Req() + assertCallerRoleAndDeriveContext 限 {teacher, sales}
+   *   - 原 pre-existing 风险：任何已登录 JWT role 可调取任意 teacherId 课表
+   *     （受 TenantScopeGuard 跨租户隔离，但同租户内任 admin/finance/parent/academic
+   *     都能查别人销售归属的老师课表，违反「教务全只读老师线」+ sales 不跨域）
+   *   - 本轮仅做角色级 trust boundary 收紧（同 cancel/complete/attendance 模式），
+   *     teacher self-only 反查 / sales ownership 校验留 Sprint X backlog（service 层）
    */
   @Post('db/list-by-teacher')
   @HttpCode(HttpStatus.OK)
   async listByTeacherInDb(
     @Body()
     body: { tenantSchema: string; teacherId: string; fromIso: string; toIso: string },
+    @Req() req: AuthenticatedRequest,
   ): Promise<Schedule[]> {
+    this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher, sales} 限制
     return this.service.listByTeacherInDb(
       body.tenantSchema,
       body.teacherId,

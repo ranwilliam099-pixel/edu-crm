@@ -664,6 +664,86 @@ describe('ScheduleController — Sprint B.4-1 server-derived RBAC', () => {
     });
   });
 
+  describe('listByTeacherInDb — 早期 403 角色限制 (Sprint B.4-1 round 3 / Sprint E backlog #7 A01)', () => {
+    const listBody = {
+      tenantSchema: TENANT,
+      teacherId: TEACHER_T1,
+      fromIso: '2026-05-13T00:00:00Z',
+      toIso: '2026-05-20T00:00:00Z',
+    };
+
+    it('JWT role=admin → 403 ONLY_TEACHER_OR_SALES（早于 service）', async () => {
+      await expect(
+        controller.listByTeacherInDb(
+          listBody,
+          mkReq({
+            user: {
+              sub: 'admin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1',
+              role: 'admin',
+              tenantId: null,
+              campusId: null,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+      expect(svc.listByTeacherInDb).not.toHaveBeenCalled();
+    });
+
+    it('JWT role=academic → 403 ONLY_TEACHER_OR_SALES（教务全只读老师线，pre-existing 漏洞收紧）', async () => {
+      await expect(
+        controller.listByTeacherInDb(
+          listBody,
+          mkReq({
+            user: {
+              sub: 'acad_ccccccccccccccccccccccccccccccc1',
+              role: 'academic',
+              tenantId: 'tenant-x',
+              campusId: 'campus-x',
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+    });
+
+    it('JWT role=finance → 403 ONLY_TEACHER_OR_SALES', async () => {
+      await expect(
+        controller.listByTeacherInDb(
+          listBody,
+          mkReq({
+            user: {
+              sub: 'finance_ffffffffffffffffffffffffffffff1',
+              role: 'finance',
+              tenantId: 'tenant-x',
+              campusId: 'campus-x',
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+    });
+
+    it('JWT role=sales → 调用 service', async () => {
+      svc.listByTeacherInDb.mockResolvedValueOnce([]);
+      await controller.listByTeacherInDb(listBody, mkReq());
+      expect(svc.listByTeacherInDb).toHaveBeenCalledTimes(1);
+    });
+
+    it('JWT role=teacher → 调用 service', async () => {
+      svc.listByTeacherInDb.mockResolvedValueOnce([]);
+      await controller.listByTeacherInDb(
+        listBody,
+        mkReq({
+          user: {
+            sub: USER_TEACHER_U3,
+            role: 'teacher',
+            tenantId: 'tenant-x',
+            campusId: 'campus-x',
+          },
+        }),
+      );
+      expect(svc.listByTeacherInDb).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('markAttendance — 早期 403 角色限制 (Sprint B.4-1 round 2 P1-A)', () => {
     const dummyStudent: ScheduleStudent = {
       scheduleId: SCHEDULE_ID,

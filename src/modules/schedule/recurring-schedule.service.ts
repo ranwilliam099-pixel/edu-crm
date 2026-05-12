@@ -348,32 +348,26 @@ export class RecurringScheduleService {
     ctx: RecurringRbacContext,
     target: { studentId: string; teacherId: string },
   ): void {
+    // Sprint B.4-1 round 3 (Sprint E backlog #6 — A05 hardening 2026-05-13):
+    // 错误 message 不再嵌入 studentResponsibleSalesId / teacherUserId / currentUserId 等内部 ID
+    // 避免攻击者通过 403 响应枚举销售归属关系 (owner=X != caller=Y 模式)
+    // 内部排查需要时通过 audit_log + reqId 链路追踪 (Sprint E 整体补)
     if (ctx.callerRole === 'sales') {
       if (ctx.studentResponsibleSalesId == null) {
-        throw new ForbiddenException(
-          `STUDENT_NOT_OWNED_BY_SALES: studentId=${target.studentId} 无归属销售或未传 rbacContext.studentResponsibleSalesId`,
-        );
+        throw new ForbiddenException('STUDENT_NOT_OWNED_BY_SALES');
       }
       if (ctx.studentResponsibleSalesId !== ctx.currentUserId) {
-        throw new ForbiddenException(
-          `STUDENT_NOT_OWNED_BY_SALES: studentId=${target.studentId} owner=${ctx.studentResponsibleSalesId} != caller=${ctx.currentUserId}`,
-        );
+        throw new ForbiddenException('STUDENT_NOT_OWNED_BY_SALES');
       }
     } else if (ctx.callerRole === 'teacher') {
       if (ctx.teacherUserId == null) {
-        throw new ForbiddenException(
-          `TEACHER_USER_NOT_BOUND: teacherId=${target.teacherId} 反查不到 user_id`,
-        );
+        throw new ForbiddenException('TEACHER_USER_NOT_BOUND');
       }
       if (ctx.teacherUserId !== ctx.currentUserId) {
-        throw new ForbiddenException(
-          `TEACHER_USER_NOT_BOUND: teacherId=${target.teacherId} user_id=${ctx.teacherUserId} != caller=${ctx.currentUserId}`,
-        );
+        throw new ForbiddenException('TEACHER_USER_NOT_BOUND');
       }
     } else {
-      throw new ForbiddenException(
-        `ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE: callerRole=${ctx.callerRole}`,
-      );
+      throw new ForbiddenException('ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE');
     }
   }
 

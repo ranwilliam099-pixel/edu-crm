@@ -283,12 +283,12 @@ export class RecurringScheduleController {
     currentUserId: string,
     target: { studentId: string; teacherId: string },
   ): Promise<RecurringRbacContext> {
+    // Sprint B.4-1 round 3 (Sprint E backlog #6 — A05 hardening): 错误 message 仅返错误码
+    // 不再嵌入 studentId / teacherId 等内部 ID（统一与 service 层 assertRecurringRbac 一致）
     if (callerRole === 'sales') {
       const student = await this.studentRepo.findBrief(tenantSchema, target.studentId);
       if (!student) {
-        throw new ForbiddenException(
-          `STUDENT_NOT_FOUND: studentId=${target.studentId} 不存在或不在该租户`,
-        );
+        throw new ForbiddenException('STUDENT_NOT_FOUND');
       }
       return {
         callerRole,
@@ -299,9 +299,7 @@ export class RecurringScheduleController {
     // teacher
     const teacher = await this.teacherRepo.findById(tenantSchema, target.teacherId);
     if (!teacher) {
-      throw new ForbiddenException(
-        `TEACHER_NOT_FOUND: teacherId=${target.teacherId} 不存在或不在该租户`,
-      );
+      throw new ForbiddenException('TEACHER_NOT_FOUND');
     }
     return {
       callerRole,
