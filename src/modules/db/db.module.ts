@@ -91,6 +91,11 @@ import { AuditLogRepository } from './audit-log.repository';
 // 测试环境由 jest.setup.ts 注入 TEST_ENCRYPTION_KEY；生产由 .env 注入真实 key
 import { FieldEncryptor } from '../../common/crypto/field-encryptor';
 
+// ===== V40 phone_hash（A02-3 parent.phone 等值查询）=====
+// HmacHasher 与 FieldEncryptor 同模式：useFactory + 构造时读 process.env.HASH_KEY
+// HASH_KEY 独立于 ENCRYPTION_KEY（密钥分离，泄露不互相牵连）
+import { HmacHasher } from '../../common/crypto/hmac-hasher';
+
 /**
  * DbModule — 全局持久化基础设施层
  *
@@ -186,10 +191,15 @@ import { FieldEncryptor } from '../../common/crypto/field-encryptor';
     CourseProductRepository,
     // V33 审计日志
     AuditLogRepository,
-    // V34 字段加密（A02-1 仅 teacher 落地；A02-2 parent/customer 复用同一 provider）
+    // V34 字段加密（A02-1 teacher / A02-2 customer / A02-3 parent.phone_encrypted 共享）
     {
       provide: FieldEncryptor,
       useFactory: () => new FieldEncryptor(),
+    },
+    // V40 phone_hash（A02-3 parent.phone 等值查询；独立 HASH_KEY）
+    {
+      provide: HmacHasher,
+      useFactory: () => new HmacHasher(),
     },
   ],
   exports: [
@@ -227,6 +237,7 @@ import { FieldEncryptor } from '../../common/crypto/field-encryptor';
     CourseProductRepository,
     AuditLogRepository,
     FieldEncryptor,
+    HmacHasher,
   ],
 })
 export class DbModule {}

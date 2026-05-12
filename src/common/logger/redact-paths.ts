@@ -69,4 +69,10 @@ export const REDACT_PATHS: string[] = [
   '*.phoneEncrypted',
   '*.wechat_encrypted',
   '*.wechatEncrypted',
+
+  // ===== A02-3 round 2 (security WARNING #2 修复): PII 衍生物 =====
+  // phone_hash 是 HMAC-SHA256(phone, HASH_KEY) 输出，等同身份标识
+  // 持有 HASH_KEY 的人可暴力枚举 10^11 手机号空间反查 → 不能进日志
+  '*.phone_hash',
+  '*.phoneHash',
 ];
