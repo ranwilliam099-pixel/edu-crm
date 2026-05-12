@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PgPoolService, PgRow } from './pg-pool.service';
 import { FieldEncryptor } from '../../common/crypto/field-encryptor';
+import { HmacHasher } from '../../common/crypto/hmac-hasher';
 
 /**
  * CustomerRepository — V25 销售客户管理（基于 V2 opportunities + V25 ALTER）
@@ -27,6 +28,14 @@ import { FieldEncryptor } from '../../common/crypto/field-encryptor';
  *   - opportunities 表无 WHERE phone=? 等值查询、无 UNIQUE 索引 → GCM 随机 IV 不影响功能
  *   - 旧数据（V40 backfill 前 *_encrypted=NULL）走明文 fallback
  *   - 灰度完毕 + V40 backfill 全量后，V41+ DROP 明文列
+ *
+ * V41 三写模式（A02-4，2026-05-13）：
+ *   - customers.primary_mobile + primary_mobile_hash + primary_mobile_encrypted 三轨
+ *   - createWithOpportunity INSERT customers：三列同事务一并写
+ *   - 兼容期：旧行 *_hash/*_encrypted=NULL，新行三写
+ *   - 查重路径（StudentImportRepository）：hash 列优先 + 明文 fallback
+ *   - 注意：customers 表的 INSERT 当前只在 createWithOpportunity + StudentImport，
+ *     SELECT 路径不在 CustomerRepository（CustomerRepository 操作的是 opportunities 表）
  */
 
 export type CustomerStage =
@@ -96,6 +105,7 @@ export class CustomerRepository {
   constructor(
     private readonly pg: PgPoolService,
     private readonly encryptor: FieldEncryptor,
+    private readonly hasher: HmacHasher,
   ) {}
 
   /**
@@ -149,13 +159,24 @@ export class CustomerRepository {
     return this.pg.transaction(
       async (client) => {
         // 1. customer（家长）
+        //    V41 A02-4：primary_mobile 明文 + primary_mobile_hash（HMAC 等值查询）
+        //                + primary_mobile_encrypted（AES-GCM 存储）三写（同事务保证一致）
+        //    旧数据兼容期 *_hash/*_encrypted=NULL；新写入三列同时落
+        const mobilePlain = payload.primaryMobile;
+        const mobileHash = this.hashMobile(mobilePlain);
+        const mobileEncrypted = this.encryptMobile(mobilePlain);
         await client.query(
-          `INSERT INTO customers (id, parent_name, primary_mobile, campus_id, owner_id, created_by, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $5, $5)`,
+          `INSERT INTO customers (
+             id, parent_name,
+             primary_mobile, primary_mobile_hash, primary_mobile_encrypted,
+             campus_id, owner_id, created_by, updated_by
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7)`,
           [
             payload.customerId,
             payload.parentName,
-            payload.primaryMobile,
+            mobilePlain,
+            mobileHash,
+            mobileEncrypted,
             payload.campusId,
             payload.ownerSalesId,
           ],
@@ -715,5 +736,25 @@ export class CustomerRepository {
       }
     }
     return fallbackPlain ?? null;
+  }
+
+  // =====================================================================
+  // V41 customers.primary_mobile 三写 helper（A02-4，2026-05-13）
+  // =====================================================================
+
+  /**
+   * V41 计算 primary_mobile HMAC-SHA256 hash → BYTEA Buffer
+   * null/undefined → null（防 INSERT 入参为空时崩溃）
+   */
+  private hashMobile(plaintext: string | null | undefined): Buffer | null {
+    return this.hasher.hash(plaintext);
+  }
+
+  /**
+   * V41 加密 primary_mobile 明文 → BYTEA Buffer（AES-256-GCM）
+   * encryptor.encrypt 内部对 null/undefined 返回 null
+   */
+  private encryptMobile(plaintext: string | null | undefined): Buffer | null {
+    return this.encryptor.encrypt(plaintext);
   }
 }

@@ -75,4 +75,15 @@ export const REDACT_PATHS: string[] = [
   // 持有 HASH_KEY 的人可暴力枚举 10^11 手机号空间反查 → 不能进日志
   '*.phone_hash',
   '*.phoneHash',
+
+  // ===== A02-4 round 2 (3 validator 三方共识 FINDING-1 修复): customer.primary_mobile =====
+  // primary_mobile 是客户主联系手机号（个保法一级敏感）
+  // fast-redact 通配 *.mobile 不命中 *.primary_mobile（整体键名不同，A02-3 phone 通配也不自动覆盖）
+  // 必须显式加 primary_mobile 系列 6 条 wildcard（snake_case + camelCase 各 3）
+  '*.primary_mobile',
+  '*.primaryMobile',
+  '*.primary_mobile_hash',
+  '*.primaryMobileHash',
+  '*.primary_mobile_encrypted',
+  '*.primaryMobileEncrypted',
 ];

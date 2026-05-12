@@ -3,17 +3,23 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { CustomerRepository } from './customer.repository';
 import { PgPoolService } from './pg-pool.service';
 import { FieldEncryptor } from '../../common/crypto/field-encryptor';
+import { HmacHasher } from '../../common/crypto/hmac-hasher';
 
 /**
  * CustomerRepository spec — V25 销售客户 + V34 字段加密双写双读（A02-2）
+ *                                          + V41 customers.primary_mobile 三写（A02-4）
  *
  * 2026-05-11 新建（A02-2）：覆盖
  *   - createWithOpportunity：INSERT 时 phone 明文 + phone_encrypted 密文双写
  *   - mapCustomerRow：SELECT 时优先 decrypt phone_encrypted / wechat_encrypted
  *   - decrypt 失败 → logger.warn + fallback 明文（fail-open）
  *   - claim / release / markLost 验证 RETURNING * 经 mapCustomerRow 后字段透传
+ *
+ * 2026-05-13 扩充（A02-4）：覆盖
+ *   - createWithOpportunity 写 customers 表三列（primary_mobile + *_hash + *_encrypted）
+ *   - HmacHasher 注入校验（与 ParentRepository V40 同模式）
  */
-describe('CustomerRepository (V25 + V34 字段加密双写双读)', () => {
+describe('CustomerRepository (V25 + V34 字段加密双写双读 + V41 customers.primary_mobile 三写)', () => {
   let repo: CustomerRepository;
   let pg: {
     tenantQuery: jest.Mock;
@@ -23,9 +29,11 @@ describe('CustomerRepository (V25 + V34 字段加密双写双读)', () => {
   };
   let txClient: { query: jest.Mock };
   let encryptor: { encrypt: jest.Mock; decrypt: jest.Mock };
+  let hasher: { hash: jest.Mock };
 
   const MOCK_CIPHER_PHONE = Buffer.from([0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
   const MOCK_CIPHER_WECHAT = Buffer.from([0x11, 0x22, 0x33, 0x44, 0x02]);
+  const MOCK_HASH_MOBILE = Buffer.alloc(32, 0x55);
   const MOCK_PHONE_PLAIN = '13800001234';
   const MOCK_WECHAT_PLAIN = 'wx_user_abc';
 
@@ -103,11 +111,17 @@ describe('CustomerRepository (V25 + V34 字段加密双写双读)', () => {
         return MOCK_PHONE_PLAIN; // fallback
       }),
     };
+    hasher = {
+      hash: jest.fn((plain: string | null | undefined) =>
+        plain === null || plain === undefined ? null : MOCK_HASH_MOBILE,
+      ),
+    };
     const m = await Test.createTestingModule({
       providers: [
         CustomerRepository,
         { provide: PgPoolService, useValue: pg },
         { provide: FieldEncryptor, useValue: encryptor },
+        { provide: HmacHasher, useValue: hasher },
       ],
     }).compile();
     repo = m.get(CustomerRepository);
@@ -115,9 +129,10 @@ describe('CustomerRepository (V25 + V34 字段加密双写双读)', () => {
 
   // =====================================================================
   // V34 INSERT 双写 phone + phone_encrypted（A02-2）
+  //   + V41 INSERT 三写 customers.primary_mobile (A02-4)
   // =====================================================================
-  describe('V34 createWithOpportunity 双写 phone + phone_encrypted', () => {
-    it('销售即时建客户（含 student）→ encrypt 1 次 + opportunity SQL 含 phone_encrypted 列', async () => {
+  describe('V34 + V41 createWithOpportunity 三写 customers + 双写 opportunities', () => {
+    it('销售即时建客户（含 student）→ V41 customers 三写 + V34 opportunity 双写', async () => {
       // 3 个 INSERT 顺序：customers, students, opportunities
       txClient.query
         .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // customers
@@ -141,11 +156,34 @@ describe('CustomerRepository (V25 + V34 字段加密双写双读)', () => {
       expect(r.opportunityId).toBe(OPPORTUNITY_ID);
       expect(r.studentId).toBe(STUDENT_ID);
 
-      // encrypt 调用 1 次（opportunity 的 phone；customers.primary_mobile 留 A02-4 未加密）
-      expect(encryptor.encrypt).toHaveBeenCalledTimes(1);
-      expect(encryptor.encrypt).toHaveBeenCalledWith(MOCK_PHONE_PLAIN);
+      // V41: hash 调用 1 次（customers.primary_mobile）
+      expect(hasher.hash).toHaveBeenCalledTimes(1);
+      expect(hasher.hash).toHaveBeenCalledWith(MOCK_PHONE_PLAIN);
 
-      // opportunity INSERT 的 SQL 含 phone_encrypted 列
+      // encrypt 调用 2 次：V41 customers.primary_mobile + V34 opportunities.phone
+      expect(encryptor.encrypt).toHaveBeenCalledTimes(2);
+      expect(encryptor.encrypt).toHaveBeenNthCalledWith(1, MOCK_PHONE_PLAIN);
+      expect(encryptor.encrypt).toHaveBeenNthCalledWith(2, MOCK_PHONE_PLAIN);
+
+      // V41 customers INSERT 的 SQL 含 primary_mobile_hash + primary_mobile_encrypted 列
+      const customersCall = txClient.query.mock.calls.find(
+        (c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO customers'),
+      );
+      expect(customersCall).toBeDefined();
+      expect(customersCall![0]).toMatch(/primary_mobile_hash/);
+      expect(customersCall![0]).toMatch(/primary_mobile_encrypted/);
+      // params 顺序：customerId, parentName, primary_mobile, primary_mobile_hash,
+      //              primary_mobile_encrypted, campusId, ownerSalesId
+      const cParams = customersCall![1];
+      expect(cParams[0]).toBe(CUSTOMER_ID);
+      expect(cParams[1]).toBe('王爸爸');
+      expect(cParams[2]).toBe(MOCK_PHONE_PLAIN); // primary_mobile 明文
+      expect(cParams[3]).toEqual(MOCK_HASH_MOBILE); // primary_mobile_hash
+      expect(cParams[4]).toEqual(MOCK_CIPHER_PHONE); // primary_mobile_encrypted
+      expect(cParams[5]).toBe(CAMPUS_A);
+      expect(cParams[6]).toBe(SALES_A);
+
+      // V34 opportunity INSERT 的 SQL 含 phone_encrypted 列（原 A02-2 不变）
       const oppoCall = txClient.query.mock.calls.find(
         (c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO opportunities'),
       );
@@ -157,7 +195,7 @@ describe('CustomerRepository (V25 + V34 字段加密双写双读)', () => {
       expect(params[7]).toEqual(MOCK_CIPHER_PHONE); // phone_encrypted Buffer
     });
 
-    it('销售即时建客户（无 student）→ 不写 opportunity → encrypt 不调用', async () => {
+    it('销售即时建客户（无 student）→ V41 customers 三写 + 不写 opportunity', async () => {
       txClient.query.mockResolvedValueOnce({ rowCount: 1, rows: [] }); // 只有 customers
 
       const r = await repo.createWithOpportunity(TENANT, {
@@ -171,11 +209,21 @@ describe('CustomerRepository (V25 + V34 字段加密双写双读)', () => {
 
       expect(r.studentId).toBeNull();
       expect(r.opportunityId).toBe(''); // 无 student → opportunity 跳过 → 返回空字符串
-      // 无 opportunity INSERT → encrypt 不应被调用
-      expect(encryptor.encrypt).not.toHaveBeenCalled();
+
+      // V41 customers 仍三写 → hash + encrypt 各 1 次
+      expect(hasher.hash).toHaveBeenCalledTimes(1);
+      expect(encryptor.encrypt).toHaveBeenCalledTimes(1);
+
+      // customers SQL 含三列
+      const customersCall = txClient.query.mock.calls.find(
+        (c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO customers'),
+      );
+      expect(customersCall).toBeDefined();
+      expect(customersCall![0]).toMatch(/primary_mobile_hash/);
+      expect(customersCall![0]).toMatch(/primary_mobile_encrypted/);
     });
 
-    it('入参非法 → 提前抛 BadRequest，不进事务、不 encrypt', async () => {
+    it('入参非法 → 提前抛 BadRequest，不进事务、不 hash、不 encrypt', async () => {
       await expect(
         repo.createWithOpportunity(TENANT, {
           customerId: CUSTOMER_ID,
@@ -186,6 +234,7 @@ describe('CustomerRepository (V25 + V34 字段加密双写双读)', () => {
           ownerSalesId: SALES_A,
         }),
       ).rejects.toThrow(BadRequestException);
+      expect(hasher.hash).not.toHaveBeenCalled();
       expect(encryptor.encrypt).not.toHaveBeenCalled();
       expect(pg.transaction).not.toHaveBeenCalled();
     });

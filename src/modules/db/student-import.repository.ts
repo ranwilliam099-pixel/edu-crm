@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PgPoolService } from './pg-pool.service';
+import { FieldEncryptor } from '../../common/crypto/field-encryptor';
+import { HmacHasher } from '../../common/crypto/hmac-hasher';
 
 /**
  * StudentImportRepository — V18 学员批量导入持久化层（tenant schema）
@@ -14,6 +16,11 @@ import { PgPoolService } from './pg-pool.service';
  *   3. 事务批量插入：customer (parent) → student
  *      - 同一手机号已有 customer 则复用 customer.id
  *   4. 单行错误不阻塞其他行（catch + push errorRows）
+ *
+ * V41 三写双读（A02-4，2026-05-13）：
+ *   - customers.primary_mobile + primary_mobile_hash + primary_mobile_encrypted 三轨
+ *   - 查重 SELECT：hash 列优先（生产路径）+ 明文 fallback（兼容期 backfill 未完成）
+ *   - 新建 INSERT：明文 + hash + encrypted 三列同事务一并写
  */
 
 export interface StudentImportRow {
@@ -39,7 +46,11 @@ export interface StudentImportResult {
 
 @Injectable()
 export class StudentImportRepository {
-  constructor(private readonly pg: PgPoolService) {}
+  constructor(
+    private readonly pg: PgPoolService,
+    private readonly encryptor: FieldEncryptor,
+    private readonly hasher: HmacHasher,
+  ) {}
 
   /**
    * 校验单行（用纯函数便于单测）
@@ -98,24 +109,41 @@ export class StudentImportRepository {
 
           try {
             // 1. 找/创建 customer（按 primary_mobile 匹配）
-            const existing = await client.query(
-              `SELECT id FROM customers WHERE primary_mobile = $1 LIMIT 1`,
-              [row.parentPhone.trim()],
+            //    V41 A02-4：优先 hash 列查询（生产路径）+ fallback 明文兼容期
+            //    backfill 未完成的老行 primary_mobile_hash=NULL → hash 查不到 → 走明文 fallback
+            const mobilePlain = row.parentPhone.trim();
+            const mobileHash = this.hasher.hash(mobilePlain);
+            let existing = await client.query(
+              `SELECT id FROM customers WHERE primary_mobile_hash = $1 LIMIT 1`,
+              [mobileHash],
             );
+            if (!existing.rowCount || existing.rowCount === 0) {
+              // backfill 未完成的老行兼容（旧明文列仍 UNIQUE，可查到）
+              existing = await client.query(
+                `SELECT id FROM customers WHERE primary_mobile = $1 LIMIT 1`,
+                [mobilePlain],
+              );
+            }
 
             let customerId: string;
             if (existing.rowCount && existing.rowCount > 0) {
               customerId = existing.rows[0].id;
             } else {
               customerId = this.generateUlid();
+              // V41 A02-4：三写 primary_mobile + primary_mobile_hash + primary_mobile_encrypted
+              const mobileEncrypted = this.encryptor.encrypt(mobilePlain);
               await client.query(
                 `INSERT INTO customers (
-                   id, parent_name, primary_mobile, campus_id, created_by, updated_by
-                 ) VALUES ($1, $2, $3, $4, $5, $5)`,
+                   id, parent_name,
+                   primary_mobile, primary_mobile_hash, primary_mobile_encrypted,
+                   campus_id, created_by, updated_by
+                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
                 [
                   customerId,
                   row.parentName.trim(),
-                  row.parentPhone.trim(),
+                  mobilePlain,
+                  mobileHash,
+                  mobileEncrypted,
                   options.campusId,
                   options.operatorUserId,
                 ],
