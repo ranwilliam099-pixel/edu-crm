@@ -1,4 +1,10 @@
-import { Injectable, BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
 
 /**
  * RecurringScheduleService — V8.1 周期性课表 BE-V8-2
@@ -9,6 +15,20 @@ import { Injectable, BadRequestException, ConflictException, Logger } from '@nes
  *
  * 简化 RRULE：BYDAY 字段为 ["MO","WE","FR"] + startMinutes（0-1439）
  *   完整 iCal RRULE 后续用 rrule.js 库扩展（V12+）
+ *
+ * Sprint B.4-1（2026-05-12）RBAC 加固（leader 拍板 Q2 同 schedule.service）：
+ *   - createBinding / createRecurring 增加 rbacContext 可选参数（向后兼容现有 spec）
+ *   - sales 路径：通过 studentResponsibleSalesId 校验 input.studentId 归属
+ *   - teacher 路径：通过 teacherUserIdMap 校验 input.teacherId 反查 user_id = JWT.sub
+ *   - 其他 role：ForbiddenException(ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE)
+ *
+ *   controller 层 server-derive 后注入 rbacContext，service 内做最后一道 RBAC 检查
+ *
+ * Sprint B.4-1 round 2（A04 + business P1-B 修复 — 2026-05-12 晚）：
+ *   - rbacContext 从 optional → required（删除 if (rbacContext) 跳过分支）
+ *   - tenantSchema 在 controller 层强制必填，service 层做防御性校验：
+ *     未传 rbacContext → throw BadRequestException（防止内部直调绕过）
+ *   - 旧 "fixture 模式跳过 RBAC" 完全删除（client 控制安全级别 = A04 硬违规）
  */
 export type WeekDay = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU';
 
@@ -41,6 +61,23 @@ export interface RecurringSchedule {
   archivedAt?: Date;
 }
 
+/**
+ * Sprint B.4-1: RBAC 上下文（controller 派生后注入）
+ *
+ * - callerRole: JWT.role（仅 {teacher, sales} 合法，其他 controller 已挡 403）
+ * - currentUserId: JWT.sub
+ * - studentResponsibleSalesId: input.studentId 的 owner_sales_id（仅 sales 路径用）
+ *     若 controller 未传或反查不到 → service 抛 ForbiddenException
+ * - teacherUserId: input.teacherId 反查的 user_id（仅 teacher 路径用）
+ *     若 controller 未传或反查到不一致 → service 抛 ForbiddenException
+ */
+export interface RecurringRbacContext {
+  callerRole: 'teacher' | 'sales';
+  currentUserId: string;
+  studentResponsibleSalesId?: string | null;
+  teacherUserId?: string | null;
+}
+
 const WEEKDAY_TO_NUM: Record<WeekDay, number> = {
   SU: 0,
   MO: 1,
@@ -57,14 +94,25 @@ export class RecurringScheduleService {
 
   /**
    * 创建学员-老师绑定（B-32 学员档案页）
+   *
+   * Sprint B.4-1 round 2: rbacContext 必填（删除 if (rbacContext) 分支 — A04 修复）。
+   * controller 注入后必走 RBAC：
+   *   - sales: 必须是该 student 的归属销售
+   *   - teacher: 必须 input.teacherId 反查的 user_id = JWT.sub
+   *
+   * 旧的 "rbacContext 缺省时跳过 RBAC" fixture 模式已删除（client 控制安全级别 = A04）。
+   * 如直调 service（非 controller 路径），调用方必须自行构造 rbacContext。
    */
-  createBinding(input: {
-    id: string;
-    studentId: string;
-    teacherId: string;
-    subject?: string;
-    boundByUserId: string;
-  }): StudentTeacherBinding {
+  createBinding(
+    input: {
+      id: string;
+      studentId: string;
+      teacherId: string;
+      subject?: string;
+      boundByUserId: string;
+    },
+    rbacContext: RecurringRbacContext,
+  ): StudentTeacherBinding {
     if (!input.id || input.id.length !== 32) {
       throw new BadRequestException('binding id must be 32-char ULID');
     }
@@ -77,6 +125,16 @@ export class RecurringScheduleService {
     if (!input.boundByUserId || input.boundByUserId.length !== 32) {
       throw new BadRequestException('boundByUserId must be 32-char ULID');
     }
+    if (!rbacContext) {
+      throw new BadRequestException('rbacContext required (Sprint B.4-1 round 2 A04 修复)');
+    }
+
+    // Sprint B.4-1 round 2: rbacContext 强制必走 RBAC
+    this.assertRecurringRbac(rbacContext, {
+      studentId: input.studentId,
+      teacherId: input.teacherId,
+    });
+
     return {
       id: input.id,
       studentId: input.studentId,
@@ -131,9 +189,19 @@ export class RecurringScheduleService {
       status: string;
     }>,
     now: Date = new Date(),
+    rbacContext: RecurringRbacContext,
   ): RecurringSchedule {
     // 输入校验
     this.assertRecurringInputs(input);
+
+    // Sprint B.4-1 round 2: rbacContext 必填强制 RBAC（A04 修复 — 删除 if 分支）
+    if (!rbacContext) {
+      throw new BadRequestException('rbacContext required (Sprint B.4-1 round 2 A04 修复)');
+    }
+    this.assertRecurringRbac(rbacContext, {
+      studentId: input.studentId,
+      teacherId: input.teacherId,
+    });
 
     // 展开未来 N 天的所有候选时段（now 可注入便于测试时间稳定）
     const candidates = this.expandToCandidates(
@@ -265,6 +333,49 @@ export class RecurringScheduleService {
   }
 
   // -- helpers --
+
+  /**
+   * Sprint B.4-1: 仿 ScheduleService.createSchedule RBAC 分支
+   *
+   *   - sales: studentResponsibleSalesId === currentUserId 通过；其他 403
+   *     STUDENT_NOT_OWNED_BY_SALES（attack: 销售给非自己跟进学员排课）
+   *   - teacher: teacherUserId === currentUserId 通过；其他 403
+   *     TEACHER_USER_NOT_BOUND（attack: 老师给其他老师的学员排课）
+   *   - 其他 role: 403 ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE
+   *     （controller 已挡过一次，这是 service 层兜底）
+   */
+  private assertRecurringRbac(
+    ctx: RecurringRbacContext,
+    target: { studentId: string; teacherId: string },
+  ): void {
+    if (ctx.callerRole === 'sales') {
+      if (ctx.studentResponsibleSalesId == null) {
+        throw new ForbiddenException(
+          `STUDENT_NOT_OWNED_BY_SALES: studentId=${target.studentId} 无归属销售或未传 rbacContext.studentResponsibleSalesId`,
+        );
+      }
+      if (ctx.studentResponsibleSalesId !== ctx.currentUserId) {
+        throw new ForbiddenException(
+          `STUDENT_NOT_OWNED_BY_SALES: studentId=${target.studentId} owner=${ctx.studentResponsibleSalesId} != caller=${ctx.currentUserId}`,
+        );
+      }
+    } else if (ctx.callerRole === 'teacher') {
+      if (ctx.teacherUserId == null) {
+        throw new ForbiddenException(
+          `TEACHER_USER_NOT_BOUND: teacherId=${target.teacherId} 反查不到 user_id`,
+        );
+      }
+      if (ctx.teacherUserId !== ctx.currentUserId) {
+        throw new ForbiddenException(
+          `TEACHER_USER_NOT_BOUND: teacherId=${target.teacherId} user_id=${ctx.teacherUserId} != caller=${ctx.currentUserId}`,
+        );
+      }
+    } else {
+      throw new ForbiddenException(
+        `ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE: callerRole=${ctx.callerRole}`,
+      );
+    }
+  }
 
   private assertRecurringInputs(input: {
     id: string;
