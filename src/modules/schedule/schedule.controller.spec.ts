@@ -299,6 +299,15 @@ describe('ScheduleController — Sprint B.4-1 server-derived RBAC', () => {
         ),
       ).rejects.toThrow(/TEACHER_USER_NOT_BOUND/);
       expect(svc.createScheduleInDb).not.toHaveBeenCalled();
+      // Sprint E #3 round 5 (observation 2): 拒绝路径必须先 audit 再 throw
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'schedule.create.denied',
+          targetType: 'schedule',
+          after: expect.objectContaining({ reason: expect.stringMatching(/TEACHER_USER_NOT_BOUND/) }),
+        }),
+      );
     });
 
     it('sales 排自己学员 → 通过（map 含 owner_sales_id = JWT.sub）', async () => {
@@ -355,6 +364,15 @@ describe('ScheduleController — Sprint B.4-1 server-derived RBAC', () => {
       // 验证 controller 派生的 map 把 U2 传给了 service（不是 attacker U1）
       const passedMap = svc.createScheduleInDb.mock.calls[0][2] as Map<string, string>;
       expect(passedMap.get(STUDENT_S1)).toBe(USER_SALES_U2);
+      // Sprint E #3 round 5 (observation 2): service 抛 SALES_ONLY_OWN_STUDENTS 后必先 audit
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'schedule.create.denied',
+          targetType: 'schedule',
+          after: expect.objectContaining({ reason: expect.stringMatching(/SALES_ONLY_OWN_STUDENTS/) }),
+        }),
+      );
     });
 
     it('sales 多学员 batch — map 含全部学员归属', async () => {
@@ -455,6 +473,15 @@ describe('ScheduleController — Sprint B.4-1 server-derived RBAC', () => {
         ),
       ).rejects.toThrow(BadRequestException);
       expect(svc.createSchedule).not.toHaveBeenCalled();
+      // Sprint E #3 round 5 (observation 2): 拒绝路径必须先 audit (tenantSchema='unknown' fail-open)
+      expect(auditLog.log).toHaveBeenCalledWith(
+        'unknown',
+        expect.objectContaining({
+          action: 'schedule.create.denied',
+          targetType: 'schedule',
+          after: expect.objectContaining({ reason: 'TENANT_SCHEMA_REQUIRED' }),
+        }),
+      );
     });
 
     it('JWT role=sales + body 自报 callerRole=teacher + 攻击 schedulableTeachers/SalesPairs → 全部 server 覆盖', async () => {

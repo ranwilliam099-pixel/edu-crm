@@ -21,7 +21,7 @@ import {
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
-import { ActorRole, AuditLogRepository } from '../db/audit-log.repository';
+import { ActorRole, AuditLogRepository, normalizeActorRole } from '../db/audit-log.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 /**
@@ -190,15 +190,27 @@ export class RecurringScheduleController {
   @HttpCode(HttpStatus.OK)
   async unbindBinding(
     @Param('id') _id: string,
-    @Body() body: { binding: StudentTeacherBinding; tenantSchema?: string },
+    // Sprint E #3 round 5: tenantSchema 改必填，与 createBinding/createRecurring 对齐
+    @Body() body: { binding: StudentTeacherBinding; tenantSchema: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<StudentTeacherBinding> {
+    if (!body.tenantSchema) {
+      await this.tryAuditDenied(
+        req,
+        'unknown',
+        'recurring-binding.unbind.denied',
+        'student_teacher_binding',
+        body.binding?.id ?? null,
+        { reason: 'TENANT_SCHEMA_REQUIRED', endpoint: 'unbindBinding' },
+      );
+      throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
+    }
     try {
       this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
     } catch (err) {
       await this.tryAuditDenied(
         req,
-        body.tenantSchema ?? 'unknown',
+        body.tenantSchema,
         'recurring-binding.unbind.denied',
         'student_teacher_binding',
         body.binding?.id ?? null,
@@ -209,7 +221,7 @@ export class RecurringScheduleController {
     const beforeBinding = this.deserializeBinding(body.binding);
     const before = this.bindingSnapshot(beforeBinding, { endpoint: 'unbindBinding' });
     const result = this.service.unbindBinding(beforeBinding);
-    await this.tryAudit(req, body.tenantSchema ?? 'unknown', {
+    await this.tryAudit(req, body.tenantSchema, {
       action: 'recurring-binding.unbind',
       targetType: 'student_teacher_binding',
       targetId: result.id,
@@ -371,15 +383,27 @@ export class RecurringScheduleController {
   @HttpCode(HttpStatus.OK)
   async archiveRecurring(
     @Param('id') _id: string,
-    @Body() body: { recurring: RecurringSchedule; tenantSchema?: string },
+    // Sprint E #3 round 5: tenantSchema 改必填，与 createBinding/createRecurring 对齐
+    @Body() body: { recurring: RecurringSchedule; tenantSchema: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<RecurringSchedule> {
+    if (!body.tenantSchema) {
+      await this.tryAuditDenied(
+        req,
+        'unknown',
+        'recurring-schedule.archive.denied',
+        'recurring_schedule',
+        body.recurring?.id ?? null,
+        { reason: 'TENANT_SCHEMA_REQUIRED', endpoint: 'archiveRecurring' },
+      );
+      throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
+    }
     try {
       this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
     } catch (err) {
       await this.tryAuditDenied(
         req,
-        body.tenantSchema ?? 'unknown',
+        body.tenantSchema,
         'recurring-schedule.archive.denied',
         'recurring_schedule',
         body.recurring?.id ?? null,
@@ -390,7 +414,7 @@ export class RecurringScheduleController {
     const beforeRec = this.deserializeRecurring(body.recurring);
     const before = this.recurringSnapshot(beforeRec, { endpoint: 'archiveRecurring' });
     const result = this.service.archiveRecurring(beforeRec);
-    await this.tryAudit(req, body.tenantSchema ?? 'unknown', {
+    await this.tryAudit(req, body.tenantSchema, {
       action: 'recurring-schedule.archive',
       targetType: 'recurring_schedule',
       targetId: result.id,
@@ -570,8 +594,13 @@ export class RecurringScheduleController {
     }
   }
 
+  /**
+   * Sprint E #3 round 5 (A09 FINDING-1 修复):
+   * 改用 normalizeActorRole 运行时白名单校验, JWT role 越界 → fallback 'system'
+   * 防止 marketing/finance_admin 等违反 V33 CHECK 导致 audit 静默丢失
+   */
   private actorRole(req: AuthenticatedRequest): ActorRole {
-    return ((req.user?.role as ActorRole) ?? 'system') as ActorRole;
+    return normalizeActorRole(req.user?.role);
   }
 
   private reasonFromError(err: unknown): string {

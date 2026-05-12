@@ -47,6 +47,53 @@ export type ActorRole =
   | 'platform_admin'
   | 'system';
 
+/**
+ * VALID_ACTOR_ROLES — Sprint E #3 round 5 (2026-05-13 A09 FINDING-1 修复)
+ *
+ * 与 V33 migration CHECK constraint 严格对齐的运行时白名单。
+ *
+ * 修复背景：B.4-1 actorRole helper 原用 `(req.user?.role as ActorRole) ?? 'system'`
+ * 纯 TS 类型强转，无运行时校验。当 JWT role=marketing 或 finance_admin（不在 ActorRole
+ * 枚举内）触发 audit_log INSERT 时，V33 CHECK constraint 违反 → INSERT 报错 →
+ * AuditLogRepository.log 内部 catch fail-open → 拒绝路径 audit entry 静默丢失。
+ *
+ * 修法：normalizeActorRole(role) 在白名单内直接用，否则 fallback 'system'
+ * （audit_log 写入 'system' 仍合规，与 cron job / 后台任务一致）。
+ *
+ * TenantRole 'marketing' / PlatformRole 'finance_admin' 不在 ActorRole 内是
+ * 设计意图（marketing/finance_admin 是平台级，不应直接出现在租户 schema 的 audit_log
+ * 写入流，应通过 normalizeActorRole 收口为 'system'）。
+ */
+export const VALID_ACTOR_ROLES: ReadonlySet<ActorRole> = new Set<ActorRole>([
+  'admin',
+  'boss',
+  'sales',
+  'sales_manager',
+  'sales_director',
+  'academic',
+  'academic_admin',
+  'edu_admin',
+  'ops',
+  'teacher',
+  'finance',
+  'hr',
+  'parent',
+  'platform_admin',
+  'system',
+]);
+
+/**
+ * normalizeActorRole — 运行时校验 + fallback 'system'
+ * 用法：controller / service 写 audit 时统一通过此 helper 取 actorRole，
+ * 避免越界 role（如 marketing/finance_admin/未知字符串）导致 V33 CHECK 违反。
+ */
+export function normalizeActorRole(role: string | undefined | null): ActorRole {
+  if (role && (VALID_ACTOR_ROLES as ReadonlySet<string>).has(role)) {
+    return role as ActorRole;
+  }
+  return 'system';
+}
+
 export interface AuditEntry {
   id?: number;
   actorUserId?: string | null;

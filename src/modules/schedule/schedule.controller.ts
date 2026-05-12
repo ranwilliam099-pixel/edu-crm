@@ -23,7 +23,7 @@ import {
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
-import { ActorRole, AuditLogRepository } from '../db/audit-log.repository';
+import { ActorRole, AuditLogRepository, normalizeActorRole } from '../db/audit-log.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 /**
@@ -213,15 +213,27 @@ export class ScheduleController {
   @HttpCode(HttpStatus.OK)
   async cancelSchedule(
     @Param('id') _id: string,
-    @Body() body: { schedule: Schedule; reason?: string; tenantSchema?: string },
+    // Sprint E #3 round 5 (production observation 1): tenantSchema 改必填
+    // 与 createSchedule / createScheduleInDb 对齐，避免成功路径 audit 写 'unknown' schema 静默丢失
+    @Body() body: { schedule: Schedule; reason?: string; tenantSchema: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<Schedule> {
+    if (!body.tenantSchema) {
+      await this.tryAuditDenied(
+        req,
+        'unknown',
+        'schedule.cancel.denied',
+        body.schedule?.id ?? null,
+        { reason: 'TENANT_SCHEMA_REQUIRED', endpoint: 'cancelSchedule' },
+      );
+      throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
+    }
     try {
       this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
     } catch (err) {
       await this.tryAuditDenied(
         req,
-        body.tenantSchema ?? 'unknown',
+        body.tenantSchema,
         'schedule.cancel.denied',
         body.schedule?.id ?? null,
         { reason: this.reasonFromError(err), endpoint: 'cancelSchedule' },
@@ -235,7 +247,7 @@ export class ScheduleController {
       this.deserializeSchedule(body.schedule),
       body.reason,
     );
-    await this.tryAudit(req, body.tenantSchema ?? 'unknown', {
+    await this.tryAudit(req, body.tenantSchema, {
       action: 'schedule.cancel',
       targetType: 'schedule',
       targetId: result.id,
@@ -259,15 +271,26 @@ export class ScheduleController {
   @HttpCode(HttpStatus.OK)
   async completeSchedule(
     @Param('id') _id: string,
-    @Body() body: { schedule: Schedule; tenantSchema?: string },
+    // Sprint E #3 round 5: tenantSchema 改必填，与 create 系列对齐
+    @Body() body: { schedule: Schedule; tenantSchema: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<Schedule> {
+    if (!body.tenantSchema) {
+      await this.tryAuditDenied(
+        req,
+        'unknown',
+        'schedule.complete.denied',
+        body.schedule?.id ?? null,
+        { reason: 'TENANT_SCHEMA_REQUIRED', endpoint: 'completeSchedule' },
+      );
+      throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
+    }
     try {
       this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
     } catch (err) {
       await this.tryAuditDenied(
         req,
-        body.tenantSchema ?? 'unknown',
+        body.tenantSchema,
         'schedule.complete.denied',
         body.schedule?.id ?? null,
         { reason: this.reasonFromError(err), endpoint: 'completeSchedule' },
@@ -278,7 +301,7 @@ export class ScheduleController {
       endpoint: 'completeSchedule',
     });
     const result = this.service.completeSchedule(this.deserializeSchedule(body.schedule));
-    await this.tryAudit(req, body.tenantSchema ?? 'unknown', {
+    await this.tryAudit(req, body.tenantSchema, {
       action: 'schedule.complete',
       targetType: 'schedule',
       targetId: result.id,
@@ -431,19 +454,35 @@ export class ScheduleController {
   async markAttendance(
     @Param('scheduleId') scheduleId: string,
     @Param('studentId') studentId: string,
+    // Sprint E #3 round 5: tenantSchema 改必填，与 create 系列对齐
     @Body() body: {
       scheduleStudent: ScheduleStudent;
       newStatus: AttendanceStatus;
-      tenantSchema?: string;
+      tenantSchema: string;
     },
     @Req() req: AuthenticatedRequest,
   ): Promise<ScheduleStudent> {
+    if (!body.tenantSchema) {
+      await this.tryAuditDenied(
+        req,
+        'unknown',
+        'schedule.mark-attendance.denied',
+        scheduleId,
+        {
+          reason: 'TENANT_SCHEMA_REQUIRED',
+          endpoint: 'markAttendance',
+          studentId,
+          attemptedStatus: body.newStatus,
+        },
+      );
+      throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
+    }
     try {
       this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
     } catch (err) {
       await this.tryAuditDenied(
         req,
-        body.tenantSchema ?? 'unknown',
+        body.tenantSchema,
         'schedule.mark-attendance.denied',
         scheduleId,
         {
@@ -461,7 +500,7 @@ export class ScheduleController {
       attendanceStatus: body.scheduleStudent.attendanceStatus,
     };
     const result = this.service.markAttendance(body.scheduleStudent, body.newStatus);
-    await this.tryAudit(req, body.tenantSchema ?? 'unknown', {
+    await this.tryAudit(req, body.tenantSchema, {
       action: 'schedule.mark-attendance',
       targetType: 'schedule',
       targetId: scheduleId,
@@ -655,8 +694,14 @@ export class ScheduleController {
     }
   }
 
+  /**
+   * Sprint E #3 round 5 (A09 FINDING-1 修复):
+   * 改用 normalizeActorRole 运行时白名单校验, JWT role 越界 (marketing/finance_admin
+   * 等不在 V33 CHECK 内的值) → fallback 'system', 避免 audit INSERT 违反 CHECK
+   * constraint 导致拒绝路径 audit 静默丢失
+   */
   private actorRole(req: AuthenticatedRequest): ActorRole {
-    return ((req.user?.role as ActorRole) ?? 'system') as ActorRole;
+    return normalizeActorRole(req.user?.role);
   }
 
   private reasonFromError(err: unknown): string {

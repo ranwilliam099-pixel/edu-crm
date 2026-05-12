@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { AuditLogRepository, AuditEntry } from './audit-log.repository';
+import { AuditLogRepository, AuditEntry, normalizeActorRole, VALID_ACTOR_ROLES } from './audit-log.repository';
 import { PgPoolService } from './pg-pool.service';
 
 describe('AuditLogRepository', () => {
@@ -187,6 +187,49 @@ describe('AuditLogRepository', () => {
     it('空表 → 返回 0', async () => {
       pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
       expect(await repo.count(TENANT)).toBe(0);
+    });
+  });
+
+  // Sprint E #3 round 5 (A09 FINDING-1 修复)：normalizeActorRole 运行时白名单校验
+  describe('normalizeActorRole — A09 FINDING-1 防护', () => {
+    it('已知 ActorRole 透传', () => {
+      expect(normalizeActorRole('admin')).toBe('admin');
+      expect(normalizeActorRole('teacher')).toBe('teacher');
+      expect(normalizeActorRole('sales')).toBe('sales');
+      expect(normalizeActorRole('parent')).toBe('parent');
+      expect(normalizeActorRole('system')).toBe('system');
+      expect(normalizeActorRole('platform_admin')).toBe('platform_admin');
+    });
+
+    it('TenantRole 含但 ActorRole 不含的 marketing → fallback system（A09 修复关键）', () => {
+      // marketing 在 TenantRole 但不在 ActorRole / V33 CHECK 内
+      // 旧实现直接 as ActorRole 强转 → INSERT 违反 CHECK constraint → audit 静默丢失
+      expect(normalizeActorRole('marketing')).toBe('system');
+    });
+
+    it('PlatformRole 含但 ActorRole 不含的 finance_admin → fallback system', () => {
+      // finance_admin 在 PlatformRole 但不在 ActorRole / V33 CHECK 内
+      expect(normalizeActorRole('finance_admin')).toBe('system');
+    });
+
+    it('未知字符串 → fallback system', () => {
+      expect(normalizeActorRole('hacker_role')).toBe('system');
+      expect(normalizeActorRole('SUPER_USER')).toBe('system');
+    });
+
+    it('null / undefined / 空字符串 → fallback system', () => {
+      expect(normalizeActorRole(null)).toBe('system');
+      expect(normalizeActorRole(undefined)).toBe('system');
+      expect(normalizeActorRole('')).toBe('system');
+    });
+
+    it('VALID_ACTOR_ROLES 集合包含 15 个值，与 V33 CHECK constraint 对齐', () => {
+      expect(VALID_ACTOR_ROLES.size).toBe(15);
+      expect(VALID_ACTOR_ROLES.has('admin')).toBe(true);
+      expect(VALID_ACTOR_ROLES.has('system')).toBe(true);
+      // 不应包含 TenantRole-only 或 PlatformRole-only 的 role
+      expect((VALID_ACTOR_ROLES as ReadonlySet<string>).has('marketing')).toBe(false);
+      expect((VALID_ACTOR_ROLES as ReadonlySet<string>).has('finance_admin')).toBe(false);
     });
   });
 });
