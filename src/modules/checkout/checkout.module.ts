@@ -6,6 +6,7 @@ import { InvoiceService } from './invoice.service';
 import { PlatformReviewService } from './platform-review.service';
 import { CheckoutService } from './checkout.service';
 import { CheckoutController } from './checkout.controller';
+import { WxPayController } from './wxpay.controller';
 
 /**
  * Checkout 模块（W2 主链路骨架）
@@ -27,7 +28,8 @@ import { CheckoutController } from './checkout.controller';
 @Module({
   imports: [WxPayModule],
   // PM-AUTH-6(2026-04-30): CheckoutController W3-1 Phase 1.3 — 4 SKU 价格表 / 订单 HTTP 暴露
-  controllers: [CheckoutController],
+  // W2-T1(2026-05-14): WxPayController 4 endpoint（unified-order / callback / close-order / refund）
+  controllers: [CheckoutController, WxPayController],
   // PM-AUTH-6(2026-04-30): CheckoutService W3-1 Phase 1.3 — 4 SKU 价格表 + 订单生成（条目 14 BE-W3-3）
   providers: [PaymentOrderStateService, RefundService, InvoiceService, PlatformReviewService, CheckoutService],
   exports: [

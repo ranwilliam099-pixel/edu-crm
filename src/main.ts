@@ -11,7 +11,14 @@ import { GlobalExceptionFilter } from './filters/global-exception.filter';
 
 async function bootstrap(): Promise<void> {
   // PROD-ARCH(2026-05-10) P0-3: bufferLogs 缓冲启动日志，等 useLogger 后再 flush
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // W2-T1(2026-05-14): rawBody:true 用于微信支付 V3 回调签名校验
+  //   - V3 签名串 = timestamp\nnonce\nrawBody\n，rawBody 必须原始字节，不能 re-serialize
+  //   - 兼容性：express body-parser 在 rawBody:true 下仍正常 parse req.body
+  //   - 仅影响 wxpay.controller.ts callbacks/wxpay endpoint；其他 endpoint 行为不变
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+    rawBody: true,
+  });
 
   // 用 nestjs-pino 替换默认 NestJS Logger
   // 所有现有 Logger.log/warn/error 自动转 pino（结构化 JSON + 链路追踪 + PII 脱敏）
