@@ -152,6 +152,10 @@ export class RealWxPayClient implements WxPayClient, OnModuleInit {
           Authorization: auth,
           'Content-Type': 'application/json',
           Accept: 'application/json',
+          // 5/14 凌晨 03:30 生产 fix：Node 20 fetch (undici) 默认 Accept-Language: *
+          // 微信 V3 API 严格校验，传 `*` 返 HTTP 406 PARAM_ERROR
+          // 显式覆盖为 zh-CN
+          'Accept-Language': 'zh-CN',
           'User-Agent': 'edu-server/wxpay-v3',
         },
         body: reqBodyStr,
@@ -303,6 +307,10 @@ export class RealWxPayClient implements WxPayClient, OnModuleInit {
           Authorization: auth,
           'Content-Type': 'application/json',
           Accept: 'application/json',
+          // 5/14 凌晨 03:30 生产 fix：Node 20 fetch (undici) 默认 Accept-Language: *
+          // 微信 V3 API 严格校验，传 `*` 返 HTTP 406 PARAM_ERROR
+          // 显式覆盖为 zh-CN
+          'Accept-Language': 'zh-CN',
           'User-Agent': 'edu-server/wxpay-v3',
         },
         body: reqBodyStr,
@@ -366,6 +374,10 @@ export class RealWxPayClient implements WxPayClient, OnModuleInit {
           Authorization: auth,
           'Content-Type': 'application/json',
           Accept: 'application/json',
+          // 5/14 凌晨 03:30 生产 fix：Node 20 fetch (undici) 默认 Accept-Language: *
+          // 微信 V3 API 严格校验，传 `*` 返 HTTP 406 PARAM_ERROR
+          // 显式覆盖为 zh-CN
+          'Accept-Language': 'zh-CN',
           'User-Agent': 'edu-server/wxpay-v3',
         },
         body: reqBodyStr,

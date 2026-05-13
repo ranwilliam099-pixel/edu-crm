@@ -200,6 +200,10 @@ export class WxPayPlatformCertService implements OnModuleInit {
         headers: {
           Authorization: auth,
           Accept: 'application/json',
+          // 5/14 凌晨 03:30 生产 fix：Node 20 fetch (undici) 默认携带 Accept-Language: *
+          // 微信 V3 API 严格校验 Accept-Language，传 `*` 返 HTTP 406 PARAM_ERROR
+          // 显式覆盖为 zh-CN（微信中国大陆地区合规）
+          'Accept-Language': 'zh-CN',
           'User-Agent': 'edu-server/wxpay-v3',
         },
       });
