@@ -96,6 +96,13 @@ import { FieldEncryptor } from '../../common/crypto/field-encryptor';
 // HASH_KEY 独立于 ENCRYPTION_KEY（密钥分离，泄露不互相牵连）
 import { HmacHasher } from '../../common/crypto/hmac-hasher';
 
+// ===== Sprint E.x F-08（2026-05-13）OnboardingController 接 server-side msgSecCheck =====
+// F-08 round 2 (production validator P2 F-08-02) 2026-05-13:
+//   SecurityModule 改 @Global() 后无需 db.module 显式 imports（防双 import 两套实例并发刷 token）
+//   OnboardingController 注入 SecurityService 由 @Global 自动解析（同 RedisModule 模式）。
+// SecurityModule 不需 import — 删除以下行（保留注释说明历史）：
+// import { SecurityModule } from '../security/security.module';
+
 /**
  * DbModule — 全局持久化基础设施层
  *
@@ -134,6 +141,10 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
  */
 @Global()
 @Module({
+  imports: [
+    // F-08 round 2: SecurityModule 改 @Global() 后无需此处显式 imports
+    // OnboardingController 注入 SecurityService 由 @Global 自动解析
+  ],
   controllers: [
     OnboardingController,
     TeacherShowcaseController,

@@ -44,6 +44,12 @@ export const REDACT_PATHS: string[] = [
   'req.body.content',
   'req.url',
 
+  // ===== Sprint E.x F-08 round 2 (production validator P2 F-08-03) 2026-05-13: =====
+  // *.errmsg 预防性 redact — 当前微信 API 错误消息不含用户输入（如 ECONNRESET），
+  //   但未来微信 API 若在 errmsg 中回显用户提交的违规 content（极低概率但合规防御性）→ 逃出 redact。
+  //   security.service.ts 的 logger.warn 直接打 data.errmsg，加此通配防长期演化。
+  '*.errmsg',
+
   // ===== 通配（业务敏感字段，任意层级）=====
   '*.phone',
   '*.mobile',

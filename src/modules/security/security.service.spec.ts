@@ -147,6 +147,126 @@ describe('SecurityService', () => {
     });
   });
 
+  describe('serverSideCheckContent (F-08 v1 免 openid)', () => {
+    const NORMAL_CONTENT = '某某教育培训中心';
+
+    it('errcode=0 + result.suggest=pass → ok=true', async () => {
+      fetchMock.mockResolvedValueOnce({
+        json: async () => ({
+          errcode: 0,
+          errmsg: 'ok',
+          result: { suggest: 'pass', label: 100 },
+        }),
+      });
+      const res = await service.serverSideCheckContent(NORMAL_CONTENT);
+      expect(res.ok).toBe(true);
+      expect(res.suggest).toBe('pass');
+      expect(res.label).toBe(100);
+      expect(res.errcode).toBe(0);
+    });
+
+    it('errcode=0 兜底（v1 老接口不返 result）→ ok=true, suggest=pass', async () => {
+      fetchMock.mockResolvedValueOnce({
+        json: async () => ({ errcode: 0, errmsg: 'ok' }),
+      });
+      const res = await service.serverSideCheckContent(NORMAL_CONTENT);
+      expect(res.ok).toBe(true);
+      expect(res.suggest).toBe('pass');
+      expect(res.errcode).toBe(0);
+    });
+
+    it('errcode=87014 → ok=false, suggest=risky', async () => {
+      fetchMock.mockResolvedValueOnce({
+        json: async () => ({
+          errcode: 87014,
+          errmsg: 'risky content',
+        }),
+      });
+      const res = await service.serverSideCheckContent('违规内容示例');
+      expect(res.ok).toBe(false);
+      expect(res.suggest).toBe('risky');
+      expect(res.label).toBe('内容含违法违规');
+      expect(res.errcode).toBe(87014);
+    });
+
+    it('errcode 未知（40001）→ ok=false, suggest=review (fail-open)', async () => {
+      fetchMock.mockResolvedValueOnce({
+        json: async () => ({
+          errcode: 40001,
+          errmsg: 'invalid credential',
+        }),
+      });
+      const res = await service.serverSideCheckContent(NORMAL_CONTENT);
+      expect(res.ok).toBe(false);
+      expect(res.suggest).toBe('review');
+      expect(res.errcode).toBe(40001);
+      expect(res.errmsg).toBe('invalid credential');
+    });
+
+    it('fetch 网络异常 → 不抛错，返回 review (fail-open)', async () => {
+      fetchMock.mockRejectedValueOnce(new Error('ECONNRESET'));
+      const res = await service.serverSideCheckContent(NORMAL_CONTENT);
+      expect(res.ok).toBe(false);
+      expect(res.suggest).toBe('review');
+      expect(res.errmsg).toBe('ECONNRESET');
+    });
+
+    it('上游 access_token 失败 → 抛上去（不吞，caller fail-open）', async () => {
+      token.getAccessToken.mockRejectedValueOnce(new Error('WX_TOKEN_FAILED'));
+      await expect(
+        service.serverSideCheckContent(NORMAL_CONTENT),
+      ).rejects.toThrow('WX_TOKEN_FAILED');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('body 仅 content（不含 version/openid/scene v1 形态）', async () => {
+      fetchMock.mockResolvedValueOnce({
+        json: async () => ({ errcode: 0 }),
+      });
+      await service.serverSideCheckContent(NORMAL_CONTENT);
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body).toEqual({ content: NORMAL_CONTENT });
+      expect(body.version).toBeUndefined();
+      expect(body.openid).toBeUndefined();
+      expect(body.scene).toBeUndefined();
+    });
+
+    it('URL 含 access_token query', async () => {
+      fetchMock.mockResolvedValueOnce({
+        json: async () => ({ errcode: 0 }),
+      });
+      await service.serverSideCheckContent(NORMAL_CONTENT);
+      const url = fetchMock.mock.calls[0][0] as string;
+      expect(url).toContain('https://api.weixin.qq.com/wxa/msg_sec_check');
+      expect(url).toContain('access_token=fake_access_token');
+    });
+
+    it('errcode=0 + result.suggest=review → ok=false, suggest=review', async () => {
+      fetchMock.mockResolvedValueOnce({
+        json: async () => ({
+          errcode: 0,
+          result: { suggest: 'review', label: 20001 },
+        }),
+      });
+      const res = await service.serverSideCheckContent(NORMAL_CONTENT);
+      expect(res.ok).toBe(false);
+      expect(res.suggest).toBe('review');
+    });
+
+    it('errcode=0 + result.suggest=risky → ok=false, suggest=risky (v2 形态在 v1 URL 也兼容)', async () => {
+      fetchMock.mockResolvedValueOnce({
+        json: async () => ({
+          errcode: 0,
+          result: { suggest: 'risky', label: 20001 },
+        }),
+      });
+      const res = await service.serverSideCheckContent(NORMAL_CONTENT);
+      expect(res.ok).toBe(false);
+      expect(res.suggest).toBe('risky');
+      expect(res.label).toBe(20001);
+    });
+  });
+
   describe('imgSecCheck', () => {
     const VALID_OPENID = 'o-FakeOpenid-abc123XYZ_-';
     const imageBuffer = Buffer.from('fake image bytes');
