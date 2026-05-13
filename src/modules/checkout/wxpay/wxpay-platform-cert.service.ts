@@ -36,6 +36,17 @@ import * as fs from 'fs';
  *   WXPAY_API_V3_KEY           APIv3 密钥（32 字符，用于 AES-256-GCM 解密 encrypt_certificate）
  *   WXPAY_SERIAL_NO            商户证书序列号（用于 V3 签名 Authorization header）
  *   WXPAY_PRIVATE_KEY_PATH     商户私钥路径（apiclient_key.pem，用于 V3 签名）
+ *
+ * 2026-05-14 凌晨 03:40 新机制（微信对新商户已强制）：
+ *   WXPAY_PUB_KEY_PATH         微信支付公钥本地 .pem 路径（商户平台「微信支付公钥」入口下载）
+ *   WXPAY_PUB_KEY_ID           微信支付公钥 ID（PUB_KEY_ID_xxx，回调 Wechatpay-Serial header 用此值）
+ *
+ * 双轨设计（向后兼容）：
+ *   - 优先：启动时 fs.readFileSync 本地 pub_key.pem → cache.set(WXPAY_PUB_KEY_ID, ...)
+ *   - 回退：调 GET /v3/certificates（老商户仍可用 X.509 平台证书）
+ *   - 验签时按 callback Wechatpay-Serial 头部查 cache：
+ *     - 命中 PUB_KEY_ID_xxx → 用本地公钥验签
+ *     - 命中 40 位 hex serial → 用 /v3/certificates 拿的平台证书验签
  */
 
 const CERTIFICATES_URL = 'https://api.mch.weixin.qq.com/v3/certificates';
@@ -84,22 +95,34 @@ export class WxPayPlatformCertService implements OnModuleInit {
       return;
     }
 
-    // fail-open：启动期拉取失败仅 warn，不抛错阻塞 NestJS 启动
-    //   首次验签时若 cache miss 会触发懒加载（refreshCertificates）
+    // 5/14 凌晨 03:40 新机制：优先加载本地 pub_key.pem
+    //   微信对新商户强制使用「微信支付公钥」（GET /v3/certificates 已 404 RESOURCE_NOT_EXISTS）
+    //   fail-open：本地文件不存在 / 配置缺失仅 warn，不阻塞启动
+    try {
+      this.loadLocalPublicKey();
+    } catch (err) {
+      this.logger.warn(
+        `[fail-open] load local pub_key.pem failed: ${(err as Error).message}`,
+      );
+    }
+
+    // 老机制兼容：尝试调 /v3/certificates（老商户号仍可用，新商户号会 404 fail-open）
+    //   失败不阻塞，因为本地公钥已 cache（如果本地配了）
     try {
       await this.refreshCertificates();
     } catch (err) {
       this.logger.warn(
-        `[fail-open] initial platform cert fetch failed: ${(err as Error).message}`,
+        `[fail-open] /v3/certificates fallback failed (本地 pub_key.pem 仍可用): ${(err as Error).message}`,
       );
     }
 
-    // 12 小时定时刷新（不依赖 cron，独立 setInterval 简化）
+    // 12 小时定时刷新（仅对 /v3/certificates 老机制有用；本地 pub_key.pem 不需要刷新）
     this.refreshTimer = setInterval(
       () => {
         void this.refreshCertificates().catch((err) => {
-          this.logger.error(
-            `scheduled platform cert refresh failed: ${(err as Error).message}`,
+          // 新商户 404 是预期，降级为 debug 级别避免日志噪音
+          this.logger.debug(
+            `scheduled /v3/certificates refresh failed (新商户预期 404): ${(err as Error).message}`,
           );
         });
       },
@@ -107,6 +130,44 @@ export class WxPayPlatformCertService implements OnModuleInit {
     );
     // 防止 setInterval 阻塞 Node 退出
     this.refreshTimer.unref?.();
+  }
+
+  /**
+   * 5/14 新机制：从本地 .pem 文件加载微信支付公钥到 cache
+   *
+   * @throws Error 如果 ENV 缺失 / 文件不存在 / .pem 格式非法
+   */
+  private loadLocalPublicKey(): void {
+    const pubKeyId = this.config?.get<string>('WXPAY_PUB_KEY_ID');
+    const pubKeyPath = this.config?.get<string>('WXPAY_PUB_KEY_PATH');
+
+    if (!pubKeyId || !pubKeyPath) {
+      throw new Error(
+        'WXPAY_PUB_KEY_ID + WXPAY_PUB_KEY_PATH 未配（新机制必填，老商户可忽略）',
+      );
+    }
+
+    if (!fs.existsSync(pubKeyPath)) {
+      throw new Error(`pub_key.pem not found at ${pubKeyPath}`);
+    }
+
+    const publicKey = fs.readFileSync(pubKeyPath, 'utf8');
+    if (!publicKey.includes('BEGIN PUBLIC KEY')) {
+      throw new Error(`${pubKeyPath} 不是合法 PEM 公钥（缺 BEGIN PUBLIC KEY）`);
+    }
+
+    // 微信支付公钥永久有效（无 effectiveTime/expireTime 概念）
+    // 用 1970-01-01 + 2099-12-31 占位让 cache 永不过期
+    this.cache.set(pubKeyId, {
+      serialNo: pubKeyId,
+      publicKey,
+      effectiveTime: new Date(0),
+      expireTime: new Date('2099-12-31T23:59:59Z'),
+    });
+
+    this.logger.log(
+      `loaded local pub_key.pem: serialNo=${pubKeyId} bytes=${publicKey.length}`,
+    );
   }
 
   /** PM2 reload / shutdown 时清理 timer */
