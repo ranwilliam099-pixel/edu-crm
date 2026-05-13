@@ -75,32 +75,37 @@ CREATE INDEX IF NOT EXISTS idx_mr_parent_pending
 -- audience 隔离），帮助新人 onboarding 时一眼看清规则
 -- ----------------------------------------------------------------
 
+-- 注意：PostgreSQL COMMENT ON 不接受字符串拼接（|| / concat 都是 SELECT 表达式语法，
+--   COMMENT IS 子句要求**单字符串字面量**）。SQL 标准 + PG 都支持「相邻字符串字面量
+--   之间空白自动拼接」（同 C/C++）— 即两段 'xxx' 'yyy' 等价于 'xxxyyy'，无需 ||。
+--   2026-05-13 deploy 时旧版用 || 触发 syntax error 整个 BEGIN 块 ROLLBACK，已修。
+
 COMMENT ON COLUMN monthly_reports.teacher_blessing IS
-  'V9 teacher/admin/boss 视角的寄语 — 老师补寄语（finalize 时填）。' ||
+  'V9 teacher/admin/boss 视角的寄语 — 老师补寄语（finalize 时填）。'
   '⚠️ 双轨硬红线: parent audience 路径 SELECT 不暴露此字段（前端 c 端走 parent_blessing 渲染）';
 
 COMMENT ON COLUMN monthly_reports.renewal_suggestion IS
-  'V9 老师/内部续报建议 — 严禁暴露给家长 c 端。' ||
+  'V9 老师/内部续报建议 — 严禁暴露给家长 c 端。'
   '⚠️ 双轨硬红线: parent role JWT 强制 audience=parent，SQL 不返回此列';
 
 COMMENT ON COLUMN monthly_reports.parent_blessing IS
-  'V36 家长版"温柔"寄语 — c 端 c/monthly-report/detail 显示。' ||
+  'V36 家长版"温柔"寄语 — c 端 c/monthly-report/detail 显示。'
   '老师可基于 teacher_blessing 改写为家长可读版本（不含 KPI 数据 / 续报话术）';
 
 COMMENT ON COLUMN monthly_reports.parent_highlights IS
-  'V36 家长版进步亮点 [{ point: string, lessonCount?: number }, ...] — c 端只读列表渲染。' ||
+  'V36 家长版进步亮点 [{ point: string, lessonCount?: number }, ...] — c 端只读列表渲染。'
   '与 teacher 内部 knowledge_summary 隔离，已按家长可读语言加工';
 
 COMMENT ON COLUMN monthly_reports.parent_improvements IS
-  'V36 家长版待改进 [{ point: string, suggestion?: string }, ...] — c 端只读列表渲染。' ||
+  'V36 家长版待改进 [{ point: string, suggestion?: string }, ...] — c 端只读列表渲染。'
   '注：避免出现 KPI / 排名 / 工资等敏感词，仅含建设性指导';
 
 COMMENT ON COLUMN monthly_reports.parent_next_plan IS
-  'V36 家长版下月计划 — c 端可读总览。' ||
+  'V36 家长版下月计划 — c 端可读总览。'
   '⚠️ 与 renewal_suggestion 严格隔离：本字段是学习计划而非续报营销';
 
 COMMENT ON COLUMN monthly_reports.parent_finalized_at IS
-  'V36 家长版 finalize 时间 — NULL 表示家长版尚未补写（前端 fallback 用基础字段）。' ||
+  'V36 家长版 finalize 时间 — NULL 表示家长版尚未补写（前端 fallback 用基础字段）。'
   '查询条件: parent_finalized_at IS NOT NULL → 家长版可见';
 
 COMMIT;

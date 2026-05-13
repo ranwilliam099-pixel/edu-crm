@@ -219,6 +219,9 @@ while IFS='|' read -r TENANT_ID TENANT_NAME; do
   # 生成 tenant 专用 SQL（sed 替换占位符）
   TMP_SQL=$(mktemp /tmp/v39-${TENANT_ID_LC}.XXXXXX.sql)
   sed "s/__TENANT_SCHEMA__/${TENANT_SCHEMA}/g" "$MIGRATION_FILE" > "$TMP_SQL"
+  # 2026-05-13 fix: mktemp 默认 chmod 600 ubuntu，sudo -u postgres psql -f 读不了
+  # → chmod 644 让 postgres 用户可读（SQL 仅含 schema 替换，无敏感数据）
+  chmod 644 "$TMP_SQL"
 
   if [ "$APPLY" = false ]; then
     info "[dry-run] would RENAME hourly_rate_yuan → hourly_price_yuan on ${TENANT_SCHEMA} (sql size: $(wc -c < "$TMP_SQL") bytes)"

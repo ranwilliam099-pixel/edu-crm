@@ -6,7 +6,15 @@ set +e
 API="http://1.14.127.67/api"
 PASS=0
 FAIL=0
+SKIP=0
 START=$(date +%s)
+
+# 2026-05-13: 5 case skip（内存版 POST /schedules + /recurring/* 在 5/12 commit b7181f7
+# Sprint B.4-1 round 2 被 server-derive 改造）— 详见 skip 调用处注释
+skip() {
+  echo "  ⊘ $1 SKIP — $2"
+  SKIP=$((SKIP+1))
+}
 
 # 32-char ULID（前缀 26 + 后缀 + 0 padding 到 32）
 U() {
@@ -136,54 +144,37 @@ chk "4.4 filter-schedulable" 200 "$S"
 echo ""
 
 # ============== 第 5 组：学员-老师绑定 ==============
-echo "━━━ 第 5 组：学员-老师绑定 V8.1 (1 个) ━━━"
+echo "━━━ 第 5 组：学员-老师绑定 V8.1 (1 个, SKIP) ━━━"
 STUDENT_A=$(U "STUDENTA")
 BIND_ID=$(U "BIND0001")
-S=$(post /recurring/bindings "{\"id\":\"$BIND_ID\",\"studentId\":\"$STUDENT_A\",\"teacherId\":\"$TEACHER_ID\",\"subject\":\"数学\",\"boundByUserId\":\"$SALES_USER_ID\"}" "$SALES_TOKEN")
-chk "5.1 创建绑定" 201 "$S" 'active' "$(body)"
+# 5.1 SKIP：5/12 commit b7181f7 (Sprint B.4-1 round 2) 把 boundByUserId 改 server-derive
+# (@Req() JWT)，本 case 仅冒烟内存版接口，需 PG seed student/teacher 才能跑 /db/* 真路径
+# → 等 backlog #21 (e2e business-flow 4 case) PG seed 后用 /db/recurring/bindings 重启
+skip "5.1 创建绑定" "内存版 deprecated → backlog #20+#21 用 /db/* 真接口重启"
 echo ""
 
 # ============== 第 6 组：排课 + 冲突 ==============
-echo "━━━ 第 6 组：排课 + 冲突硬阻塞 V8 (3 个) ━━━"
+echo "━━━ 第 6 组：排课 + 冲突硬阻塞 V8 (3 个, SKIP) ━━━"
 SCH1_ID=$(U "SCH00001")
 STUDENT_B=$(U "STUDENTB")
-
-# 6.1 排课成功
-SCH1_BODY=$(cat <<EOF
-{"input":{"id":"$SCH1_ID","teacherId":"$TEACHER_ID","studentIds":["$STUDENT_A"],"startAt":"2026-05-15T10:00:00.000Z","durationMin":60,"currentUser":{"id":"$SALES_USER_ID","role":"sales","tenantId":"$TENANT_ID"},"callerRole":"sales"},"existingSchedules":[],"existingStudentsAttachment":[],"studentResponsibleSalesPairs":[["$STUDENT_A","$SALES_USER_ID"]],"schedulableTeachers":[{"id":"$TEACHER_ID","userId":"$TEACHER_USER_ID"}]}
-EOF
-)
-S=$(post /schedules "$SCH1_BODY" "$SALES_TOKEN")
-chk "6.1 排课成功" 201 "$S" '已排课' "$(body)"
-
-# 6.2 老师冲突
-SCH2_BODY=$(cat <<EOF
-{"input":{"id":"$(U SCH00002)","teacherId":"$TEACHER_ID","studentIds":["$STUDENT_B"],"startAt":"2026-05-15T10:30:00.000Z","durationMin":60,"currentUser":{"id":"$SALES_USER_ID","role":"sales","tenantId":"$TENANT_ID"},"callerRole":"sales"},"existingSchedules":[{"id":"$SCH1_ID","teacherId":"$TEACHER_ID","startAt":"2026-05-15T10:00:00.000Z","durationMin":60,"endAt":"2026-05-15T11:00:00.000Z","status":"已排课","source":"one_off","createdByUserId":"$SALES_USER_ID","createdByRole":"sales"}],"existingStudentsAttachment":[],"studentResponsibleSalesPairs":[["$STUDENT_B","$SALES_USER_ID"]],"schedulableTeachers":[{"id":"$TEACHER_ID","userId":"$TEACHER_USER_ID"}]}
-EOF
-)
-S=$(post /schedules "$SCH2_BODY" "$SALES_TOKEN")
-chk "6.2 老师冲突 → 409 TEACHER_TIME_CONFLICT" 409 "$S" 'TEACHER_TIME_CONFLICT' "$(body)"
-
-# 6.3 销售非跟进
-SCH3_BODY=$(cat <<EOF
-{"input":{"id":"$(U SCH00003)","teacherId":"$TEACHER_ID","studentIds":["$STUDENT_A"],"startAt":"2026-05-16T10:00:00.000Z","durationMin":60,"currentUser":{"id":"$SALES_USER_ID","role":"sales","tenantId":"$TENANT_ID"},"callerRole":"sales"},"existingSchedules":[],"existingStudentsAttachment":[],"studentResponsibleSalesPairs":[["$STUDENT_A","$(U OTHERSAL)"]],"schedulableTeachers":[{"id":"$TEACHER_ID","userId":"$TEACHER_USER_ID"}]}
-EOF
-)
-S=$(post /schedules "$SCH3_BODY" "$SALES_TOKEN")
-chk "6.3 销售非跟进 → 403 SALES_ONLY_OWN_STUDENTS" 403 "$S" 'SALES_ONLY_OWN_STUDENTS' "$(body)"
+# 6.1/6.2/6.3 SKIP：5/12 commit b7181f7 把内存版 POST /schedules 的 callerRole +
+# currentUser + studentResponsibleSalesPairs + schedulableTeachers 全部改 server-derive
+# (@Req() JWT + repo 查 student.owner_sales_id / teacher.user_id) — body 不再接受这些字段
+# → 业务规则验证（teacher 冲突 / sales 非跟进）已转移到 /db/schedules 真接口 + PG seed
+# → 单测 schedule.controller.spec.ts 102 用例彻底覆盖 server-derive RBAC 路径
+skip "6.1 排课成功" "内存版 server-derive，单测覆盖（schedule.controller.spec.ts +102）"
+skip "6.2 老师冲突 → 409 TEACHER_TIME_CONFLICT" "同上 → 单测 + e2e backlog #21"
+skip "6.3 销售非跟进 → 403 SALES_ONLY_OWN_STUDENTS" "同上 → 单测 + e2e backlog #21"
 echo ""
 
 # ============== 第 7 组：周期课表 ==============
-echo "━━━ 第 7 组：周期课表 V8.1 (2 个) ━━━"
+echo "━━━ 第 7 组：周期课表 V8.1 (2 个, 1 SKIP) ━━━"
 S=$(post /recurring/schedules/expand-preview '{"byDay":["MO","WE"],"startMinutes":1080,"durationMin":60,"startDate":"2026-05-04","rangeDays":14}' "$SALES_TOKEN")
 chk "7.1 RRULE expand-preview" 200 "$S"
 
-REC_BODY=$(cat <<EOF
-{"input":{"id":"$(U REC00001)","bindingId":"$BIND_ID","studentId":"$STUDENT_A","teacherId":"$TEACHER_ID","byDay":["MO"],"startMinutes":1080,"durationMin":60,"startDate":"2026-05-04","createdByUserId":"$SALES_USER_ID","createdByRole":"sales"},"expandRangeDays":30,"existingSchedules":[]}
-EOF
-)
-S=$(post /recurring/schedules "$REC_BODY" "$SALES_TOKEN")
-chk "7.2 创建周期模板" 201 "$S" 'active' "$(body)"
+# 7.2 SKIP：同 5.1/6.x — 内存版 POST /recurring/schedules 已 server-derive (createdByUserId
+# + createdByRole 从 JWT 派生)，单测 recurring-schedule.controller.spec.ts 14 用例覆盖
+skip "7.2 创建周期模板" "内存版 server-derive，单测覆盖（recurring-schedule.controller.spec.ts +14）"
 echo ""
 
 # ============== 第 8 组：反馈 + 月报 ==============
@@ -320,7 +311,8 @@ echo "════════════════════════�
 echo "  测试完成 ─ 用时 ${DUR}s"
 echo "  ✅ PASS: $PASS"
 echo "  ❌ FAIL: $FAIL"
-echo "  📊 TOTAL: $TOTAL"
+echo "  ⊘  SKIP: $SKIP  (5/12 server-derive 改造后内存版接口已 deprecated, 单测 + e2e backlog #21 覆盖)"
+echo "  📊 TOTAL: $TOTAL  (不含 SKIP)"
 PCT=$((PASS * 100 / TOTAL))
 echo "  📈 通过率: ${PCT}%"
 echo "════════════════════════════════════════════════════════════"
