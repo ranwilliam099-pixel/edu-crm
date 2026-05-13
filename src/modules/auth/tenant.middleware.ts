@@ -59,7 +59,7 @@ export class TenantMiddleware implements NestMiddleware {
 
     // 公开成交链路：游客可访问，仅在已登录时挂用户
     if (path.startsWith('/api/public/') || path.startsWith('/api/checkout/')) {
-      this.tryAttachUser(req);
+      await this.tryAttachUser(req);
       return next();
     }
 
@@ -69,7 +69,7 @@ export class TenantMiddleware implements NestMiddleware {
       path === '/api/parents/register' ||
       path === '/api/parents/db/register'
     ) {
-      this.tryAttachUser(req);
+      await this.tryAttachUser(req);
       return next();
     }
 
@@ -80,7 +80,7 @@ export class TenantMiddleware implements NestMiddleware {
       path.startsWith('/api/parents/') ||
       path.startsWith('/api/parent-subscriptions/')
     ) {
-      this.requireParentOrTenantUser(req);
+      await this.requireParentOrTenantUser(req);
       return next();
     }
 
@@ -92,7 +92,7 @@ export class TenantMiddleware implements NestMiddleware {
 
     // 平台超管路径：必须无租户 + 平台角色
     if (path.startsWith('/api/admin/')) {
-      const user = this.requireUser(req);
+      const user = await this.requireUser(req);
       if (user.tenantId !== null) {
         throw new UnauthorizedException('admin path requires tenantId=null');
       }
@@ -104,12 +104,12 @@ export class TenantMiddleware implements NestMiddleware {
 
     // 开通向导：必须已登录（已支付用户在应用层 PaidUserGuard 校验）
     if (path.startsWith('/api/onboarding/')) {
-      this.requireUser(req);
+      await this.requireUser(req);
       return next();
     }
 
     // 其他业务接口：必须已登录 + 有租户
-    const user = this.requireUser(req);
+    const user = await this.requireUser(req);
     if (!user.tenantId) {
       throw new UnauthorizedException('tenant context required');
     }
@@ -119,20 +119,22 @@ export class TenantMiddleware implements NestMiddleware {
     next();
   }
 
-  private tryAttachUser(req: Request): void {
+  // SPRINT-E.1(2026-05-13): tryAttachUser / requireUser / requireParentOrTenantUser
+  // 改为 async（jwt.parse 由 sync → async：支持 jti 黑名单 Redis 查询）
+  private async tryAttachUser(req: Request): Promise<void> {
     const token = this.extractToken(req);
     if (!token) return;
     try {
-      (req as RequestWithUser).user = this.jwt.parse(token);
+      (req as RequestWithUser).user = await this.jwt.parse(token);
     } catch {
       // 公开路径忽略 token 错误
     }
   }
 
-  private requireUser(req: Request): JwtPayload {
+  private async requireUser(req: Request): Promise<JwtPayload> {
     const token = this.extractToken(req);
     if (!token) throw new UnauthorizedException('Missing Authorization header');
-    const user = this.jwt.parse(token);
+    const user = await this.jwt.parse(token);
     (req as RequestWithUser).user = user;
     return user;
   }
@@ -141,7 +143,7 @@ export class TenantMiddleware implements NestMiddleware {
    * Q-FE-2: 接受 ParentJwt 或 TenantJwt（双轨容错）
    * 优先尝试 ParentJwt（type='parent'）；失败 → 退回 TenantJwt
    */
-  private requireParentOrTenantUser(req: Request): void {
+  private async requireParentOrTenantUser(req: Request): Promise<void> {
     const token = this.extractToken(req);
     if (!token) throw new UnauthorizedException('Missing Authorization header');
     try {
@@ -151,7 +153,7 @@ export class TenantMiddleware implements NestMiddleware {
     } catch {
       // 不是 parent token，尝试 tenant token
     }
-    const user = this.jwt.parse(token);
+    const user = await this.jwt.parse(token);
     (req as RequestWithUser).user = user;
   }
 
@@ -201,7 +203,7 @@ export class TenantMiddleware implements NestMiddleware {
     } catch (e) {
       if (e instanceof UnauthorizedException) {
         // 不是 parent token, 尝试 B 端 TenantJwt 兜底 (legacy 兼容)
-        const user = this.jwt.parse(token);
+        const user = await this.jwt.parse(token);
         (req as RequestWithUser).user = user;
         return;
       }

@@ -36,6 +36,14 @@ export const REDACT_PATHS: string[] = [
   'req.body.sms_code',
   'req.body.verificationCode',
 
+  // ===== Sprint E.2 round 2 (3 validator 共识 P1 FINDING) 2026-05-13: =====
+  // security validator: req.body.content (msgSecCheck 用户提交文本，教培场景含学员姓名/家庭情况准 PII)
+  //   pino-http 默认不序列化 req.body 但未来 dev 加排查日志会泄露，预防性 redact。
+  // production validator: req.url (微信 access_token 在 URL query string，pino redact 不覆盖 URL)
+  //   一旦 dev 加 req serializer 输出 url，access_token 值会进日志。
+  'req.body.content',
+  'req.url',
+
   // ===== 通配（业务敏感字段，任意层级）=====
   '*.phone',
   '*.mobile',

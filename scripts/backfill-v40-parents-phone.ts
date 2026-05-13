@@ -4,6 +4,19 @@
  *
  * 来源：用户 2026-05-13「方案 A 双列 hash+encrypted」拍板 + V40 migration
  *
+ * ⚠️ PII 输出禁止清单（2026-05-13 加，防御性）：
+ *   本脚本 standalone 跑（ts-node），不走 NestJS pino logger → console.log 不受
+ *   redact-paths.ts 自动遮蔽保护。**禁止打**：
+ *   - phone 明文（即使是 .slice(0,3) 后 3 位也禁，攻击者拿到前缀仍可枚举）
+ *   - phone_hash 原 BYTEA（hash 本身是 PII 衍生物）
+ *   - phone_encrypted 原 BYTEA
+ *   **允许打**：
+ *   - id.slice(0, 8) 截断 ID（参考 L194）
+ *   - 计数（total/ok/fail）
+ *   - errcode / errmsg（不含 PII）
+ *   - byte length（length(phone_hash) → 32 是 algorithm spec 非 PII）
+ *   如未来加新 console.log 必经 leader review。
+ *
  * 与 V33/V34/V37/V39 backfill 关键差异：
  *   - public.parents 表跨租户共享（V10 拍板），不是 tenant schema 循环
  *   - 单表 N 行 backfill，N = 全平台家长总数

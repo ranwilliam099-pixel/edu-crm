@@ -485,7 +485,7 @@ describe('canAccessCustomer', () => {
     expect(canAccessCustomer(c, jwt('academic'))).toBe(true);
   });
 
-  it('finance → 全部可看（作账）', () => {
+  it('finance → 全部可看（access=true + maskCustomer 字段全 null 双层防御等效拍板「联系人/跟进/接棒 ❌」+「购业 ✅」）', () => {
     expect(canAccessCustomer(c, jwt('finance'))).toBe(true);
   });
 

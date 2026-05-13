@@ -757,4 +757,41 @@ export class CustomerRepository {
   private encryptMobile(plaintext: string | null | undefined): Buffer | null {
     return this.encryptor.encrypt(plaintext);
   }
+
+  /**
+   * V41 解密 primary_mobile_encrypted → 明文。同 decryptPhone fallback 策略。
+   *
+   * **当前调用方：0**（mapCustomerRow 不返 primary_mobile，Customer interface 不含此字段）
+   * **预防性 helper**（Sprint E backlog #24 闭环 2026-05-13）：
+   *   - 未来如新 GET endpoint 需返回客户主联系手机号（如 /db/customers/:id/with-primary-contact），
+   *     必须先在 Customer interface 加 `primary_mobile?: string` + mapCustomerRow 加
+   *     `primary_mobile: this.decryptPrimaryMobile(...)` 字段填充。
+   *   - 直接用 r.primary_mobile 明文绕过解密 = 历史明文 backfill 后 V41+ 数据可能 NULL，字段不全。
+   *   - 必须用 decryptPrimaryMobile 才能正确处理 V41 backfill 后的双轨数据（hash 列查询 + encrypted 列存储）。
+   *
+   * 字段权限红线（fields-by-role.md 5 对象矩阵）：
+   *   - admin/boss/sales(owner=me)/academic(已成交) 可见 → mask 由 maskCustomer 处理
+   *   - teacher / finance 不可见 → maskCustomer 已 mask 成 null
+   *   helper 仅做技术解密，权限由 maskCustomer 守门（双层防御）。
+   */
+  private decryptPrimaryMobile(
+    rowId: string,
+    encrypted: Buffer | null | undefined,
+    fallbackPlain: string | null | undefined,
+  ): string | null {
+    if (encrypted && Buffer.isBuffer(encrypted) && encrypted.length > 0) {
+      try {
+        const decoded = this.encryptor.decrypt(encrypted);
+        if (decoded !== null && decoded !== undefined) {
+          return decoded;
+        }
+      } catch (err) {
+        // V41 fail-open：解密失败不阻塞业务，logger.warn + 走明文 fallback
+        this.logger.warn(
+          `[V41-decrypt-fallback] customer ${rowId} primary_mobile_encrypted decrypt failed: ${(err as Error).message}; using plaintext fallback`,
+        );
+      }
+    }
+    return fallbackPlain ?? null;
+  }
 }

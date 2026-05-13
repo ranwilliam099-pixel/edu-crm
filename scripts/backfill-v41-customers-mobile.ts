@@ -4,6 +4,11 @@
  *
  * 来源：用户 2026-05-10 P0 第 2 项「敏感字段加密」+ V41 migration
  *
+ * ⚠️ PII 输出禁止清单（同 backfill-v40，2026-05-13 加，防御性）：
+ *   - **禁止 console.log**：primary_mobile 明文 / 任何前缀 / hash BYTEA / encrypted BYTEA
+ *   - **允许 console.log**：id.slice(0, 8) 截断 / 计数 / errcode / byte length（algorithm spec）
+ *   - 本脚本 standalone 跑不走 pino → redact-paths.ts 不生效，dev 加新输出必经 leader review
+ *
  * 模式：单 tenant 进程 — 外层 bash 脚本（backfill-v41-customers-mobile.sh）循环 tenants
  *   - 跟 V40 (单表 N 行) 不同：customers 在 tenant schema，需要 64 tenants × N 行
  *   - 跟 V34/V35/V37/V39 (纯 SQL) 不同：HMAC + AES 需 Node 实现，PG 内做字节序可能不一致

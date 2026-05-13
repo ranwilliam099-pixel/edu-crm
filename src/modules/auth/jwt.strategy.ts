@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Optional, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, TokenExpiredError, JsonWebTokenError } from '@nestjs/jwt';
 import {
@@ -6,6 +6,7 @@ import {
   isPlatformRole,
   isCrossCampusRole,
 } from './jwt-payload.interface';
+import { RedisService } from '../redis/redis.service';
 
 /**
  * JWT 解析与校验（接口清单 V1 §6.1）— BE-W1-3 真接入版
@@ -26,13 +27,22 @@ export class JwtStrategy {
   constructor(
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
+    @Optional() private readonly redis?: RedisService,
   ) {}
 
   /**
    * 解析并校验 JWT，返回 typed payload
    * @throws UnauthorizedException
+   *
+   * SPRINT-E.1(2026-05-13): parse 由 sync → async
+   *   - 新增 jti 黑名单查询（logout 后再用同 token → 401 TOKEN_REVOKED）
+   *   - 旧 token 无 jti：跳过查询（向前兼容，旧 token 自然过期后失效）
+   *   - RedisService 可选注入（@Optional）：单测无 RedisModule 时跳过黑名单查询，保持现有 spec 兼容
+   *   - Redis 异常：fail-open 放行（不阻塞主流程，与 idempotency / sentry 哲学一致）
+   *
+   * NOTE: 4 个生产调用点（tenant.middleware）全部已改为 await
    */
-  parse(token: string): JwtPayload {
+  async parse(token: string): Promise<JwtPayload> {
     if (!token) {
       throw new UnauthorizedException('Missing token');
     }
@@ -44,7 +54,28 @@ export class JwtStrategy {
 
     const decoded = this.verify(token);
     this.validateClaims(decoded);
+    await this.assertNotRevoked(decoded);
     return decoded;
+  }
+
+  /**
+   * 查 Redis 黑名单 auth:revoked:{jti}
+   *   - 命中 → 401 TOKEN_REVOKED
+   *   - 未命中或无 jti 或未注入 RedisService → 通过
+   *   - Redis 异常 → fail-open（运营告警自查；用户体验优先）
+   */
+  private async assertNotRevoked(payload: JwtPayload): Promise<void> {
+    if (!payload.jti) return; // 旧 token 无 jti：跳过黑名单查询
+    if (!this.redis) return; // 单测 / RedisModule 未注入：跳过
+    try {
+      const revoked = await this.redis.get(`auth:revoked:${payload.jti}`);
+      if (revoked) {
+        throw new UnauthorizedException('TOKEN_REVOKED');
+      }
+    } catch (e) {
+      if (e instanceof UnauthorizedException) throw e;
+      // Redis 不可用 → fail-open，避免一行 Redis 故障 → 全站登录瘫痪
+    }
   }
 
   /**

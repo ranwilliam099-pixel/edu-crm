@@ -383,7 +383,17 @@ export function canAccessCustomer(
       // 教务：本校已成交客户（具体 campus 比对在 controller 层）
       return true;
     case 'finance':
-      // 财务：本校作账客户（具体 campus 比对在 controller 层）
+      // 财务：access 层放行 + maskCustomer 字段层 phone/wechat/note/source 全 null
+      //   实现 fields-by-role.md 拍板「联系人 ❌ / 跟进 ❌ / 接棒 ❌ / 购业 ✅ 作账」语义
+      //
+      // 2026-05-13 Sprint E backlog #25 leader 复审决策：保留 access=true（Sprint B.3 现状）
+      //   原因：拍板「customer 联系人/跟进/接棒 finance ❌ + 购业 ✅ 作账」有两种合规实现：
+      //     A) access=true + maskCustomer mask phone/wechat/note/source null（Sprint B.3 已实施）
+      //     B) access=false（finance 不调 customer GET，只通过 contract.amount JOIN 拿金额）
+      //   A 与 B 字段层等效（finance 实际看到的字段相同），A 更符合「双层防御」+「字段类型保持」
+      //   原则（前端拿到完整对象便于 UI 渲染，仅敏感字段 null）。本次保留 A。
+      //
+      //   campus 比对仍在 controller 层处理（本 helper 仅做角色组路由判定）。
       return true;
     default:
       // teacher / parent / hr：不该访问 customer 资料

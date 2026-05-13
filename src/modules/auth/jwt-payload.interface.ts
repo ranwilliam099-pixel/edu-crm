@@ -6,6 +6,7 @@
  * - role:       11 角色枚举 + platform_admin / finance_admin（A11 §角色拆分 + Sprint B 老师线）
  * - campusId:   校区 ID（追加 #15 A08：标准版 ≤ 3 校区）
  * - exp / iat:  标准 JWT 字段
+ * - jti:        JWT ID（Sprint E.1 加 — logout 黑名单查询 key；旧 token 无此字段时跳过黑名单查询）
  */
 export interface JwtPayload {
   sub: string;
@@ -14,6 +15,7 @@ export interface JwtPayload {
   campusId: string | null;
   exp?: number;
   iat?: number;
+  jti?: string;
 }
 
 /**

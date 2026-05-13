@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from 'nestjs-pino';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './filters/global-exception.filter';
 
@@ -21,6 +22,56 @@ async function bootstrap(): Promise<void> {
   const logger = app.get(Logger);
 
   app.setGlobalPrefix('api');
+
+  // SPRINT-E.1(2026-05-13) helmet 安全 header：CSP / HSTS / X-Frame-Options 等
+  //   - frameAncestors 'none'：禁止页面被 iframe 嵌套（点击劫持 CSP3 防御）
+  //   - HSTS 1 年 + includeSubDomains（ICP 备案后再开 preload）
+  //   - imgSrc 允许 https + data URI（微信头像 / base64 占位）
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          imgSrc: ["'self'", 'https:', 'data:'],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          frameAncestors: ["'none'"],
+        },
+      },
+      hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: false, // ICP 备案过后再加 preload
+      },
+    }),
+  );
+
+  // SPRINT-E.1(2026-05-13) CORS 严格 origin 白名单
+  //   - CORS_ALLOWED_ORIGINS 逗号分隔（如 https://minxin.top,https://app.minxin.top）
+  //   - 无 origin（微信小程序 / 内部 cron / curl）放行：不属于浏览器 CORS preflight 范畴
+  //   - 不在白名单的 origin 抛 CORS_NOT_ALLOWED（CORS preflight 失败 → 浏览器拒绝）
+  //   - allowedHeaders 含 X-Tenant-Schema / Idempotency-Key / X-Request-Id 等业务必需头
+  const corsOrigins = (config.get<string>('CORS_ALLOWED_ORIGINS', '') || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  app.enableCors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // 微信小程序 / curl / 内部 cron 无 origin
+      if (corsOrigins.includes(origin)) return cb(null, true);
+      cb(new Error('CORS_NOT_ALLOWED'), false);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'PUT', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Tenant-Schema',
+      'Idempotency-Key',
+      'X-Request-Id',
+    ],
+  });
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

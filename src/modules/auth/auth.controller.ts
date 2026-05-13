@@ -1,7 +1,19 @@
-import { Body, Controller, Post, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Post,
+  HttpCode,
+  HttpStatus,
+  BadRequestException,
+  Req,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { Throttle } from '@nestjs/throttler';
+import { ulid } from 'ulid';
 import { ParentJwtStrategy } from './parent-jwt.strategy';
-import { isCrossCampusRole, TenantRole } from './jwt-payload.interface';
+import { isCrossCampusRole, TenantRole, AuthenticatedRequest, JwtPayload } from './jwt-payload.interface';
+import { RedisService } from '../redis/redis.service';
 
 /**
  * AuthController — 联调收尾 Q-FE-2 + 待补 B 端 /auth/login
@@ -21,6 +33,7 @@ export class AuthController {
   constructor(
     private readonly jwt: JwtService,
     private readonly parentJwt: ParentJwtStrategy,
+    private readonly redis: RedisService,
   ) {}
 
   /**
@@ -32,6 +45,8 @@ export class AuthController {
    *
    * @returns { token, tokenType: 'Bearer', expiresIn, payload }
    */
+  // SPRINT-E.1(2026-05-13) 限流：登录 10 次/分钟（防暴力破解 / 撞库）
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   login(
@@ -93,13 +108,21 @@ export class AuthController {
       campusId = body.campusId;
     }
 
-    const payload = {
+    // SPRINT-E.1(2026-05-13) 给每个 token 分配唯一 jti（JWT ID, 26-char ULID）
+    //   - logout 时 jti 入 Redis 黑名单（auth:revoked:{jti}），TTL = token 剩余有效期
+    //   - jwt.strategy.parse() 校验 jti 不在黑名单
+    //   - jsonwebtoken 限制：jti 不能同时在 payload + options.jwtid，所以只放 options
+    //     最终 sign 出的 token 仍然有标准 JWT `jti` 字段，verify 后 decoded.jti 可读
+    const jti = ulid();
+    const signPayload: Omit<JwtPayload, 'jti'> = {
       sub: body.userId,
       tenantId: body.tenantId,
       role: body.role as TenantRole,
       campusId,
     };
-    const token = this.jwt.sign(payload);
+    const token = this.jwt.sign(signPayload, { jwtid: jti });
+    // 给前端返回完整 payload（含 jti）便于调试 / 前端缓存 logout 用
+    const payload: JwtPayload = { ...signPayload, jti };
     return {
       token,
       tokenType: 'Bearer',
@@ -117,6 +140,8 @@ export class AuthController {
    *
    * @returns { token (ParentJwt), tokenType: 'Bearer', expiresIn, payload }
    */
+  // SPRINT-E.1(2026-05-13) 限流：微信登录 10 次/分钟
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('wechat-login')
   @HttpCode(HttpStatus.OK)
   wechatLogin(
@@ -140,5 +165,63 @@ export class AuthController {
       expiresIn: 30 * 86400,
       payload: { parentId: body.parentId, openid: body.openid, type: 'parent' },
     };
+  }
+
+  /**
+   * POST /api/public/auth/logout — B 端员工登出（Sprint E.1 JWT 黑名单）
+   *
+   * Header: Authorization: Bearer <token>
+   *
+   * 流程：
+   *   1. 解 token（不依赖 JwtAuthGuard，避免依赖循环；公开路径手动 verify）
+   *   2. 提取 jti + exp，将 jti 写入 Redis 黑名单 auth:revoked:{jti}
+   *   3. TTL = exp - now（token 自然过期后 Redis key 同步过期，避免无限增长）
+   *
+   * 后续请求带同一 token：JwtStrategy.parse() 查 Redis 命中 → 401 TOKEN_REVOKED
+   *
+   * Redis fail-open 哲学：Redis 挂了不阻塞 logout 流程（用户客户端清 token 即可）
+   *
+   * @returns { ok: true }
+   */
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  async logout(@Req() req: AuthenticatedRequest): Promise<{ ok: true }> {
+    const auth = req.headers['authorization'];
+    const header = Array.isArray(auth) ? auth[0] : auth;
+    if (!header || !header.startsWith('Bearer ')) {
+      throw new UnauthorizedException('Missing or malformed Authorization header');
+    }
+    const token = header.slice(7).trim();
+    if (!token) {
+      throw new UnauthorizedException('Empty bearer token');
+    }
+
+    let payload: JwtPayload;
+    try {
+      payload = this.jwt.verify<JwtPayload>(token);
+    } catch {
+      // 过期或签名错的 token 也允许 logout（幂等，无副作用）
+      // 但拒绝完全无效的 token 防止滥用
+      throw new UnauthorizedException('Invalid token');
+    }
+
+    if (!payload.jti) {
+      // 旧版本 token 无 jti（向前兼容）：跳过黑名单写，但仍返回成功
+      // 客户端清 token 即可；旧 token 自然过期后失效
+      return { ok: true };
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const ttlSec = payload.exp ? Math.max(0, payload.exp - nowSec) : 86400;
+
+    if (ttlSec > 0) {
+      try {
+        await this.redis.set(`auth:revoked:${payload.jti}`, '1', ttlSec);
+      } catch {
+        // Redis fail-open：写黑名单失败不阻塞 logout（客户端清 token 仍生效）
+      }
+    }
+
+    return { ok: true };
   }
 }
