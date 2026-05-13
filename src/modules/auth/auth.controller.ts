@@ -14,6 +14,7 @@ import { ulid } from 'ulid';
 import { ParentJwtStrategy } from './parent-jwt.strategy';
 import { isCrossCampusRole, TenantRole, AuthenticatedRequest, JwtPayload } from './jwt-payload.interface';
 import { RedisService } from '../redis/redis.service';
+import { WxCodeSessionService } from './wx-code-session.service';
 
 /**
  * AuthController — 联调收尾 Q-FE-2 + 待补 B 端 /auth/login
@@ -34,6 +35,7 @@ export class AuthController {
     private readonly jwt: JwtService,
     private readonly parentJwt: ParentJwtStrategy,
     private readonly redis: RedisService,
+    private readonly wxCodeSession: WxCodeSessionService,
   ) {}
 
   /**
@@ -165,6 +167,40 @@ export class AuthController {
       expiresIn: 30 * 86400,
       payload: { parentId: body.parentId, openid: body.openid, type: 'parent' },
     };
+  }
+
+  /**
+   * POST /api/public/auth/wx-jscode2session — 微信 code 换 openid
+   *
+   * 来源：2026-05-14 凌晨 wxpay 沙箱集成（c/checkout/pay 真接口）
+   *
+   * 流程：
+   *   1. 前端 wx.login() 拿 code（5min 一次性）
+   *   2. POST 此 endpoint { code }
+   *   3. 后端调微信 sns/jscode2session 用 WX_APP_ID + WX_APP_SECRET 换取
+   *   4. 返 { openid }（sessionKey 不返前端 — 防 XSS 攻击拿密钥解密 wx.getUserInfo 加密数据）
+   *
+   * 安全：
+   *   - 公开 endpoint（前端 wx.login 后还没 token 就要换 openid）
+   *   - @Throttle 20 次/分钟（防 code 滥用，code 本身一次性 + 5min 过期已有自带限流）
+   *   - 微信 errcode 不透传 client（A05 内部 ID 暴露规避）
+   *
+   * @returns { openid } — 用于 POST /api/checkout/wxpay/unified-order
+   */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('wx-jscode2session')
+  @HttpCode(HttpStatus.OK)
+  async wxJscode2Session(
+    @Body() body: { code: string },
+  ): Promise<{ openid: string }> {
+    if (!body || !body.code || typeof body.code !== 'string') {
+      throw new BadRequestException('code is required');
+    }
+    if (body.code.length < 5 || body.code.length > 200) {
+      throw new BadRequestException('code length must be 5-200');
+    }
+    const result = await this.wxCodeSession.exchange(body.code);
+    return { openid: result.openid };
   }
 
   /**

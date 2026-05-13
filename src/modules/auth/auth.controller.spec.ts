@@ -9,6 +9,7 @@ import { AuthController } from './auth.controller';
 import { ParentJwtStrategy } from './parent-jwt.strategy';
 import { RedisService } from '../redis/redis.service';
 import { AuthenticatedRequest } from './jwt-payload.interface';
+import { WxCodeSessionService } from './wx-code-session.service';
 
 const ULID32 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMN01';
 const ULID32_T = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMNTN';
@@ -18,9 +19,15 @@ describe('AuthController - 登录接口 + Sprint E.1 logout', () => {
   let controller: AuthController;
   let jwt: JwtService;
   let redisSetSpy: jest.Mock<Promise<void>, [string, string, number?]>;
+  let wxCodeSessionExchangeSpy: jest.Mock;
 
   beforeEach(async () => {
     redisSetSpy = jest.fn().mockResolvedValue(undefined);
+    wxCodeSessionExchangeSpy = jest.fn().mockResolvedValue({
+      openid: 'oTestOpenidExchangedSuccessfully',
+      sessionKey: 'test_session_key_should_not_return',
+      unionid: undefined,
+    });
     const module: TestingModule = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: 'test-secret', signOptions: { expiresIn: '1d' } })],
       controllers: [AuthController],
@@ -33,6 +40,10 @@ describe('AuthController - 登录接口 + Sprint E.1 logout', () => {
         {
           provide: RedisService,
           useValue: { set: redisSetSpy },
+        },
+        {
+          provide: WxCodeSessionService,
+          useValue: { exchange: wxCodeSessionExchangeSpy },
         },
       ],
     }).compile();
@@ -401,6 +412,59 @@ describe('AuthController - 登录接口 + Sprint E.1 logout', () => {
       const result = await controller.logout(buildReq(`Bearer ${token}`));
       expect(result).toEqual({ ok: true });
       expect(redisSetSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // 2026-05-14 凌晨 wxpay 沙箱集成：code → openid 换取
+  describe('wxJscode2Session - 微信 code 换 openid', () => {
+    const VALID_CODE = '0a3xyzAbC1234567890';
+
+    it('happy path: code 合法 → 返 openid（不返 sessionKey）', async () => {
+      const result = await controller.wxJscode2Session({ code: VALID_CODE });
+      expect(result).toEqual({ openid: 'oTestOpenidExchangedSuccessfully' });
+      // 安全：sessionKey 不返 client（防 XSS 解密 wx.getUserInfo 加密数据）
+      expect((result as Record<string, unknown>).sessionKey).toBeUndefined();
+      expect(wxCodeSessionExchangeSpy).toHaveBeenCalledWith(VALID_CODE);
+    });
+
+    it('code 缺失 → BadRequest', async () => {
+      await expect(
+        controller.wxJscode2Session({ code: '' } as never),
+      ).rejects.toThrow(BadRequestException);
+      expect(wxCodeSessionExchangeSpy).not.toHaveBeenCalled();
+    });
+
+    it('body 为 null → BadRequest', async () => {
+      await expect(
+        controller.wxJscode2Session(null as never),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('code 非 string → BadRequest', async () => {
+      await expect(
+        controller.wxJscode2Session({ code: 12345 } as never),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('code 过短（< 5 字符）→ BadRequest', async () => {
+      await expect(
+        controller.wxJscode2Session({ code: 'abcd' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('code 过长（> 200 字符）→ BadRequest', async () => {
+      await expect(
+        controller.wxJscode2Session({ code: 'a'.repeat(201) }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('微信 service 抛 InternalServerError → 透传', async () => {
+      wxCodeSessionExchangeSpy.mockRejectedValueOnce(
+        new Error('jscode2session failed'),
+      );
+      await expect(
+        controller.wxJscode2Session({ code: VALID_CODE }),
+      ).rejects.toThrow('jscode2session failed');
     });
   });
 });

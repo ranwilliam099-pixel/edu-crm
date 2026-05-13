@@ -5,6 +5,7 @@ import { JwtStrategy } from './jwt.strategy';
 import { ParentJwtStrategy } from './parent-jwt.strategy';
 import { TenantMiddleware } from './tenant.middleware';
 import { AuthController } from './auth.controller';
+import { WxCodeSessionService } from './wx-code-session.service';
 
 /**
  * Auth 模块（W1 BE-W1-3 + V10 BE-V10-3 ParentJwt）
@@ -30,8 +31,8 @@ import { AuthController } from './auth.controller';
     }),
   ],
   controllers: [AuthController],
-  providers: [JwtStrategy, ParentJwtStrategy, TenantMiddleware],
-  exports: [JwtStrategy, ParentJwtStrategy, TenantMiddleware, JwtModule],
+  providers: [JwtStrategy, ParentJwtStrategy, TenantMiddleware, WxCodeSessionService],
+  exports: [JwtStrategy, ParentJwtStrategy, TenantMiddleware, JwtModule, WxCodeSessionService],
 })
 export class AuthModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
