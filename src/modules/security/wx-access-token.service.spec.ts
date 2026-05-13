@@ -7,7 +7,7 @@ import { RedisService } from '../redis/redis.service';
 describe('WxAccessTokenService', () => {
   let service: WxAccessTokenService;
   let redis: { get: jest.Mock; set: jest.Mock };
-  let config: { get: jest.Mock };
+  let config: { get: jest.Mock; getOrThrow: jest.Mock };
   let fetchMock: jest.Mock;
 
   beforeEach(async () => {
@@ -15,11 +15,19 @@ describe('WxAccessTokenService', () => {
       get: jest.fn(),
       set: jest.fn().mockResolvedValue(undefined),
     };
+    // 2026-05-13 round 3 fix: E.2 round 2 自补改 config.get → config.getOrThrow（NestJS fail-fast）
+    //   spec 同步加 getOrThrow mock。两个都 mock 是因为 spec 内 L114/L125 仍用 config.get.mockImplementation
+    //   重置（用于「缺 WX_APP_ID」场景），保留兼容。
     config = {
       get: jest.fn((key: string) => {
         if (key === 'WX_APP_ID') return 'wx_test_appid';
         if (key === 'WX_APP_SECRET') return 'wx_test_secret';
         return undefined;
+      }),
+      getOrThrow: jest.fn((key: string) => {
+        if (key === 'WX_APP_ID') return 'wx_test_appid';
+        if (key === 'WX_APP_SECRET') return 'wx_test_secret';
+        throw new Error(`Configuration key "${key}" does not exist`);
       }),
     };
 
@@ -111,9 +119,10 @@ describe('WxAccessTokenService', () => {
     });
 
     it('WX_APP_ID 缺 → 抛 InternalServerErrorException', async () => {
-      config.get.mockImplementation((key: string) => {
+      // 2026-05-13 round 3 fix: service 已改用 config.getOrThrow → spec mock getOrThrow 抛错
+      config.getOrThrow.mockImplementation((key: string) => {
         if (key === 'WX_APP_SECRET') return 'secret';
-        return undefined;
+        throw new Error(`Configuration key "${key}" does not exist`);
       });
       await expect(service.getAccessToken()).rejects.toThrow(
         InternalServerErrorException,
@@ -122,9 +131,9 @@ describe('WxAccessTokenService', () => {
     });
 
     it('WX_APP_SECRET 缺 → 抛 InternalServerErrorException', async () => {
-      config.get.mockImplementation((key: string) => {
+      config.getOrThrow.mockImplementation((key: string) => {
         if (key === 'WX_APP_ID') return 'appid';
-        return undefined;
+        throw new Error(`Configuration key "${key}" does not exist`);
       });
       await expect(service.getAccessToken()).rejects.toThrow(
         InternalServerErrorException,
