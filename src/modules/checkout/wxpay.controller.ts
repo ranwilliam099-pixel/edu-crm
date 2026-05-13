@@ -17,6 +17,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import { ulid } from 'ulid';
+import * as crypto from 'crypto';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
@@ -250,6 +251,18 @@ export class WxPayController {
   async wxpayCallback(
     @Body()
     body: {
+      // V3 原生协议字段（微信直接传）
+      id?: string;
+      create_time?: string;
+      event_type?: string;
+      resource_type?: string;
+      resource?: {
+        algorithm?: string;
+        ciphertext?: string;
+        associated_data?: string;
+        nonce?: string;
+      };
+      // 旧 wrapper 协议字段（mock 测试用，向后兼容）
       kind?: 'payment' | 'refund';
       notifyBody?: WxPayNotifyBody | Record<string, unknown>;
       expectedAmountCents?: number;
@@ -263,6 +276,72 @@ export class WxPayController {
       'wechatpay-signature': this.headerString(req, 'wechatpay-signature'),
     };
     const rawBody = this.getRawBody(req);
+
+    // ============================================================
+    // V3 原生协议分支（5/14 凌晨 04:30 修：微信回调 resource.ciphertext 直传）
+    // ============================================================
+    if (body && body.resource && typeof body.resource.ciphertext === 'string') {
+      try {
+        // 1. 验签
+        const valid = await this.wxpay.verifyCallbackSignature(headers, rawBody);
+        if (!valid) {
+          await this.tryAudit(req, {
+            action: 'wxpay.callback.signature-invalid',
+            targetType: 'wxpay_callback',
+            targetId: headers['wechatpay-serial'] || 'unknown',
+            after: { event_type: body.event_type, id: body.id },
+          });
+          this.logger.warn(
+            `[wxpay V3 callback] signature invalid serial=${headers['wechatpay-serial']}`,
+          );
+          return { code: 'FAIL', message: 'signature invalid' };
+        }
+
+        // 2. AES-256-GCM 解密 resource
+        const decrypted = this.decryptV3Resource(body.resource);
+        const tradeState = (decrypted as Record<string, unknown>).trade_state as string | undefined;
+        const outTradeNo = (decrypted as Record<string, unknown>).out_trade_no as string | undefined;
+        const amount = (decrypted as { amount?: { total?: number } }).amount;
+        const transactionId = (decrypted as Record<string, unknown>).transaction_id as string | undefined;
+
+        // 3. audit_log 记录成功回调
+        await this.tryAudit(req, {
+          action: 'wxpay.callback.received',
+          targetType: 'payment_order',
+          targetId: outTradeNo || 'unknown',
+          after: {
+            event_type: body.event_type,
+            trade_state: tradeState,
+            amount_total: amount?.total,
+            transaction_id: transactionId,
+            wxpay_id: body.id,
+          },
+        });
+
+        this.logger.log(
+          `[wxpay V3 callback] SUCCESS out_trade_no=${outTradeNo} trade_state=${tradeState} amount=${amount?.total} txn=${transactionId}`,
+        );
+
+        // 4. 沙箱期间不真实更新 PG (OrderRepository 待 W3-3 实施)
+        // 微信侧重试机制：返 code: SUCCESS 即停止重试
+        return { code: 'SUCCESS', message: '成功' };
+      } catch (err) {
+        const msg = (err as Error).message || 'V3 callback error';
+        this.logger.error(`[wxpay V3 callback] failed: ${msg}`);
+        await this.tryAudit(req, {
+          action: 'wxpay.callback.error',
+          targetType: 'wxpay_callback',
+          targetId: body.id || headers['wechatpay-serial'] || 'unknown',
+          after: { error: msg.slice(0, 200) },
+        });
+        // 错误也返 FAIL（微信会重试，但我们后端 OK），不抛 4xx 防止微信告警
+        return { code: 'FAIL', message: 'callback processing error' };
+      }
+    }
+
+    // ============================================================
+    // 旧 wrapper 协议（mock 测试用，向后兼容）
+    // ============================================================
 
     // audit_log：所有回调都先留证据（不入 ciphertext 等大字段）
     await this.tryAudit(req, {
@@ -523,6 +602,56 @@ export class WxPayController {
     }
     // fallback：仅 spec 单测用；真实环境 main.ts 已 rawBody:true
     return r.body ? JSON.stringify(r.body) : '';
+  }
+
+  /**
+   * AES-256-GCM 解密微信 V3 callback resource
+   *
+   * 来源：微信支付 V3 协议 — 回调通知的 resource 字段
+   *   https://pay.weixin.qq.com/wiki/doc/apiv3/wechatpay/wechatpay4_2.shtml
+   *
+   * 算法：
+   *   - key = APIv3 密钥 (32 字节 UTF-8)
+   *   - nonce = 12 字节 UTF-8（来自 resource.nonce）
+   *   - associated_data = resource.associated_data（用作 AAD）
+   *   - ciphertext = base64(encrypted_data || auth_tag[16 字节后缀])
+   */
+  private decryptV3Resource(resource: {
+    algorithm?: string;
+    ciphertext?: string;
+    associated_data?: string;
+    nonce?: string;
+  }): Record<string, unknown> {
+    if (!resource.ciphertext || !resource.nonce) {
+      throw new BadRequestException('V3 resource missing ciphertext/nonce');
+    }
+    const apiv3Key = this.config?.getOrThrow<string>('WXPAY_API_V3_KEY');
+    if (!apiv3Key || apiv3Key.length !== 32) {
+      throw new Error('WXPAY_API_V3_KEY missing or not 32 chars');
+    }
+
+    const ciphertext = Buffer.from(resource.ciphertext, 'base64');
+    // 微信 V3 ciphertext = encrypted_data + auth_tag (16 字节后缀)
+    if (ciphertext.length < 16) {
+      throw new BadRequestException('V3 resource ciphertext too short');
+    }
+    const authTag = ciphertext.subarray(ciphertext.length - 16);
+    const encryptedData = ciphertext.subarray(0, ciphertext.length - 16);
+
+    const decipher = crypto.createDecipheriv(
+      'aes-256-gcm',
+      Buffer.from(apiv3Key, 'utf8'),
+      Buffer.from(resource.nonce, 'utf8'),
+    );
+    decipher.setAuthTag(authTag);
+    if (resource.associated_data) {
+      decipher.setAAD(Buffer.from(resource.associated_data, 'utf8'));
+    }
+    const decrypted = Buffer.concat([
+      decipher.update(encryptedData),
+      decipher.final(),
+    ]);
+    return JSON.parse(decrypted.toString('utf8')) as Record<string, unknown>;
   }
 
   /**
