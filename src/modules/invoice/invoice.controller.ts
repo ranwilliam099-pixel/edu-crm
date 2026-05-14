@@ -65,6 +65,14 @@ import {
  * GET pending-contracts 路由顺序：
  *   /db/invoices/pending-contracts 必须放在 /db/invoices/:id 之前注册
  *   （否则 :id 会贪婪匹配 'pending-contracts' 字符串）
+ *
+ * OOUX 路径豁免（Wave 4A round 2，business validator P1 补注释）：
+ *   平级路径 POST /api/db/invoices 而非 contract 子资源 /db/contracts/:id/invoices。
+ *   依据 Wave 0 设计 P0-2 方案 C（p0-ooux-design-2026-05-14.md L361/394）：
+ *     - 财务从「待开票合同」起，不经学员中转
+ *     - finance 无学员域访问权（fields-by-role.md customer.联系人 ❌）
+ *     - 入口对象是 contract（body.contractId 必填体现父对象关系）
+ *   5/14 拍板 P0-2 优先级高于 5/10 通用 OOUX 「contract 是 student 子对象」规则。
  */
 @Controller('db/invoices')
 @UseGuards(TenantScopeGuard, RbacGuard)

@@ -100,4 +100,24 @@ export const REDACT_PATHS: string[] = [
   '*.primaryMobileHash',
   '*.primary_mobile_encrypted',
   '*.primaryMobileEncrypted',
+
+  // ===== Wave 4A round 2 (security A09 + production OBSERVATION 共识): invoice PII 防御纵深 =====
+  // invoice_title 是开票抬头（个人姓名或企业全称，可识别个人/企业）
+  // tax_id 是统一信用代码（可识别企业，个保法间接识别）
+  // receive_phone 是接收方手机号（即使 *.phone 通配，receive_phone snake_case 不命中尾部）
+  // 当前 service.tryAudit 已 mask 入 audit，但补 pino redact 防 dev 误 log invoice 对象
+  '*.invoice_title',
+  '*.invoiceTitle',
+  '*.invoice_title_encrypted',
+  '*.invoiceTitleEncrypted',
+  '*.tax_id',
+  '*.taxId',
+  '*.tax_id_encrypted',
+  '*.taxIdEncrypted',
+  '*.receive_phone',
+  '*.receivePhone',
+  '*.receive_phone_hash',
+  '*.receivePhoneHash',
+  '*.receive_phone_encrypted',
+  '*.receivePhoneEncrypted',
 ];
