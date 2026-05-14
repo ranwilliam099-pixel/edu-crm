@@ -32,6 +32,7 @@ import { AssessmentModule } from './modules/assessment/assessment.module';
 import { LearningProfileModule } from './modules/learning-profile/learning-profile.module';
 import { DbModule } from './modules/db/db.module';
 import { SecurityModule } from './modules/security/security.module';
+import { InvoiceModule } from './modules/invoice/invoice.module';
 
 @Module({
   imports: [
@@ -88,6 +89,8 @@ import { SecurityModule } from './modules/security/security.module';
     LearningProfileModule,
     // SPRINT-E2(2026-05-13): SecurityModule 内容安全 2 项后端代理（msgSecCheck / imgSecCheck）
     SecurityModule,
+    // WAVE-4A(2026-05-14): InvoiceModule B 端 finance 域开票（OOUX invoice 是 contract 子对象）
+    InvoiceModule,
   ],
   providers: [
     // SPRINT-E.1(2026-05-13) ThrottlerGuard 全局注册（APP_GUARD），所有路由默认 60/min
