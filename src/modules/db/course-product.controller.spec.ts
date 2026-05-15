@@ -223,11 +223,15 @@ describe('CourseProductController.getStats (5/15 拍板 OOUX 聚合)', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('NotFound 错误消息含 productId（便于排错）', async () => {
+    it('NotFound 错误消息不回显 productId（Wave 11 r2 security P2 防扫描枚举）', async () => {
+      // productId 已写入 audit_log targetId, 排查无需依赖 response body
       repo.findStats.mockResolvedValueOnce(null);
-      await expect(
-        controller.getStats(PRODUCT_ID, TENANT_SCHEMA, req(jwt('admin'))),
-      ).rejects.toThrow(new RegExp(`productId=${PRODUCT_ID}`));
+      const err = await controller
+        .getStats(PRODUCT_ID, TENANT_SCHEMA, req(jwt('admin')))
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(NotFoundException);
+      expect(err.message).toBe('COURSE_PRODUCT_NOT_FOUND');
+      expect(err.message).not.toContain(PRODUCT_ID);
     });
 
     it('404 → audit_log 写入 1 次, action="course-product.stats-not-found"', async () => {

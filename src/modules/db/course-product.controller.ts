@@ -207,9 +207,9 @@ export class CourseProductController {
           reason: 'product_id_not_found_in_tenant',
         },
       });
-      throw new NotFoundException(
-        `COURSE_PRODUCT_NOT_FOUND: productId=${id}`,
-      );
+      // Wave 11 audit r2 (5/15) security P2: 不回显 productId 防扫描枚举
+      //   productId 已写入 audit_log targetId 字段排查无需依赖 response body
+      throw new NotFoundException('COURSE_PRODUCT_NOT_FOUND');
     }
 
     return stats;
