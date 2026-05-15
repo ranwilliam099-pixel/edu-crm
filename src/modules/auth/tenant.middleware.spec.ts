@@ -629,3 +629,132 @@ describe('TenantMiddleware A01-CRIT P0 Parent x Tenant 绑定校验', () => {
     expect(req.user.tenantId).toBe(TENANT_A);
   });
 });
+
+/**
+ * T6b (2026-05-16) SECURITY-FIX: requireParentOrTenantUser fallback 收紧
+ *
+ * 来源：T6a security audit Set 2 P0-1（A01/A04）
+ *   旧 catch 块吞所有错误 → B 端 admin/boss JWT (aud='b-app') 调 /api/parents/** 时
+ *   parentJwt.parse 抛 audience mismatch 被吞 → fallback 到 jwt.parse 放行 → 越权.
+ *
+ * 修复：audience mismatch 直接 rethrow，不放行 fallback.
+ *   其他错误（如旧 token 无 type 字段）保留 fallback 兼容路径.
+ */
+describe('TenantMiddleware T6b /api/parents/** fallback 收紧', () => {
+  const TEST_SECRET_T6B = 'test-secret-t6b';
+  const PARENT_ID = 'p00000000000000000000000000000A1';
+  const ADMIN_ID = 'a00000000000000000000000000000A1';
+  const TENANT_A = 'tenanta00000000000000000000000a1';
+  const CAMPUS_A = 'campusa0000000000000000000000a01';
+
+  let middleware: TenantMiddleware;
+  let jwt: JwtStrategy;
+  let parentJwt: ParentJwtStrategy;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      imports: [JwtModule.register({ secret: TEST_SECRET_T6B })],
+      providers: [
+        TenantMiddleware,
+        JwtStrategy,
+        ParentJwtStrategy,
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (k: string) =>
+              k === 'JWT_SECRET' ? TEST_SECRET_T6B : undefined,
+          },
+        },
+      ],
+    }).compile();
+    middleware = module.get<TenantMiddleware>(TenantMiddleware);
+    jwt = module.get<JwtStrategy>(JwtStrategy);
+    parentJwt = module.get<ParentJwtStrategy>(ParentJwtStrategy);
+  });
+
+  function makeReq(originalUrl: string, token: string): any {
+    return {
+      originalUrl,
+      url: originalUrl,
+      path: originalUrl,
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+      ip: '1.2.3.4',
+      body: {},
+    };
+  }
+
+  it('T6b P0-1: B 端 admin JWT (aud=b-app) 调 /api/parents/* → audience mismatch rethrow → 401', async () => {
+    // T6a 已让 ParentJwtStrategy 在 aud='b-app' 时抛 'audience mismatch'.
+    // 旧 fallback 会吞错 → jwt.parse 成功 → 放行 admin 进 parent 路径.
+    // T6b 修复：audience mismatch 不走 fallback → 401.
+    const adminToken = (jwt as any).jwt.sign(
+      {
+        sub: ADMIN_ID,
+        tenantId: TENANT_A,
+        role: 'admin',
+        campusId: null,
+      },
+      { audience: 'b-app' },
+    );
+    const req = makeReq('/api/parents/some/path', adminToken);
+
+    await expect(
+      middleware.use(req, {} as any, () => {}),
+    ).rejects.toThrow(UnauthorizedException);
+
+    // req.parent / req.user 都不应被错误挂上
+    expect((req as any).parent).toBeUndefined();
+    expect((req as any).user).toBeUndefined();
+  });
+
+  it('T6b P0-1: B 端 boss JWT (aud=b-app) 调 /api/parent-subscriptions/* → 401', async () => {
+    const bossToken = (jwt as any).jwt.sign(
+      {
+        sub: ADMIN_ID,
+        tenantId: TENANT_A,
+        role: 'boss',
+        campusId: CAMPUS_A,
+      },
+      { audience: 'b-app' },
+    );
+    const req = makeReq('/api/parent-subscriptions/db/find/' + PARENT_ID, bossToken);
+
+    await expect(
+      middleware.use(req, {} as any, () => {}),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('T6b 兼容：合法 ParentJwt (aud=parent-app) 调 /api/parents/* → 放行挂 req.parent', async () => {
+    const parentToken = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeReq('/api/parents/' + PARENT_ID + '/something', parentToken);
+
+    await new Promise<void>((resolve, reject) => {
+      middleware.use(req, {} as any, (err?: unknown) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    expect(req.parent).toMatchObject({ parentId: PARENT_ID, type: 'parent' });
+  });
+
+  it('T6b 兼容：旧 parent token 无 aud 字段 + 无 type → fallback 走 B 端 JWT 解析（向前兼容）', async () => {
+    // 模拟旧 token（无 aud / 无 type='parent'）— 但有合法 B 端 claims → fallback 应放行
+    const legacyToken = (jwt as any).jwt.sign({
+      sub: ADMIN_ID,
+      tenantId: TENANT_A,
+      role: 'sales',
+      campusId: CAMPUS_A,
+      // 没有 aud → parentJwt 抛 'Token type mismatch' 不含 'audience mismatch' → fallback
+    });
+    const req = makeReq('/api/parents/some/path', legacyToken);
+
+    await new Promise<void>((resolve, reject) => {
+      middleware.use(req, {} as any, (err?: unknown) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    expect((req as any).user).toMatchObject({ sub: ADMIN_ID, role: 'sales' });
+  });
+});

@@ -302,6 +302,151 @@ describe('ParentService - V10 BE-V10-1 PD §5 + 用户拍板条目 31/32', () =>
     });
   });
 
+  /**
+   * T6b (2026-05-16) — assertOwnership 二道防御
+   * 来源：T6a Set 2 P0-2 + leader spec — service 层 callerParentId !== input.parentId → 403
+   */
+  describe('T6b *InDb 二道防御 assertOwnership', () => {
+    const ULID_BINDING_OWN = ULID32_B1;
+    const ULID_BINDING_OTHER = ULID32_B2;
+
+    function makeRepoMock() {
+      return {
+        insertParent: jest.fn(async (p: any) => p),
+        findParentById: jest.fn(),
+        findParentByPhone: jest.fn(),
+        insertBinding: jest.fn(async (b: any) => b),
+        findActiveBindingsForStudent: jest.fn().mockResolvedValue([]),
+        findChildrenByParent: jest.fn().mockResolvedValue([
+          {
+            id: ULID_BINDING_OWN,
+            parentId: ULID32_P1,
+            studentId: ULID32_S1,
+            tenantId: ULID32_T1,
+            isPrimary: true,
+            relationship: 'mother' as Relationship,
+            bindingStatus: 'active' as const,
+            boundAt: new Date(),
+          },
+        ]),
+        unbind: jest.fn(async (id: string) => ({
+          id,
+          parentId: ULID32_P1,
+          studentId: ULID32_S1,
+          tenantId: ULID32_T1,
+          isPrimary: false,
+          relationship: 'mother' as Relationship,
+          bindingStatus: 'unbound' as const,
+          boundAt: new Date(),
+          unboundAt: new Date(),
+        })),
+      };
+    }
+
+    function buildWithRepo(repo: any): ParentService {
+      return new ParentService(repo);
+    }
+
+    it('createBindingInDb: caller === input.parentId → 放行', async () => {
+      const repo = makeRepoMock();
+      const svc = buildWithRepo(repo);
+      await expect(
+        svc.createBindingInDb(
+          {
+            id: ULID32_B4,
+            parentId: ULID32_P1,
+            studentId: ULID32_S1,
+            tenantId: ULID32_T1,
+            relationship: 'mother',
+          },
+          ULID32_P1, // caller === input.parentId
+        ),
+      ).resolves.toBeDefined();
+      expect(repo.insertBinding).toHaveBeenCalled();
+    });
+
+    it('createBindingInDb: caller !== input.parentId → ForbiddenException + 不写 DB', async () => {
+      const repo = makeRepoMock();
+      const svc = buildWithRepo(repo);
+      const { ForbiddenException } = require('@nestjs/common');
+      await expect(
+        svc.createBindingInDb(
+          {
+            id: ULID32_B4,
+            parentId: ULID32_P2, // 攻击其他 parent
+            studentId: ULID32_S1,
+            tenantId: ULID32_T1,
+            relationship: 'mother',
+          },
+          ULID32_P1, // caller = P1 ≠ P2
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(repo.insertBinding).not.toHaveBeenCalled();
+    });
+
+    it('createBindingInDb: caller=undefined → 跳过 ownership（兼容旧调用方）', async () => {
+      const repo = makeRepoMock();
+      const svc = buildWithRepo(repo);
+      await expect(
+        svc.createBindingInDb(
+          {
+            id: ULID32_B4,
+            parentId: ULID32_P2,
+            studentId: ULID32_S1,
+            tenantId: ULID32_T1,
+            relationship: 'mother',
+          },
+          // 不传 callerParentId
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it('listMyChildrenInDb: caller === parentId → 放行', async () => {
+      const repo = makeRepoMock();
+      const svc = buildWithRepo(repo);
+      await expect(svc.listMyChildrenInDb(ULID32_P1, ULID32_P1)).resolves.toBeDefined();
+      expect(repo.findChildrenByParent).toHaveBeenCalledWith(ULID32_P1);
+    });
+
+    it('listMyChildrenInDb: caller !== parentId → ForbiddenException + 不查 DB', async () => {
+      const repo = makeRepoMock();
+      const svc = buildWithRepo(repo);
+      const { ForbiddenException } = require('@nestjs/common');
+      await expect(
+        svc.listMyChildrenInDb(ULID32_P2, ULID32_P1),
+      ).rejects.toThrow(ForbiddenException);
+      expect(repo.findChildrenByParent).not.toHaveBeenCalled();
+    });
+
+    it('unbindBindingInDb: caller 拥有该 binding → 放行', async () => {
+      const repo = makeRepoMock();
+      const svc = buildWithRepo(repo);
+      await expect(
+        svc.unbindBindingInDb(ULID_BINDING_OWN, ULID32_P1),
+      ).resolves.toBeDefined();
+      expect(repo.findChildrenByParent).toHaveBeenCalledWith(ULID32_P1);
+      expect(repo.unbind).toHaveBeenCalledWith(ULID_BINDING_OWN);
+    });
+
+    it('unbindBindingInDb: caller 不拥有该 binding → ForbiddenException + 不调 unbind', async () => {
+      const repo = makeRepoMock();
+      const svc = buildWithRepo(repo);
+      const { ForbiddenException } = require('@nestjs/common');
+      await expect(
+        svc.unbindBindingInDb(ULID_BINDING_OTHER, ULID32_P1),
+      ).rejects.toThrow(ForbiddenException);
+      expect(repo.unbind).not.toHaveBeenCalled();
+    });
+
+    it('unbindBindingInDb: caller=undefined → 跳过 ownership + 直接 unbind（兼容）', async () => {
+      const repo = makeRepoMock();
+      const svc = buildWithRepo(repo);
+      await expect(svc.unbindBindingInDb(ULID_BINDING_OTHER)).resolves.toBeDefined();
+      expect(repo.findChildrenByParent).not.toHaveBeenCalled();
+      expect(repo.unbind).toHaveBeenCalledWith(ULID_BINDING_OTHER);
+    });
+  });
+
   describe('countActiveParentsForStudent', () => {
     it('正确计数 active', () => {
       const bindings: ParentStudentBinding[] = [

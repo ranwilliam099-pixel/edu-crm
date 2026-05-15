@@ -6,25 +6,38 @@ import {
   Post,
   HttpCode,
   HttpStatus,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
+import { Request } from 'express';
 import {
   ParentService,
   Parent,
   ParentStudentBinding,
   Relationship,
 } from './parent.service';
+import { ParentSelfGuard } from '../auth/parent-self.guard';
+
+type ParentRequest = Request & {
+  parent?: { sub?: string; parentId?: string; role?: string };
+};
 
 /**
  * ParentController — V10 家长身份 + 学员绑定 HTTP 暴露 BE-V10-1
  *
  * 路由前缀：/api/parents
  *
- * RBAC：C 端家长走自己的 OAuth token（family-owner），不在 RBAC 装饰器范围
+ * RBAC：C 端家长走自己的 OAuth token（family-owner），不在 @Roles 装饰器范围
  *   B 端管理（如销售生成绑定二维码）走 sales / admin / boss 角色（生成 QR 码不在本 Controller）
+ *
+ * T6b (2026-05-16)：class-level ParentSelfGuard 守门（req.parent.sub === req.params.parentId）
+ *   + service 二道防御（assertOwnership）。/register 无 :parentId → guard 自动跳过；
+ *   bindings/:bindingId/unbind 无 :parentId → service 层用 callerParentId 校验绑定归属。
  *
  * USER-AUTH(2026-05-02): 条目 31 #3 跨机构共享 + 条目 32 #10 退订保留绑定
  */
 @Controller('parents')
+@UseGuards(ParentSelfGuard)
 export class ParentController {
   constructor(private readonly service: ParentService) {}
 
@@ -132,22 +145,34 @@ export class ParentController {
       isPrimary?: boolean;
       relationship: Relationship;
     },
+    @Req() req: ParentRequest,
   ): Promise<ParentStudentBinding> {
-    return this.service.createBindingInDb({ ...body, parentId });
+    // T6b 二道防御：service 层再断言 parentId === req.parent.sub
+    // （Guard 已校验，service 层用于覆盖非 HTTP 直接调用 / 未来 cron 等场景）
+    return this.service.createBindingInDb(
+      { ...body, parentId },
+      req.parent?.sub,
+    );
   }
 
   @Post('db/:parentId/children')
   @HttpCode(HttpStatus.OK)
   async listChildrenInDb(
     @Param('parentId') parentId: string,
+    @Req() req: ParentRequest,
   ): Promise<ParentStudentBinding[]> {
-    return this.service.listMyChildrenInDb(parentId);
+    return this.service.listMyChildrenInDb(parentId, req.parent?.sub);
   }
 
   @Post('db/bindings/:bindingId/unbind')
   @HttpCode(HttpStatus.OK)
-  async unbindInDb(@Param('bindingId') bindingId: string): Promise<ParentStudentBinding> {
-    return this.service.unbindBindingInDb(bindingId);
+  async unbindInDb(
+    @Param('bindingId') bindingId: string,
+    @Req() req: ParentRequest,
+  ): Promise<ParentStudentBinding> {
+    // T6b：unbind 无 :parentId path param → Guard 跳过 → service 层用 callerParentId
+    // 反查 binding 归属（防一个 parent 解绑另一个 parent 的 binding）
+    return this.service.unbindBindingInDb(bindingId, req.parent?.sub);
   }
 
   /**

@@ -1,4 +1,11 @@
-import { Injectable, BadRequestException, ConflictException, Logger, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Logger,
+  Optional,
+} from '@nestjs/common';
 import { ParentRepository } from '../db/parent.repository';
 
 /**
@@ -179,27 +186,62 @@ export class ParentService {
     return this.repo.insertParent(parent);
   }
 
-  async createBindingInDb(input: {
-    id: string;
-    parentId: string;
-    studentId: string;
-    tenantId: string;
-    isPrimary?: boolean;
-    relationship: Relationship;
-  }): Promise<ParentStudentBinding> {
+  /**
+   * T6b (2026-05-16) 二道防御：service 层 assert caller (jwt.sub) === 操作目标 parentId.
+   * Guard 层已校验 path :parentId === jwt.sub；service 层覆盖非 HTTP 调用（cron / 跨服务调用）.
+   * callerParentId 缺失（undefined）→ 视为来自合法的内部调用（如 register 不走此校验），跳过.
+   */
+  private assertOwnership(targetParentId: string, callerParentId?: string): void {
+    if (callerParentId === undefined) return;
+    if (callerParentId !== targetParentId) {
+      throw new ForbiddenException('parent_self_mismatch');
+    }
+  }
+
+  async createBindingInDb(
+    input: {
+      id: string;
+      parentId: string;
+      studentId: string;
+      tenantId: string;
+      isPrimary?: boolean;
+      relationship: Relationship;
+    },
+    callerParentId?: string,
+  ): Promise<ParentStudentBinding> {
     if (!this.repo) throw new BadRequestException('ParentRepository not available');
+    this.assertOwnership(input.parentId, callerParentId);
     const existing = await this.repo.findActiveBindingsForStudent(input.studentId);
     const binding = this.createBinding(input, existing);
     return this.repo.insertBinding(binding);
   }
 
-  async listMyChildrenInDb(parentId: string): Promise<ParentStudentBinding[]> {
+  async listMyChildrenInDb(
+    parentId: string,
+    callerParentId?: string,
+  ): Promise<ParentStudentBinding[]> {
     if (!this.repo) throw new BadRequestException('ParentRepository not available');
+    this.assertOwnership(parentId, callerParentId);
     return this.repo.findChildrenByParent(parentId);
   }
 
-  async unbindBindingInDb(bindingId: string): Promise<ParentStudentBinding> {
+  /**
+   * T6b: unbind path 无 :parentId, Guard 跳过 → service 层用 callerParentId 反查
+   * binding 归属（防一个 parent 解绑另一个 parent 的 binding）.
+   * callerParentId 缺失 → 跳过 ownership（兼容旧调用方 / cron）.
+   */
+  async unbindBindingInDb(
+    bindingId: string,
+    callerParentId?: string,
+  ): Promise<ParentStudentBinding> {
     if (!this.repo) throw new BadRequestException('ParentRepository not available');
+    if (callerParentId !== undefined) {
+      const ownedBindings = await this.repo.findChildrenByParent(callerParentId);
+      const owned = ownedBindings.some((b) => b.id === bindingId);
+      if (!owned) {
+        throw new ForbiddenException('parent_self_mismatch');
+      }
+    }
     return this.repo.unbind(bindingId);
   }
 

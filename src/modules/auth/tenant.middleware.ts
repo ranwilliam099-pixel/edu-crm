@@ -9,7 +9,11 @@ import {
 import { Request, Response, NextFunction } from 'express';
 import { JwtStrategy } from './jwt.strategy';
 import { ParentJwtStrategy } from './parent-jwt.strategy';
-import { JwtPayload, isPlatformRole } from './jwt-payload.interface';
+import {
+  JwtPayload,
+  isPlatformRole,
+  AUDIENCE_B_APP,
+} from './jwt-payload.interface';
 import { ParentRepository } from '../db/parent.repository';
 import { AuditLogRepository } from '../db/audit-log.repository';
 
@@ -142,6 +146,16 @@ export class TenantMiddleware implements NestMiddleware {
   /**
    * Q-FE-2: 接受 ParentJwt 或 TenantJwt（双轨容错）
    * 优先尝试 ParentJwt（type='parent'）；失败 → 退回 TenantJwt
+   *
+   * T6b (2026-05-16) SECURITY-FIX：fallback 收紧
+   *   原 catch 块吞所有错误 → B 端 admin/boss JWT (aud='b-app') 走 /api/parents/** 时
+   *   parentJwt.parse 抛 'audience mismatch' / 'Token type mismatch' 被 catch 吞 →
+   *   fallback 到 jwt.parse 把 B 端 token 当合法用户挂上 → 越权进入 C 端 endpoint.
+   *
+   *   修复（覆盖 parent-jwt.strategy 当前校验顺序：type 先于 aud）：
+   *     1. 'audience mismatch' rethrow（少数情况：未来 strategy 调整顺序）
+   *     2. peek 无签名解码 aud === 'b-app' → 显式 401（覆盖 strategy 当前 type 先抛）
+   *     3. 其他（旧 token 无 aud / 无 type）保留 fallback 兼容
    */
   private async requireParentOrTenantUser(req: Request): Promise<void> {
     const token = this.extractToken(req);
@@ -150,11 +164,44 @@ export class TenantMiddleware implements NestMiddleware {
       const parent = this.parentJwt.parse(token);
       (req as RequestWithUser & { parent?: any }).parent = parent;
       return;
-    } catch {
-      // 不是 parent token，尝试 tenant token
+    } catch (e) {
+      // T6b ①: audience mismatch 表示 B 端 token 强行走 parent 路径 → 拒绝 fallback
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.toLowerCase().includes('audience mismatch')) {
+        throw e instanceof UnauthorizedException
+          ? e
+          : new UnauthorizedException(msg);
+      }
+      // T6b ②: parent-jwt.strategy 当前 type 校验早于 aud 校验, B 端 token
+      // 因 type!='parent' 先抛 → audience mismatch 没机会运行.
+      // 用无签名解码 peek aud='b-app' 显式拒绝, 防 B 端 admin/boss JWT 走 parent 路径.
+      if (this.peekTokenAud(token) === AUDIENCE_B_APP) {
+        throw new UnauthorizedException(
+          `B-app token cannot be used on parent path (aud=${AUDIENCE_B_APP})`,
+        );
+      }
+      // T6b ③: 其他错误（旧 token 无 type / 无 aud）保留 fallback 兼容
     }
     const user = await this.jwt.parse(token);
     (req as RequestWithUser).user = user;
+  }
+
+  /**
+   * T6b: 无签名解码 JWT payload, 仅读 aud 用于路由决策.
+   * 无签名验证 → 不可用于鉴权; 仅"看起来像 B 端 token 就不走 parent 分支"的预判.
+   * 真正鉴权由 jwt.parse / parentJwt.parse 兜底.
+   */
+  private peekTokenAud(token: string): string | undefined {
+    try {
+      const parts = token.split('.');
+      if (parts.length < 2) return undefined;
+      const payload = JSON.parse(
+        Buffer.from(parts[1], 'base64url').toString('utf8'),
+      );
+      return typeof payload.aud === 'string' ? payload.aud : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
