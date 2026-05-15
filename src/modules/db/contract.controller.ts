@@ -110,6 +110,7 @@ export class ContractController {
   }
 
   @Get('mine')
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'finance') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
   @HttpCode(HttpStatus.OK)
   async listMine(
     @Query('tenantSchema') tenantSchema: string,
@@ -136,6 +137,7 @@ export class ContractController {
   }
 
   @Get('performance')
+  @Roles('sales_manager', 'boss', 'admin') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
   @HttpCode(HttpStatus.OK)
   async myPerformance(
     @Query('tenantSchema') tenantSchema: string,
@@ -174,6 +176,7 @@ export class ContractController {
   }
 
   @Get(':id')
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin', 'finance') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
   @HttpCode(HttpStatus.OK)
   async detail(
     @Param('id') id: string,
@@ -235,6 +238,7 @@ export class ContractController {
    *   - 失败 → ForbiddenException
    */
   @Get('by-student/:studentId')
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin', 'finance') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
   @HttpCode(HttpStatus.OK)
   async listByStudent(
     @Param('studentId') studentId: string,

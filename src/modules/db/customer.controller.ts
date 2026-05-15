@@ -213,6 +213,7 @@ export class CustomerController {
   }
 
   @Get('mine')
+  @Roles('sales', 'sales_manager', 'boss', 'admin') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
   @HttpCode(HttpStatus.OK)
   async listMine(
     @Query('tenantSchema') tenantSchema: string,
@@ -279,6 +280,7 @@ export class CustomerController {
   }
 
   @Get('pool')
+  @Roles('sales', 'sales_manager', 'boss', 'admin') // T-NEW-1 defense-in-depth (parent/teacher 严禁, Roles 待 SSOT 拍板, Sprint B backlog)
   @HttpCode(HttpStatus.OK)
   async listPool(
     @Query('tenantSchema') tenantSchema: string,
@@ -304,6 +306,7 @@ export class CustomerController {
   }
 
   @Get(':id')
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
   @HttpCode(HttpStatus.OK)
   async detail(
     @Param('id') id: string,
@@ -357,6 +360,7 @@ export class CustomerController {
   }
 
   @Get(':id/follows')
+  @Roles('sales', 'sales_manager', 'boss', 'admin') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
   @HttpCode(HttpStatus.OK)
   async listFollows(
     @Param('id') id: string,
