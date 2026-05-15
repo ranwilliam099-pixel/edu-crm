@@ -5,6 +5,7 @@ import {
   ParentJwtPayload,
   PARENT_TOKEN_TYPE,
 } from './parent-jwt-payload.interface';
+import { AUDIENCE_PARENT_APP } from './jwt-payload.interface';
 
 /**
  * ParentJwtStrategy — V10 BE-V10-3 C 端家长 token 鉴权
@@ -58,6 +59,13 @@ export class ParentJwtStrategy {
     if (raw.type !== PARENT_TOKEN_TYPE) {
       throw new UnauthorizedException('Token type mismatch (expected parent)');
     }
+    // T6a audit A1-r2 P0-NEW-3: 拒绝 B 端 audience（admin/boss JWT 不可走 parent 路径）
+    // 旧 parent token 无 aud 字段 → 由上一步 type='parent' 兜底（向前兼容）
+    if (raw.aud && raw.aud !== AUDIENCE_PARENT_APP) {
+      throw new UnauthorizedException(
+        `Parent token audience mismatch (expected ${AUDIENCE_PARENT_APP}, got ${raw.aud})`,
+      );
+    }
     if (!raw.parentId || typeof raw.parentId !== 'string' || raw.parentId.length !== 32) {
       throw new UnauthorizedException('Parent token missing/invalid parentId');
     }
@@ -66,6 +74,7 @@ export class ParentJwtStrategy {
       parentId: raw.parentId,
       openid: raw.openid,
       type: 'parent',
+      aud: raw.aud,
       exp: raw.exp,
       iat: raw.iat,
     };
@@ -80,13 +89,15 @@ export class ParentJwtStrategy {
     if (!input.parentId || input.parentId.length !== 32) {
       throw new UnauthorizedException('parentId must be 32-char ULID');
     }
+    // T6a: audience='parent-app' 标识 C 端 token（与 B 端 'b-app' 区分）
+    // 注：jsonwebtoken 不允许同时在 payload + options 设 aud → 只放 options
     return this.jwt.sign(
       {
         parentId: input.parentId,
         openid: input.openid,
         type: PARENT_TOKEN_TYPE,
       },
-      { expiresIn },
+      { expiresIn, audience: AUDIENCE_PARENT_APP },
     );
   }
 }

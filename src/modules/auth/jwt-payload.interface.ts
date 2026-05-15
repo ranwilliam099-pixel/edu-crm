@@ -1,4 +1,17 @@
 /**
+ * JWT audience（T6a 2026-05-16 audit A1-r2 P0-NEW-3）
+ *
+ * 切分两类 token：
+ *   - 'b-app'      B 端员工 token（AuthController.login 签发）
+ *   - 'parent-app' C 端家长 token（ParentJwtStrategy.sign 签发）
+ *
+ * 双钥共用 JWT_SECRET，靠 audience 区分流量，防 B 端 admin/boss JWT 调 /api/parents/**。
+ */
+export const AUDIENCE_B_APP = 'b-app' as const;
+export const AUDIENCE_PARENT_APP = 'parent-app' as const;
+export type JwtAudience = typeof AUDIENCE_B_APP | typeof AUDIENCE_PARENT_APP;
+
+/**
  * JWT Claims（接口清单 V1 §6.1）
  *
  * - sub:        用户 ID（ULID, 32 chars）
@@ -8,6 +21,7 @@
  * - campusId:   校区 ID（追加 #15 A08：标准版 ≤ 3 校区）
  * - exp / iat:  标准 JWT 字段
  * - jti:        JWT ID（Sprint E.1 加 — logout 黑名单查询 key；旧 token 无此字段时跳过黑名单查询）
+ * - aud:        T6a audience 切分（'b-app'）；旧 token 无此字段（向前兼容）
  */
 export interface JwtPayload {
   sub: string;
@@ -17,6 +31,7 @@ export interface JwtPayload {
   exp?: number;
   iat?: number;
   jti?: string;
+  aud?: string;
 }
 
 /**

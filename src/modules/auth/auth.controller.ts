@@ -12,7 +12,13 @@ import { JwtService } from '@nestjs/jwt';
 import { Throttle } from '@nestjs/throttler';
 import { ulid } from 'ulid';
 import { ParentJwtStrategy } from './parent-jwt.strategy';
-import { isCrossCampusRole, TenantRole, AuthenticatedRequest, JwtPayload } from './jwt-payload.interface';
+import {
+  isCrossCampusRole,
+  TenantRole,
+  AuthenticatedRequest,
+  JwtPayload,
+  AUDIENCE_B_APP,
+} from './jwt-payload.interface';
 import { RedisService } from '../redis/redis.service';
 import { WxCodeSessionService } from './wx-code-session.service';
 
@@ -121,15 +127,16 @@ export class AuthController {
     //   - jsonwebtoken 限制：jti 不能同时在 payload + options.jwtid，所以只放 options
     //     最终 sign 出的 token 仍然有标准 JWT `jti` 字段，verify 后 decoded.jti 可读
     const jti = ulid();
-    const signPayload: Omit<JwtPayload, 'jti'> = {
+    const signPayload: Omit<JwtPayload, 'jti' | 'aud'> = {
       sub: body.userId,
       tenantId: body.tenantId,
       role: body.role as TenantRole,
       campusId,
     };
-    const token = this.jwt.sign(signPayload, { jwtid: jti });
-    // 给前端返回完整 payload（含 jti）便于调试 / 前端缓存 logout 用
-    const payload: JwtPayload = { ...signPayload, jti };
+    // T6a audit A1-r2 P0-NEW-3: B 端 token 标 audience='b-app'，与 C 端 'parent-app' 切分
+    const token = this.jwt.sign(signPayload, { jwtid: jti, audience: AUDIENCE_B_APP });
+    // 给前端返回完整 payload（含 jti / aud）便于调试 / 前端缓存 logout 用
+    const payload: JwtPayload = { ...signPayload, jti, aud: AUDIENCE_B_APP };
     return {
       token,
       tokenType: 'Bearer',
@@ -162,6 +169,7 @@ export class AuthController {
     if (!body.parentId || body.parentId.length !== 32) {
       throw new BadRequestException('parentId must be 32-char ULID');
     }
+    // T6a: ParentJwtStrategy.sign 内部已强制 audience='parent-app'
     const token = this.parentJwt.sign({
       parentId: body.parentId,
       openid: body.openid,

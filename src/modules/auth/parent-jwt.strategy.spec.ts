@@ -84,4 +84,47 @@ describe('ParentJwtStrategy - V10 BE-V10-3', () => {
       expect(() => strategy.parse(tok)).toThrow(UnauthorizedException);
     });
   });
+
+  // ============================================================
+  // T6a audit A1-r2 P0-NEW-3 (2026-05-16) — audience 切分
+  //   sign 强制 'parent-app'；parse 拒绝 'b-app' 等其他 aud
+  // ============================================================
+  describe('T6a — JWT audience 切分', () => {
+    it('sign 产生的 token 含 aud=parent-app', () => {
+      const token = strategy.sign({ parentId: ULID32_P1 });
+      const decoded: any = jwtService.verify(token);
+      expect(decoded.aud).toBe('parent-app');
+    });
+
+    it('parse 接受 aud=parent-app 的 token', () => {
+      const token = strategy.sign({ parentId: ULID32_P1, openid: 'oX' });
+      const payload = strategy.parse(token);
+      expect(payload.parentId).toBe(ULID32_P1);
+      expect(payload.aud).toBe('parent-app');
+    });
+
+    it('parse 拒绝 aud=b-app 的 token（B 端 audience 不可走 C 端路径）→ 401', () => {
+      const bToken = jwtService.sign(
+        { parentId: ULID32_P1, type: 'parent' },
+        { secret: 'test-secret-for-parent', audience: 'b-app' },
+      );
+      expect(() => strategy.parse(bToken)).toThrow(UnauthorizedException);
+      try {
+        strategy.parse(bToken);
+      } catch (e) {
+        expect((e as Error).message).toMatch(/audience mismatch/);
+      }
+    });
+
+    it('parse 接受无 aud 字段的旧 parent token（向前兼容）', () => {
+      // 旧 parent token 不带 aud，由 type='parent' 兜底校验
+      const legacyToken = jwtService.sign(
+        { parentId: ULID32_P1, type: 'parent' },
+        { secret: 'test-secret-for-parent' },
+      );
+      const payload = strategy.parse(legacyToken);
+      expect(payload.parentId).toBe(ULID32_P1);
+      expect(payload.aud).toBeUndefined();
+    });
+  });
 });

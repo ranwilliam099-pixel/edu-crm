@@ -270,6 +270,42 @@ describe('JwtStrategy (W1 BE-W1-3 real + Sprint E.1 async + jti blacklist)', () 
   });
 
   // ============================================================
+  // T6a audit A1-r2 P0-NEW-3 (2026-05-16) — audience 切分
+  //   B 端 strategy 拒绝 aud=parent-app 的 token
+  // ============================================================
+  describe('parse() — audience 切分（T6a）', () => {
+    it('接受 aud=b-app 的 B 端 token', async () => {
+      const token = jwt.sign(
+        { sub: ULID_32, tenantId: ULID_32_B, role: 'sales', campusId: ULID_32_C },
+        { audience: 'b-app' },
+      );
+      const result = await strategy.parse(token);
+      expect(result.sub).toBe(ULID_32);
+      expect(result.aud).toBe('b-app');
+    });
+
+    it('拒绝 aud=parent-app 的 token（C 端 audience 不可走 B 端路径）→ 401', async () => {
+      const token = jwt.sign(
+        { sub: ULID_32, tenantId: ULID_32_B, role: 'sales', campusId: ULID_32_C },
+        { audience: 'parent-app' },
+      );
+      await expect(strategy.parse(token)).rejects.toThrow(/audience mismatch/);
+    });
+
+    it('接受无 aud 的旧 token（向前兼容；role 仍是必填）', async () => {
+      const token = jwt.sign({
+        sub: ULID_32,
+        tenantId: ULID_32_B,
+        role: 'sales',
+        campusId: ULID_32_C,
+      });
+      const result = await strategy.parse(token);
+      expect(result.sub).toBe(ULID_32);
+      expect(result.aud).toBeUndefined();
+    });
+  });
+
+  // ============================================================
   // SPRINT-E.1(2026-05-13) Redis 未注入（@Optional fallback）
   // ============================================================
   describe('parse() — Redis @Optional fallback', () => {

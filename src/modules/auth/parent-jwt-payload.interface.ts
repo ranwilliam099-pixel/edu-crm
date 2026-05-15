@@ -20,6 +20,12 @@ export interface ParentJwtPayload {
   /** Token 类型标识，用于区分 B 端 vs C 端（防止误用）*/
   type: 'parent';
 
+  /**
+   * JWT audience（T6a audit A1-r2 P0-NEW-3）— 强制 'parent-app'
+   * 旧 parent token 无此字段时由 type='parent' 兜底（向前兼容）
+   */
+  aud?: string;
+
   exp?: number;
   iat?: number;
 }

@@ -5,6 +5,7 @@ import {
   JwtPayload,
   isPlatformRole,
   isCrossCampusRole,
+  AUDIENCE_B_APP,
 } from './jwt-payload.interface';
 import { RedisService } from '../redis/redis.service';
 
@@ -98,6 +99,13 @@ export class JwtStrategy {
   private validateClaims(payload: JwtPayload): void {
     if (!payload.sub || payload.sub.length !== 32) {
       throw new UnauthorizedException('Invalid sub (expect 32-char ULID)');
+    }
+    // T6a audit A1-r2 P0-NEW-3: B 端 strategy 拒绝 C 端 audience（parent-app 不可走 B 路径）
+    // 旧 token 无 aud → 由下方 role 校验兜底（parent token 无 role 也会被拒）
+    if (payload.aud && payload.aud !== AUDIENCE_B_APP) {
+      throw new UnauthorizedException(
+        `Token audience mismatch (expected ${AUDIENCE_B_APP}, got ${payload.aud})`,
+      );
     }
     if (!payload.role) {
       throw new UnauthorizedException('Missing role');

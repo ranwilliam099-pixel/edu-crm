@@ -292,6 +292,33 @@ describe('AuthController - 登录接口 + Sprint E.1 logout', () => {
   });
 
   // ============================================================
+  // T6a audit A1-r2 P0-NEW-3 (2026-05-16) — audience 切分
+  // ============================================================
+  describe('login / wechatLogin — JWT audience（T6a）', () => {
+    it('login 产生的 token aud=b-app', () => {
+      const result = controller.login({
+        phone: '13800001111',
+        tenantId: ULID32_T,
+        role: 'sales',
+        campusId: ULID32_C,
+        userId: ULID32,
+      });
+      const decoded: any = jwt.verify(result.token);
+      expect(decoded.aud).toBe('b-app');
+      expect(result.payload.aud).toBe('b-app');
+    });
+
+    it('wechatLogin 产生的 token aud=parent-app', () => {
+      const result = controller.wechatLogin({
+        parentId: ULID32,
+        openid: 'oWxXXX',
+      });
+      const decoded: any = jwt.verify(result.token);
+      expect(decoded.aud).toBe('parent-app');
+    });
+  });
+
+  // ============================================================
   // Sprint E.1 (2026-05-13) — login 含 jti claim（JWT 黑名单基础）
   // ============================================================
   describe('login - jti claim (Sprint E.1)', () => {
