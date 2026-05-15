@@ -203,13 +203,13 @@ export class ScheduleController {
   /**
    * POST /api/schedules/:id/cancel — 取消排课
    *
-   * Sprint B.4-1 round 2 (business P1-A): 早期 403 — 仅 {teacher, sales} 可调
-   * （admin/finance/parent/academic 任何登录用户原本可调，trust boundary 修复）
+   * Wave 11 audit (5/15): 早期 403 — 仅 academic 可调
+   * （admin/finance/parent/teacher/sales/boss 任何角色原本可调，trust boundary 修复）
+   * 拍板 fields-by-role.md L201 schedule 矩阵教务唯一创建，cancel 复用同一 RBAC 语义
    *
-   * NOTE: 暂不做 schedule ownership 校验（sales 是否归属该 schedule 的学员销售 /
-   * teacher 是否归属该 schedule 的老师），仅做角色限制。完整 ownership 校验需
-   * service 内反查 schedule.teacherId / studentIds → owner_sales_id 等，本轮 scope
-   * 仅缩小到 {teacher, sales}，ownership 校验记 Sprint X backlog
+   * NOTE: 暂不做 schedule ownership 校验（academic 是否归属该 schedule 所在校区），
+   * 仅做角色限制。完整本校 ownership 校验需 service 内反查 schedule.teacherId →
+   * teacher.campus_id 比 JWT.campusId，记 Sprint X backlog
    *
    * Sprint E backlog #3: 成功路径 audit_log 'schedule.cancel'；拒绝路径 'schedule.cancel.denied'
    *   - tenantSchema 缺时 audit 用 'unknown' 占位（拒绝路径 audit 写不进 tenant schema，
@@ -458,8 +458,9 @@ export class ScheduleController {
   /**
    * POST /api/schedules/:scheduleId/students/:studentId/attendance
    *
-   * Sprint B.4-1 round 2 (business P1-A): 早期 403 — 考勤标记仅 {teacher, sales} 可调
-   * （admin/finance/parent/academic 任何登录用户原本可调，trust boundary 修复）
+   * Wave 11 audit (5/15): 早期 403 — 考勤标记仅 academic 可调
+   * （admin/finance/parent/teacher/sales/boss 任何角色原本可调，trust boundary 修复）
+   * 拍板 fields-by-role.md L201 schedule 矩阵教务唯一创建/修改，attendance 复用 RBAC
    *
    * Sprint E backlog #3: 成功路径 'schedule.mark-attendance'；拒绝 'schedule.mark-attendance.denied'
    *   - 该 endpoint 操作 schedule_students 子记录，targetType 仍用 'schedule'（拍板锚定到父 schedule.id）
@@ -703,9 +704,9 @@ export class ScheduleController {
    *
    * 拒绝路径含三类：
    *   - tenantSchema 缺：reason='TENANT_SCHEMA_REQUIRED'，tenantSchema 占位 'unknown'
-   *   - JWT 缺/role 非 {teacher,sales}：reason='ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE: role=xxx'
-   *     或 'JWT sub/role required'
-   *   - service 业务校验失败（SALES_ONLY_OWN_STUDENTS / SCHEDULE_CONFLICT 等）：
+   *   - JWT 缺/role 非 academic：reason='ONLY_ACADEMIC_CAN_CREATE_SCHEDULE: role=xxx'
+   *     或 'JWT sub/role required' / 'ACADEMIC_CAMPUS_REQUIRED'
+   *   - service 业务校验失败（TEACHER_NOT_IN_ACADEMIC_CAMPUS / SCHEDULE_CONFLICT 等）：
    *     reason 取 err.message
    */
   private async tryAuditDenied(

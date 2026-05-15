@@ -183,12 +183,12 @@ export class RecurringScheduleController {
   /**
    * POST /api/recurring/bindings/:id/unbind
    *
-   * Sprint B.4-1 round 2 (business P1-A): 早期 403 — 仅 {teacher, sales} 可调
-   * （admin/finance/parent/academic 任何登录用户原本可调，trust boundary 修复）
+   * Wave 11 audit (5/15): 早期 403 — 仅 academic 可调
+   * （admin/finance/parent/teacher/sales/boss 任何角色原本可调，trust boundary 修复）
+   * 拍板 fields-by-role.md L201 schedule 矩阵教务唯一创建，unbind 复用同 RBAC
    *
-   * NOTE: 暂不做 binding ownership 校验（sales 是否归属该 binding 的学员销售 /
-   * teacher 是否归属该 binding 的老师），仅做角色限制。完整 ownership 校验记
-   * Sprint X backlog。
+   * NOTE: 暂不做 binding ownership 校验（academic 是否归属该 binding 所在校区），
+   * 仅做角色限制。完整本校 ownership 校验记 Sprint X backlog。
    *
    * Sprint E backlog #3: 成功 'recurring-binding.unbind' / 拒绝 'recurring-binding.unbind.denied'
    *   - service 是同步方法，本方法因 audit 改 async
@@ -380,10 +380,11 @@ export class RecurringScheduleController {
   /**
    * POST /api/recurring/schedules/:id/archive — 归档模板
    *
-   * Sprint B.4-1 round 2 (business P1-A): 早期 403 — 仅 {teacher, sales} 可调
-   * （admin/finance/parent/academic 任何登录用户原本可调，trust boundary 修复）
+   * Wave 11 audit (5/15): 早期 403 — 仅 academic 可调
+   * （admin/finance/parent/teacher/sales/boss 任何角色原本可调，trust boundary 修复）
+   * 拍板 fields-by-role.md L201 schedule 矩阵教务唯一创建，archive 复用同 RBAC
    *
-   * NOTE: 暂不做 recurring schedule ownership 校验，仅做角色限制。完整
+   * NOTE: 暂不做 recurring schedule 本校 ownership 校验，仅做角色限制。完整
    * ownership 校验记 Sprint X backlog。
    *
    * Sprint E backlog #3: 成功 'recurring-schedule.archive' / 拒绝 'recurring-schedule.archive.denied'
