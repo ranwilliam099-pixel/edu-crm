@@ -110,8 +110,17 @@ if [ "$NO_RELOAD" = true ]; then
   warn "Step 3 跳过（--no-reload）— 记得手动 ssh $SSH_HOST 'pm2 reload edu-api --update-env'"
 else
   info "Step 3/4: pm2 reload (--update-env 让 pm2 重读 .env)"
-  ssh "$SSH_HOST" "cd $REMOTE_PATH && pm2 reload edu-api --update-env" | tail -3
-  ok "Step 3 pm2 reload 完成"
+  # T17a (2026-05-16): 写入本地 git SHA 到生产 .env SENTRY_RELEASE，让 Sentry 报错带 commit 追溯
+  #   - sentry.config.ts:38 读 process.env.SENTRY_RELEASE
+  #   - 生产无 .git，必须 deploy-time 注入
+  #   - 用 sed/grep 模式 idempotent 替换或追加，pm2 reload --update-env 后生效
+  GIT_SHA=$(git -C "${LOCAL_PATH%/}" rev-parse --short HEAD)
+  ssh "$SSH_HOST" "cd $REMOTE_PATH && \
+    (grep -q '^SENTRY_RELEASE=' .env \
+      && sed -i 's|^SENTRY_RELEASE=.*|SENTRY_RELEASE=$GIT_SHA|' .env \
+      || echo 'SENTRY_RELEASE=$GIT_SHA' >> .env) && \
+    pm2 reload edu-api --update-env" | tail -3
+  ok "Step 3 pm2 reload 完成（SENTRY_RELEASE=$GIT_SHA）"
   echo ""
 fi
 

@@ -53,7 +53,7 @@ import { ActorRole, AuditLogRepository } from './audit-log.repository';
  *   POST /db/contracts/:id/activate  激活（pending → active）
  */
 @Controller('db/contracts')
-@UseGuards(TenantScopeGuard)
+@UseGuards(TenantScopeGuard, RbacGuard)
 export class ContractController {
   constructor(
     private readonly repo: ContractRepository,
@@ -322,6 +322,7 @@ export class ContractController {
   }
 
   @Post()
+  @Roles('sales', 'sales_manager', 'boss', 'admin')
   @HttpCode(HttpStatus.CREATED)
   async create(
     @Body()
@@ -415,6 +416,7 @@ export class ContractController {
   }
 
   @Post(':id/activate')
+  @Roles('sales', 'sales_manager', 'boss', 'admin')
   @HttpCode(HttpStatus.OK)
   async activate(
     @Param('id') id: string,

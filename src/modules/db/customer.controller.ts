@@ -50,7 +50,7 @@ import { ActorRole, AuditLogRepository } from './audit-log.repository';
  * 鉴权：TenantScopeGuard（强制 tenantId 一致）
  */
 @Controller('db/customers')
-@UseGuards(TenantScopeGuard)
+@UseGuards(TenantScopeGuard, RbacGuard)
 export class CustomerController {
   constructor(
     private readonly repo: CustomerRepository,
@@ -410,6 +410,7 @@ export class CustomerController {
   }
 
   @Post(':id/claim')
+  @Roles('sales', 'sales_manager')
   @HttpCode(HttpStatus.OK)
   async claim(
     @Param('id') id: string,
@@ -446,6 +447,7 @@ export class CustomerController {
   }
 
   @Post(':id/release')
+  @Roles('sales', 'sales_manager', 'boss', 'admin')
   @HttpCode(HttpStatus.OK)
   async release(
     @Param('id') id: string,
@@ -486,6 +488,7 @@ export class CustomerController {
   }
 
   @Post(':id/mark-lost')
+  @Roles('sales', 'sales_manager')
   @HttpCode(HttpStatus.OK)
   async markLost(
     @Param('id') id: string,
@@ -528,6 +531,7 @@ export class CustomerController {
   }
 
   @Post(':id/follow')
+  @Roles('sales', 'sales_manager')
   @HttpCode(HttpStatus.CREATED)
   async addFollow(
     @Param('id') id: string,
