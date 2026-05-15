@@ -5,11 +5,13 @@ import {
   Post,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ParentSubscriptionService,
   ParentSubscription,
 } from './parent-subscription.service';
+import { ParentSelfGuard } from '../auth/parent-self.guard';
 
 /**
  * ParentSubscriptionController — V10/V11 9.9 订阅 + 7 天试用 HTTP 暴露 BE-V10-2
@@ -17,8 +19,13 @@ import {
  * 路由前缀：/api/parent-subscriptions
  *
  * USER-AUTH(2026-05-02): 条目 31 #3 共享 + #4 7 天试用 + 条目 32 L3
+ *
+ * T6b-FU-1 (2026-05-16): class-level @UseGuards(ParentSelfGuard)
+ *   含 :parentId 路径（db/find/:parentId / db/cancel/:parentId）→ Guard 校验 jwt.sub === parentId
+ *   不含 :parentId 路径 → Guard 跳过（return true，由 service 层兜底）
  */
 @Controller('parent-subscriptions')
+@UseGuards(ParentSelfGuard)
 export class ParentSubscriptionController {
   constructor(private readonly service: ParentSubscriptionService) {}
 
