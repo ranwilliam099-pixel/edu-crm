@@ -16,19 +16,16 @@ import {
  * 简化 RRULE：BYDAY 字段为 ["MO","WE","FR"] + startMinutes（0-1439）
  *   完整 iCal RRULE 后续用 rrule.js 库扩展（V12+）
  *
- * Sprint B.4-1（2026-05-12）RBAC 加固（leader 拍板 Q2 同 schedule.service）：
- *   - createBinding / createRecurring 增加 rbacContext 可选参数（向后兼容现有 spec）
- *   - sales 路径：通过 studentResponsibleSalesId 校验 input.studentId 归属
- *   - teacher 路径：通过 teacherUserIdMap 校验 input.teacherId 反查 user_id = JWT.sub
- *   - 其他 role：ForbiddenException(ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE)
+ * Wave 11（2026-05-15）拍板反向修复：
+ *   - 5/9 拍板「教务唯一创建」(fields-by-role.md L82/L102/L133/L201)
+ *   - 5/12 Sprint B.4-1 round 2 误读拍板写成 {teacher, sales} 创建
+ *   - Wave 11 修正 RecurringRbacContext.callerRole 域 = 'academic'
+ *   - 绑定 / 周期模板均由教务建立（教务安排学员-老师固定绑定 / 教务排周期课）
+ *   - 学生 ownership 校验已移除（教务 ✅ 创建拍板无任何限定）
  *
+ * 设计回溯：
  *   controller 层 server-derive 后注入 rbacContext，service 内做最后一道 RBAC 检查
- *
- * Sprint B.4-1 round 2（A04 + business P1-B 修复 — 2026-05-12 晚）：
- *   - rbacContext 从 optional → required（删除 if (rbacContext) 跳过分支）
- *   - tenantSchema 在 controller 层强制必填，service 层做防御性校验：
- *     未传 rbacContext → throw BadRequestException（防止内部直调绕过）
- *   - 旧 "fixture 模式跳过 RBAC" 完全删除（client 控制安全级别 = A04 硬违规）
+ *   未传 rbacContext → throw BadRequestException（防止内部直调绕过 A04）
  */
 export type WeekDay = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU';
 
@@ -56,26 +53,34 @@ export interface RecurringSchedule {
   endDate?: Date;
   status: 'active' | 'archived';
   createdByUserId: string;
-  createdByRole: 'teacher' | 'sales';
+  /**
+   * Wave 11 拍板修复：教务唯一创建（fields-by-role.md L201）
+   * 仅 'academic' 合法
+   */
+  createdByRole: 'academic';
   createdAt: Date;
   archivedAt?: Date;
 }
 
 /**
- * Sprint B.4-1: RBAC 上下文（controller 派生后注入）
+ * RBAC 上下文（controller 派生后注入）
  *
- * - callerRole: JWT.role（仅 {teacher, sales} 合法，其他 controller 已挡 403）
- * - currentUserId: JWT.sub
- * - studentResponsibleSalesId: input.studentId 的 owner_sales_id（仅 sales 路径用）
- *     若 controller 未传或反查不到 → service 抛 ForbiddenException
- * - teacherUserId: input.teacherId 反查的 user_id（仅 teacher 路径用）
- *     若 controller 未传或反查到不一致 → service 抛 ForbiddenException
+ * Wave 11 拍板修复：
+ *   - callerRole: 仅 'academic' 合法（旧 {teacher, sales} 已淘汰）
+ *   - currentUserId: JWT.sub
+ *   - teacherCampusId: input.teacherId 反查到的 campus_id
+ *     必须 === academic 的 JWT.campusId（防止教务跨校排课）
+ *     若 controller 未传或反查不一致 → service 抛 ForbiddenException
+ *
+ * 学生 ownership 校验已移除（教务 ✅ 创建拍板无限定）
  */
 export interface RecurringRbacContext {
-  callerRole: 'teacher' | 'sales';
+  callerRole: 'academic';
   currentUserId: string;
-  studentResponsibleSalesId?: string | null;
-  teacherUserId?: string | null;
+  /** academic 的 JWT.campusId（必填，单校 role） */
+  academicCampusId: string | null;
+  /** input.teacherId 反查的 campus_id（用于本校校验） */
+  teacherCampusId?: string | null;
 }
 
 const WEEKDAY_TO_NUM: Record<WeekDay, number> = {
@@ -102,6 +107,15 @@ export class RecurringScheduleService {
    *
    * 旧的 "rbacContext 缺省时跳过 RBAC" fixture 模式已删除（client 控制安全级别 = A04）。
    * 如直调 service（非 controller 路径），调用方必须自行构造 rbacContext。
+   */
+  /**
+   * Wave 11 拍板修复：仅 academic 可创建绑定（教务安排学员-老师固定绑定）
+   *
+   * controller 注入 rbacContext 后必走 RBAC：
+   *   - academic.campus_id === teacher.campus_id（本校教务/本校老师）
+   *   - 学生 ownership 不校验（拍板 L201 教务 ✅ 创建无限定）
+   *
+   * 旧 sales/teacher 分支已删除（Wave 11 反向修复）。
    */
   createBinding(
     input: {
@@ -178,7 +192,8 @@ export class RecurringScheduleService {
       startDate: Date;
       endDate?: Date;
       createdByUserId: string;
-      createdByRole: 'teacher' | 'sales';
+      /** Wave 11: 仅 'academic' 合法 */
+      createdByRole: 'academic';
     },
     expandRangeDays: number,
     existingSchedules: ReadonlyArray<{
@@ -335,39 +350,35 @@ export class RecurringScheduleService {
   // -- helpers --
 
   /**
-   * Sprint B.4-1: 仿 ScheduleService.createSchedule RBAC 分支
+   * Wave 11 拍板修复 — academic 唯一创建：
    *
-   *   - sales: studentResponsibleSalesId === currentUserId 通过；其他 403
-   *     STUDENT_NOT_OWNED_BY_SALES（attack: 销售给非自己跟进学员排课）
-   *   - teacher: teacherUserId === currentUserId 通过；其他 403
-   *     TEACHER_USER_NOT_BOUND（attack: 老师给其他老师的学员排课）
-   *   - 其他 role: 403 ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE
-   *     （controller 已挡过一次，这是 service 层兜底）
+   *   - callerRole !== 'academic' → 403 ONLY_ACADEMIC_CAN_CREATE_SCHEDULE
+   *   - academicCampusId 缺 → 403 ACADEMIC_CAMPUS_REQUIRED（单校 role 必填）
+   *   - teacherCampusId 缺（反查不到老师）→ 403 TEACHER_NOT_IN_ACADEMIC_CAMPUS
+   *   - teacherCampusId !== academicCampusId → 403 TEACHER_NOT_IN_ACADEMIC_CAMPUS
+   *     （防止教务跨校排课 — 拍板 L211 教务 👁 本校）
+   *
+   * A05 hardening 保留: 错误 message 不嵌入内部 ID（campusId/userId），
+   *   避免攻击者通过 403 响应枚举本校信息。内部排查走 audit_log + reqId 链路追踪。
+   *
+   * 学生 ownership 校验已移除（教务 ✅ 创建拍板矩阵 L201 无限定）。
    */
   private assertRecurringRbac(
     ctx: RecurringRbacContext,
-    target: { studentId: string; teacherId: string },
+    _target: { studentId: string; teacherId: string },
   ): void {
-    // Sprint B.4-1 round 3 (Sprint E backlog #6 — A05 hardening 2026-05-13):
-    // 错误 message 不再嵌入 studentResponsibleSalesId / teacherUserId / currentUserId 等内部 ID
-    // 避免攻击者通过 403 响应枚举销售归属关系 (owner=X != caller=Y 模式)
-    // 内部排查需要时通过 audit_log + reqId 链路追踪 (Sprint E 整体补)
-    if (ctx.callerRole === 'sales') {
-      if (ctx.studentResponsibleSalesId == null) {
-        throw new ForbiddenException('STUDENT_NOT_OWNED_BY_SALES');
-      }
-      if (ctx.studentResponsibleSalesId !== ctx.currentUserId) {
-        throw new ForbiddenException('STUDENT_NOT_OWNED_BY_SALES');
-      }
-    } else if (ctx.callerRole === 'teacher') {
-      if (ctx.teacherUserId == null) {
-        throw new ForbiddenException('TEACHER_USER_NOT_BOUND');
-      }
-      if (ctx.teacherUserId !== ctx.currentUserId) {
-        throw new ForbiddenException('TEACHER_USER_NOT_BOUND');
-      }
-    } else {
-      throw new ForbiddenException('ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE');
+    if (ctx.callerRole !== 'academic') {
+      throw new ForbiddenException('ONLY_ACADEMIC_CAN_CREATE_SCHEDULE');
+    }
+    if (!ctx.academicCampusId) {
+      throw new ForbiddenException('ACADEMIC_CAMPUS_REQUIRED');
+    }
+    if (ctx.teacherCampusId == null) {
+      // controller 反查不到 teacher / teacher 无 campus_id
+      throw new ForbiddenException('TEACHER_NOT_IN_ACADEMIC_CAMPUS');
+    }
+    if (ctx.teacherCampusId !== ctx.academicCampusId) {
+      throw new ForbiddenException('TEACHER_NOT_IN_ACADEMIC_CAMPUS');
     }
   }
 

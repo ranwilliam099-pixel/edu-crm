@@ -31,19 +31,23 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
  *
  * USER-AUTH(2026-05-02): PD §3.6 + P12 学员-老师固定绑定 + 周期性模板
  *
- * Sprint B.4-1（2026-05-12）RBAC 收紧（leader 拍板 Q2）：
- *   - createBinding / createRecurring 同 schedule.controller 模式
- *   - createdByRole / createdByUserId / boundByUserId 全部 server 派生（JWT）
- *   - sales 路径：studentRepo.findBrief 反查 owner_sales_id
- *   - teacher 路径：teacherRepo.findById 反查 user_id
- *   - 其他 role: 403 ONLY_TEACHER_OR_SALES
+ * Wave 11（2026-05-15）拍板反向修复 — 教务唯一创建：
+ *   - 5/9 拍板 fields-by-role.md L82/L102/L133/L201 + feedback L56：教务是 ✅ 创建主责
+ *   - 5/12 Sprint B.4-1 round 2 误读拍板写成 {teacher, sales} 创建 + academic 403
+ *   - Wave 11 修正：所有写 endpoint 限 academic（admin/boss/sales/teacher/finance 全 403）
  *
- * Sprint B.4-1 round 2（business P1-A + security A04 修复）：
- *   1. unbind / archive 两个写 endpoint 加 @Req() + 早期 403
- *      （原本任何登录用户都能调 → 限到 {teacher, sales}，trust boundary 收紧）
+ * Wave 11 server-derive 模式：
+ *   - createdByRole / createdByUserId / boundByUserId 全部 server 派生（JWT）
+ *   - rbacContext.academicCampusId = JWT.campusId
+ *   - rbacContext.teacherCampusId = teacherRepo.findById(teacherId).campus_id
+ *   - 学生 ownership 校验已移除（拍板 L201 教务 ✅ 创建无限定）
+ *   - 其他 role 早期 403 ONLY_ACADEMIC_CAN_CREATE_SCHEDULE
+ *
+ * Sprint B.4-1 round 2（business P1-A + security A04 修复）保留：
+ *   1. unbind / archive 两个写 endpoint 加 @Req() + 早期 403（Wave 11 改限 academic）
  *   2. createBinding / createRecurring 强制要求 tenantSchema（A04 修复）
  *      tenantSchema 可选导致 RBAC skip 路径 = client 控制安全级别（A04 硬违规）
- *   ⚠ ownership 校验（unbind/archive 是否归属当前 sales/teacher）记入 Sprint X backlog
+ *   ⚠ binding/schedule ownership 校验（unbind/archive 是否归属当前 academic）记入 Sprint X
  *
  * Sprint B.6 mini (2026-05-11) 深度防御：
  *   - class-level @UseGuards(TenantScopeGuard) — 兜底跨租户校验
@@ -104,10 +108,12 @@ export class RecurringScheduleController {
       );
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
-    let callerRole: 'teacher' | 'sales';
+    let callerRole: 'academic';
     let currentUserId: string;
+    let academicCampusId: string | null;
     try {
-      ({ callerRole, currentUserId } = this.assertCallerRoleAndDeriveContext(req));
+      ({ callerRole, currentUserId, campusId: academicCampusId } =
+        this.assertCallerRoleAndDeriveContext(req));
     } catch (err) {
       await this.tryAuditDenied(
         req,
@@ -126,6 +132,7 @@ export class RecurringScheduleController {
         callerRole,
         currentUserId,
         { studentId: body.studentId, teacherId: body.teacherId },
+        academicCampusId,
       );
     } catch (err) {
       await this.tryAuditDenied(
@@ -206,7 +213,7 @@ export class RecurringScheduleController {
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
     try {
-      this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
+      this.assertCallerRoleAndDeriveContext(req); // Wave 11 早期 403：仅 academic
     } catch (err) {
       await this.tryAuditDenied(
         req,
@@ -259,10 +266,10 @@ export class RecurringScheduleController {
         durationMin: number;
         startDate: string;
         endDate?: string;
-        // @deprecated Sprint B.4-1 起 server 派生
+        // @deprecated Wave 11 起 server 派生（JWT.sub）
         createdByUserId?: string;
-        // @deprecated Sprint B.4-1 起 server 派生
-        createdByRole?: 'teacher' | 'sales';
+        // @deprecated Wave 11 起 server 派生（仅 'academic' 合法）
+        createdByRole?: string;
       };
       expandRangeDays: number;
       existingSchedules: Array<{
@@ -287,10 +294,12 @@ export class RecurringScheduleController {
       );
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
-    let callerRole: 'teacher' | 'sales';
+    let callerRole: 'academic';
     let currentUserId: string;
+    let academicCampusId: string | null;
     try {
-      ({ callerRole, currentUserId } = this.assertCallerRoleAndDeriveContext(req));
+      ({ callerRole, currentUserId, campusId: academicCampusId } =
+        this.assertCallerRoleAndDeriveContext(req));
     } catch (err) {
       await this.tryAuditDenied(
         req,
@@ -309,6 +318,7 @@ export class RecurringScheduleController {
         callerRole,
         currentUserId,
         { studentId: body.input.studentId, teacherId: body.input.teacherId },
+        academicCampusId,
       );
     } catch (err) {
       await this.tryAuditDenied(
@@ -399,7 +409,7 @@ export class RecurringScheduleController {
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
     try {
-      this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
+      this.assertCallerRoleAndDeriveContext(req); // Wave 11 早期 403：仅 academic
     } catch (err) {
       await this.tryAuditDenied(
         req,
@@ -459,55 +469,48 @@ export class RecurringScheduleController {
   // -- helpers --
 
   /**
-   * Sprint B.4-1: 同 ScheduleController.assertCallerRoleAndDeriveContext
+   * Wave 11 拍板修复：仅 academic 可创建/调度
+   *
+   * - admin / boss / sales / teacher / finance / academic_admin 全早期 403
+   * - academic 是单校 role（campusId 必填，jwt.strategy.ts L122-126 已校验）
    */
   private assertCallerRoleAndDeriveContext(req: AuthenticatedRequest): {
-    callerRole: 'teacher' | 'sales';
+    callerRole: 'academic';
     currentUserId: string;
+    campusId: string | null;
   } {
     const jwt = req.user;
     if (!jwt?.sub || !jwt.role) {
       throw new BadRequestException('JWT sub/role required');
     }
-    if (jwt.role !== 'teacher' && jwt.role !== 'sales') {
+    if (jwt.role !== 'academic') {
       throw new ForbiddenException(
-        `ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE: role=${jwt.role}`,
+        `ONLY_ACADEMIC_CAN_CREATE_SCHEDULE: role=${jwt.role}`,
       );
     }
     return {
-      callerRole: jwt.role,
+      callerRole: 'academic',
       currentUserId: jwt.sub,
+      campusId: jwt.campusId ?? null,
     };
   }
 
   /**
-   * Sprint B.4-1: 派生 rbacContext，反查 student.owner_sales_id 或 teacher.user_id
+   * Wave 11 拍板修复 — 派生 rbacContext：
    *
-   * - sales: 反查 student.ownerSalesId，反查不到学生 → 抛 NotFound 风格的 403
-   * - teacher: 反查 teacher.userId，反查不到老师 → 抛 NotFound 风格的 403
+   *   反查 teacher.campus_id（防止教务跨校排课）
+   *   学生 ownership 不校验（拍板 L201 教务 ✅ 创建无限定）
    *
-   * TODO(perf): 反查 N=1，目前 OK；若未来 createRecurring batch 化需要批量查
+   * - teacher 反查不到 → 403 TEACHER_NOT_FOUND（A05 hardening: 不嵌入 ID）
+   * - service 层 assertRecurringRbac 会做 academic.campus_id === teacher.campus_id 比较
    */
   private async deriveRbacContext(
     tenantSchema: string,
-    callerRole: 'teacher' | 'sales',
+    callerRole: 'academic',
     currentUserId: string,
     target: { studentId: string; teacherId: string },
+    academicCampusId: string | null,
   ): Promise<RecurringRbacContext> {
-    // Sprint B.4-1 round 3 (Sprint E backlog #6 — A05 hardening): 错误 message 仅返错误码
-    // 不再嵌入 studentId / teacherId 等内部 ID（统一与 service 层 assertRecurringRbac 一致）
-    if (callerRole === 'sales') {
-      const student = await this.studentRepo.findBrief(tenantSchema, target.studentId);
-      if (!student) {
-        throw new ForbiddenException('STUDENT_NOT_FOUND');
-      }
-      return {
-        callerRole,
-        currentUserId,
-        studentResponsibleSalesId: student.ownerSalesId,
-      };
-    }
-    // teacher
     const teacher = await this.teacherRepo.findById(tenantSchema, target.teacherId);
     if (!teacher) {
       throw new ForbiddenException('TEACHER_NOT_FOUND');
@@ -515,7 +518,8 @@ export class RecurringScheduleController {
     return {
       callerRole,
       currentUserId,
-      teacherUserId: teacher.userId ?? null,
+      academicCampusId,
+      teacherCampusId: teacher.campusId ?? null,
     };
   }
 

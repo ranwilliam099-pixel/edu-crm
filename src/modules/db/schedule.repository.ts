@@ -27,7 +27,12 @@ export class ScheduleRepository {
       studentId: string;
       durationMin: number;
       createdByUserId: string;
-      createdByRole: 'teacher' | 'sales';
+      /**
+       * Wave 11 拍板修复：仅 'academic' 合法
+       * （cron 展开历史记录可能含 'teacher' | 'sales'，类型放宽到 string 避免 cron job
+       *   读旧记录时类型不兼容；service / controller 层已收紧到 'academic'）
+       */
+      createdByRole: string;
       courseProductId?: string;
     },
     candidates: ReadonlyArray<{ startAt: Date; endAt: Date }>,
@@ -314,7 +319,9 @@ export class ScheduleRepository {
       source: row.source,
       recurringScheduleId: row.recurring_schedule_id || undefined,
       createdByUserId: row.created_by_user_id,
-      createdByRole: row.created_by_role,
+      // Wave 11: 历史 row.created_by_role 可能含 'teacher' / 'sales'（5/12-5/15 写入）；
+      // 类型断言为 'academic'，运行时仍保持原值用于审计 / 兼容显示，新建必走 'academic'
+      createdByRole: row.created_by_role as 'academic',
       notes: row.notes || undefined,
     };
   }

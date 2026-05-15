@@ -1,16 +1,20 @@
 /**
- * RecurringScheduleController unit tests — Sprint B.4-1 (2026-05-12)
+ * RecurringScheduleController unit tests
+ *
+ * Wave 11（2026-05-15）拍板反向修复 — 教务唯一创建：
+ *   - 5/9 拍板 fields-by-role.md L82/L102/L133/L201：教务是 ✅ 创建主责
+ *   - 5/12 Sprint B.4-1 round 2 误读拍板写成 {teacher, sales} 创建
+ *   - Wave 11 修正：所有写 endpoint 限 academic
  *
  * 重点：
  *   1. createBinding / createRecurring server 派生 callerRole + boundByUserId/createdByUserId
  *      （body 自报字段被覆盖）
- *   2. JWT.role ∉ {teacher, sales} → 403 ONLY_TEACHER_OR_SALES
- *   3. sales 路径：studentRepo.findBrief 反查 owner_sales_id
- *      - sales 创建自己学员的绑定/模板 → ✅
- *      - sales 创建他人学员的绑定 → 403 STUDENT_NOT_OWNED_BY_SALES
- *   4. teacher 路径：teacherRepo.findById 反查 user_id
- *      - teacher 给自己绑定的 teacherId → ✅
- *      - teacher user_id 与 JWT.sub 不一致 → 403 TEACHER_USER_NOT_BOUND
+ *   2. JWT.role !== 'academic' → 403 ONLY_ACADEMIC_CAN_CREATE_SCHEDULE
+ *   3. academic 路径：teacherRepo.findById 反查 teacher.campus_id
+ *      - teacher 同校（campus_id === JWT.campusId）→ ✅
+ *      - teacher 跨校 → 403 TEACHER_NOT_IN_ACADEMIC_CAMPUS
+ *      - teacher 不存在 → 403 TEACHER_NOT_FOUND
+ *   4. 学生 ownership 不校验（教务 ✅ 创建拍板矩阵 L201 无限定）
  */
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
 import { RecurringScheduleController } from './recurring-schedule.controller';
@@ -24,7 +28,7 @@ import { StudentRepository } from '../db/student.repository';
 import { AuditLogRepository } from '../db/audit-log.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
-describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () => {
+describe('RecurringScheduleController — Wave 11 academic 唯一', () => {
   let controller: RecurringScheduleController;
   let svc: {
     createBinding: jest.Mock;
@@ -35,57 +39,44 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
   };
   let teacherRepo: { findById: jest.Mock };
   let studentRepo: { findBrief: jest.Mock };
-  // Sprint E backlog #3: audit_log mock
   let auditLog: { log: jest.Mock };
 
-  const TENANT = 'tenant_b41_recur_xxxxxxxxxxxxxxxx';
+  const TENANT = 'tenant_w11_recur_xxxxxxxxxxxxxxxx';
   const BINDING_ID = 'bnd00000000000000000000000000B001';
   const REC_ID = 'rec00000000000000000000000000R001';
   const STUDENT_S1 = 'stu00000000000000000000000000S001';
   const TEACHER_T1 = 'tch00000000000000000000000000T001';
-  const TEACHER_T2 = 'tch00000000000000000000000000T002';
-  const USER_SALES_U1 = 'usr00000000000000000000000000U001';
-  const USER_SALES_U2 = 'usr00000000000000000000000000U002';
-  const USER_TEACHER_U3 = 'usr00000000000000000000000000U003'; // T1 bound
-  const USER_TEACHER_U4 = 'usr00000000000000000000000000U004'; // not bound
+  const TEACHER_T2_OTHER_CAMPUS = 'tch00000000000000000000000000T002';
+  const USER_ACADEMIC = 'usr_academic_00000000000000000U01';
+  const USER_TEACHER = 'usr_teacher_000000000000000000U02';
+  const USER_SALES = 'usr_sales_00000000000000000000U03';
+  const CAMPUS_X = 'cmp_x00000000000000000000000000X1';
+  const CAMPUS_Y = 'cmp_y00000000000000000000000000Y1';
 
-  const teacherT1Row = {
+  const teacherT1SameCampus = {
     id: TEACHER_T1,
-    campusId: 'cmp_x00000000000000000000000000X1',
+    campusId: CAMPUS_X,
     name: 'T1',
-    userId: USER_TEACHER_U3,
+    userId: USER_TEACHER,
     subjects: ['数学'],
     status: '在职' as const,
   };
-  const teacherT2Row = {
-    id: TEACHER_T2,
-    campusId: 'cmp_x00000000000000000000000000X1',
+  const teacherT2OtherCampus = {
+    id: TEACHER_T2_OTHER_CAMPUS,
+    campusId: CAMPUS_Y, // 跨校
     name: 'T2',
-    userId: undefined, // 纯档案，没 bound user
+    userId: undefined,
     subjects: ['英语'],
     status: '在职' as const,
   };
 
-  const studentS1OwnerU1 = {
-    id: STUDENT_S1,
-    ownerSalesId: USER_SALES_U1,
-    studentName: '',
-    customerId: '',
-    assignedTeacherId: null,
-    ownerChangedAt: null,
-    ownerChangeReason: null,
-    gradeOrAge: null,
-    intendedSubject: null,
-  };
-  const studentS1OwnerU2 = { ...studentS1OwnerU1, ownerSalesId: USER_SALES_U2 };
-
   const mkReq = (overrides: Partial<AuthenticatedRequest> = {}): AuthenticatedRequest =>
     ({
       user: {
-        sub: USER_SALES_U1,
-        role: 'sales',
+        sub: USER_ACADEMIC,
+        role: 'academic',
         tenantId: 'tenant-x',
-        campusId: 'campus-x',
+        campusId: CAMPUS_X,
       },
       ip: '1.2.3.4',
       headers: { 'user-agent': 'WeChatMP/8.0' },
@@ -112,11 +103,11 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
   });
 
   // ===========================================================
-  // createBinding
+  // createBinding — Wave 11 academic 唯一
   // ===========================================================
-  describe('createBinding — RBAC server 派生', () => {
-    it('sales 给自己学员创建绑定 → ✅，boundByUserId 派生为 JWT.sub', async () => {
-      studentRepo.findBrief.mockResolvedValueOnce(studentS1OwnerU1);
+  describe('createBinding — Wave 11 RBAC server 派生', () => {
+    it('academic 给同校老师创建绑定 → ✅，boundByUserId 派生为 JWT.sub', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(teacherT1SameCampus);
       svc.createBinding.mockResolvedValueOnce({
         id: BINDING_ID,
         status: 'active',
@@ -134,19 +125,38 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
       );
 
       const passed = svc.createBinding.mock.calls[0][0];
-      expect(passed.boundByUserId).toBe(USER_SALES_U1); // 派生覆盖
+      expect(passed.boundByUserId).toBe(USER_ACADEMIC); // 派生覆盖
       const rbac = svc.createBinding.mock.calls[0][1];
-      expect(rbac.callerRole).toBe('sales');
-      expect(rbac.currentUserId).toBe(USER_SALES_U1);
-      expect(rbac.studentResponsibleSalesId).toBe(USER_SALES_U1);
+      expect(rbac.callerRole).toBe('academic');
+      expect(rbac.currentUserId).toBe(USER_ACADEMIC);
+      expect(rbac.academicCampusId).toBe(CAMPUS_X);
+      expect(rbac.teacherCampusId).toBe(CAMPUS_X);
     });
 
-    it('sales 给他人学员创建绑定 → 403 STUDENT_NOT_OWNED_BY_SALES（service 抛）', async () => {
-      studentRepo.findBrief.mockResolvedValueOnce(studentS1OwnerU2);
+    it('academic 给跨校老师创建绑定 → rbac.teacherCampusId !== academicCampusId, service 抛 TEACHER_NOT_IN_ACADEMIC_CAMPUS', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(teacherT2OtherCampus);
       svc.createBinding.mockImplementationOnce(() => {
-        throw new ForbiddenException(`STUDENT_NOT_OWNED_BY_SALES: studentId=${STUDENT_S1}`);
+        throw new ForbiddenException('TEACHER_NOT_IN_ACADEMIC_CAMPUS');
       });
 
+      await expect(
+        controller.createBinding(
+          {
+            id: BINDING_ID,
+            studentId: STUDENT_S1,
+            teacherId: TEACHER_T2_OTHER_CAMPUS,
+            tenantSchema: TENANT,
+          },
+          mkReq(),
+        ),
+      ).rejects.toThrow(/TEACHER_NOT_IN_ACADEMIC_CAMPUS/);
+      const rbac = svc.createBinding.mock.calls[0][1];
+      expect(rbac.academicCampusId).toBe(CAMPUS_X);
+      expect(rbac.teacherCampusId).toBe(CAMPUS_Y);
+    });
+
+    it('academic 反查 teacher 不存在 → 403 TEACHER_NOT_FOUND', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(null);
       await expect(
         controller.createBinding(
           {
@@ -157,112 +167,11 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
           },
           mkReq(),
         ),
-      ).rejects.toThrow(/STUDENT_NOT_OWNED_BY_SALES/);
-    });
-
-    it('teacher 给自己绑定的 teacherId 创建 → ✅', async () => {
-      teacherRepo.findById.mockResolvedValueOnce(teacherT1Row);
-      svc.createBinding.mockResolvedValueOnce({
-        id: BINDING_ID,
-        status: 'active',
-      } as StudentTeacherBinding);
-
-      await controller.createBinding(
-        {
-          id: BINDING_ID,
-          studentId: STUDENT_S1,
-          teacherId: TEACHER_T1,
-          tenantSchema: TENANT,
-        },
-        mkReq({
-          user: {
-            sub: USER_TEACHER_U3,
-            role: 'teacher',
-            tenantId: 'tenant-x',
-            campusId: 'campus-x',
-          },
-        }),
-      );
-
-      const passed = svc.createBinding.mock.calls[0][0];
-      expect(passed.boundByUserId).toBe(USER_TEACHER_U3);
-      const rbac = svc.createBinding.mock.calls[0][1];
-      expect(rbac.callerRole).toBe('teacher');
-      expect(rbac.teacherUserId).toBe(USER_TEACHER_U3);
-    });
-
-    it('teacher 给他人 teacherId（user_id 不匹配）→ 403（service 抛）', async () => {
-      teacherRepo.findById.mockResolvedValueOnce(teacherT1Row); // T1 bound 到 U3
-      svc.createBinding.mockImplementationOnce(() => {
-        throw new ForbiddenException('TEACHER_USER_NOT_BOUND');
-      });
-
-      // U4 想给 T1 创建绑定，但 T1.userId = U3 ≠ U4
-      await expect(
-        controller.createBinding(
-          {
-            id: BINDING_ID,
-            studentId: STUDENT_S1,
-            teacherId: TEACHER_T1,
-            tenantSchema: TENANT,
-          },
-          mkReq({
-            user: {
-              sub: USER_TEACHER_U4,
-              role: 'teacher',
-              tenantId: 'tenant-x',
-              campusId: 'campus-x',
-            },
-          }),
-        ),
-      ).rejects.toThrow(/TEACHER_USER_NOT_BOUND/);
-    });
-
-    it('teacher 反查 teacher 表无 userId（纯档案）→ rbacContext.teacherUserId=null → service 抛', async () => {
-      teacherRepo.findById.mockResolvedValueOnce(teacherT2Row); // T2 userId undefined
-      svc.createBinding.mockImplementationOnce(() => {
-        throw new ForbiddenException('TEACHER_USER_NOT_BOUND: teacherId=t2 反查不到 user_id');
-      });
-
-      await expect(
-        controller.createBinding(
-          {
-            id: BINDING_ID,
-            studentId: STUDENT_S1,
-            teacherId: TEACHER_T2,
-            tenantSchema: TENANT,
-          },
-          mkReq({
-            user: {
-              sub: USER_TEACHER_U3,
-              role: 'teacher',
-              tenantId: 'tenant-x',
-              campusId: 'campus-x',
-            },
-          }),
-        ),
-      ).rejects.toThrow(/TEACHER_USER_NOT_BOUND/);
-      const rbac = svc.createBinding.mock.calls[0][1];
-      expect(rbac.teacherUserId).toBe(null);
-    });
-
-    it('sales 学员反查不到（不在该租户）→ 403 STUDENT_NOT_FOUND', async () => {
-      studentRepo.findBrief.mockResolvedValueOnce(null);
-      await expect(
-        controller.createBinding(
-          {
-            id: BINDING_ID,
-            studentId: STUDENT_S1,
-            teacherId: TEACHER_T1,
-            tenantSchema: TENANT,
-          },
-          mkReq(),
-        ),
-      ).rejects.toThrow(/STUDENT_NOT_FOUND/);
+      ).rejects.toThrow(/TEACHER_NOT_FOUND/);
       expect(svc.createBinding).not.toHaveBeenCalled();
     });
 
-    it('JWT role=admin → 403 ONLY_TEACHER_OR_SALES（早于 repo 查询）', async () => {
+    it('JWT role=admin → 403 ONLY_ACADEMIC（早于 repo 查询）', async () => {
       await expect(
         controller.createBinding(
           {
@@ -280,24 +189,65 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
             },
           }),
         ),
-      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
       expect(studentRepo.findBrief).not.toHaveBeenCalled();
       expect(teacherRepo.findById).not.toHaveBeenCalled();
     });
 
-    it('Sprint B.4-1 round 2: 缺 tenantSchema → 400 TENANT_SCHEMA_REQUIRED（A04 修复，旧 fixture 模式删除）', async () => {
+    it('JWT role=sales → 403 ONLY_ACADEMIC（5/12 反向修复）', async () => {
       await expect(
         controller.createBinding(
           {
             id: BINDING_ID,
             studentId: STUDENT_S1,
             teacherId: TEACHER_T1,
-          } as any,
+            tenantSchema: TENANT,
+          },
+          mkReq({
+            user: {
+              sub: USER_SALES,
+              role: 'sales',
+              tenantId: 'tenant-x',
+              campusId: CAMPUS_X,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
+    });
+
+    it('JWT role=teacher → 403 ONLY_ACADEMIC（拍板 L133 老师 home「不该有 + 排课」）', async () => {
+      await expect(
+        controller.createBinding(
+          {
+            id: BINDING_ID,
+            studentId: STUDENT_S1,
+            teacherId: TEACHER_T1,
+            tenantSchema: TENANT,
+          },
+          mkReq({
+            user: {
+              sub: USER_TEACHER,
+              role: 'teacher',
+              tenantId: 'tenant-x',
+              campusId: CAMPUS_X,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
+    });
+
+    it('缺 tenantSchema → 400 TENANT_SCHEMA_REQUIRED', async () => {
+      await expect(
+        controller.createBinding(
+          {
+            id: BINDING_ID,
+            studentId: STUDENT_S1,
+            teacherId: TEACHER_T1,
+          } as never,
           mkReq(),
         ),
       ).rejects.toThrow(/TENANT_SCHEMA_REQUIRED/);
 
-      // 不调 service，不查 repo
       expect(svc.createBinding).not.toHaveBeenCalled();
       expect(studentRepo.findBrief).not.toHaveBeenCalled();
       expect(teacherRepo.findById).not.toHaveBeenCalled();
@@ -305,9 +255,9 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
   });
 
   // ===========================================================
-  // createRecurring
+  // createRecurring — Wave 11 academic 唯一
   // ===========================================================
-  describe('createRecurring — RBAC server 派生', () => {
+  describe('createRecurring — Wave 11 RBAC server 派生', () => {
     const baseInputDto = {
       id: REC_ID,
       bindingId: BINDING_ID,
@@ -317,12 +267,12 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
       startMinutes: 18 * 60,
       durationMin: 60,
       startDate: '2026-05-04T00:00:00Z',
-      createdByUserId: 'attacker', // 攻击向量
-      createdByRole: 'teacher' as const, // 攻击向量（sales 自报为 teacher）
+      createdByUserId: 'attacker',
+      createdByRole: 'sales', // 攻击向量
     };
 
-    it('sales 自报 createdByRole=teacher + 自己学员 → service 收到的 input 是 sales/JWT.sub', async () => {
-      studentRepo.findBrief.mockResolvedValueOnce(studentS1OwnerU1);
+    it('academic 创建周期模板（同校老师）→ ✅，service 收到 server-derive 后的 input', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(teacherT1SameCampus);
       svc.createRecurring.mockResolvedValueOnce({
         id: REC_ID,
         status: 'active',
@@ -339,72 +289,37 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
       );
 
       const passedInput = svc.createRecurring.mock.calls[0][0];
-      expect(passedInput.createdByUserId).toBe(USER_SALES_U1); // server 派生
-      expect(passedInput.createdByRole).toBe('sales'); // server 派生
+      expect(passedInput.createdByUserId).toBe(USER_ACADEMIC); // server 派生
+      expect(passedInput.createdByRole).toBe('academic'); // server 派生
 
       const rbac = svc.createRecurring.mock.calls[0][4]; // 第 5 参数
-      expect(rbac.callerRole).toBe('sales');
-      expect(rbac.studentResponsibleSalesId).toBe(USER_SALES_U1);
+      expect(rbac.callerRole).toBe('academic');
+      expect(rbac.academicCampusId).toBe(CAMPUS_X);
+      expect(rbac.teacherCampusId).toBe(CAMPUS_X);
     });
 
-    it('sales 创建他人学员模板 → service 收到 rbac.studentResponsibleSalesId=U2，service 抛', async () => {
-      studentRepo.findBrief.mockResolvedValueOnce(studentS1OwnerU2);
+    it('academic 跨校排课 → rbac.teacherCampusId=CAMPUS_Y，service 抛', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(teacherT2OtherCampus);
       svc.createRecurring.mockImplementationOnce(() => {
-        throw new ForbiddenException(`STUDENT_NOT_OWNED_BY_SALES`);
+        throw new ForbiddenException('TEACHER_NOT_IN_ACADEMIC_CAMPUS');
       });
 
       await expect(
         controller.createRecurring(
           {
-            input: baseInputDto,
+            input: { ...baseInputDto, teacherId: TEACHER_T2_OTHER_CAMPUS },
             expandRangeDays: 30,
             existingSchedules: [],
             tenantSchema: TENANT,
           },
           mkReq(),
         ),
-      ).rejects.toThrow(/STUDENT_NOT_OWNED_BY_SALES/);
+      ).rejects.toThrow(/TEACHER_NOT_IN_ACADEMIC_CAMPUS/);
       const rbac = svc.createRecurring.mock.calls[0][4];
-      expect(rbac.studentResponsibleSalesId).toBe(USER_SALES_U2);
+      expect(rbac.teacherCampusId).toBe(CAMPUS_Y);
     });
 
-    it('teacher 给自己绑定的 teacherId 创建模板 → ✅', async () => {
-      teacherRepo.findById.mockResolvedValueOnce(teacherT1Row);
-      svc.createRecurring.mockResolvedValueOnce({
-        id: REC_ID,
-        status: 'active',
-      } as RecurringSchedule);
-
-      await controller.createRecurring(
-        {
-          input: baseInputDto,
-          expandRangeDays: 30,
-          existingSchedules: [],
-          tenantSchema: TENANT,
-        },
-        mkReq({
-          user: {
-            sub: USER_TEACHER_U3,
-            role: 'teacher',
-            tenantId: 'tenant-x',
-            campusId: 'campus-x',
-          },
-        }),
-      );
-
-      const passedInput = svc.createRecurring.mock.calls[0][0];
-      expect(passedInput.createdByUserId).toBe(USER_TEACHER_U3);
-      expect(passedInput.createdByRole).toBe('teacher');
-      const rbac = svc.createRecurring.mock.calls[0][4];
-      expect(rbac.teacherUserId).toBe(USER_TEACHER_U3);
-    });
-
-    it('teacher 给他人 teacherId 创建模板 → rbac.teacherUserId 不匹配，service 抛', async () => {
-      teacherRepo.findById.mockResolvedValueOnce(teacherT1Row); // T1 bound to U3
-      svc.createRecurring.mockImplementationOnce(() => {
-        throw new ForbiddenException('TEACHER_USER_NOT_BOUND');
-      });
-
+    it('JWT role=sales → 403 ONLY_ACADEMIC（早期挡）', async () => {
       await expect(
         controller.createRecurring(
           {
@@ -415,54 +330,72 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
           },
           mkReq({
             user: {
-              sub: USER_TEACHER_U4, // 不是 T1 绑定的 U3
-              role: 'teacher',
+              sub: USER_SALES,
+              role: 'sales',
               tenantId: 'tenant-x',
-              campusId: 'campus-x',
+              campusId: CAMPUS_X,
             },
           }),
         ),
-      ).rejects.toThrow(/TEACHER_USER_NOT_BOUND/);
-      const rbac = svc.createRecurring.mock.calls[0][4];
-      expect(rbac.teacherUserId).toBe(USER_TEACHER_U3); // 派生的，不是 attacker U4
-    });
-
-    it('JWT role=academic → 403 早期挡', async () => {
-      await expect(
-        controller.createRecurring(
-          {
-            input: baseInputDto,
-            expandRangeDays: 30,
-            existingSchedules: [],
-            tenantSchema: TENANT,
-          },
-          mkReq({
-            user: {
-              sub: 'acad_ccccccccccccccccccccccccccccccc1',
-              role: 'academic',
-              tenantId: 'tenant-x',
-              campusId: 'campus-x',
-            },
-          }),
-        ),
-      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
       expect(studentRepo.findBrief).not.toHaveBeenCalled();
       expect(teacherRepo.findById).not.toHaveBeenCalled();
     });
 
-    it('Sprint B.4-1 round 2: 缺 tenantSchema → 400 TENANT_SCHEMA_REQUIRED（A04 修复，旧 fixture 模式删除）', async () => {
+    it('JWT role=teacher → 403 ONLY_ACADEMIC（早期挡）', async () => {
       await expect(
         controller.createRecurring(
           {
             input: baseInputDto,
             expandRangeDays: 30,
             existingSchedules: [],
-          } as any,
+            tenantSchema: TENANT,
+          },
+          mkReq({
+            user: {
+              sub: USER_TEACHER,
+              role: 'teacher',
+              tenantId: 'tenant-x',
+              campusId: CAMPUS_X,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
+    });
+
+    it('JWT role=admin → 403 ONLY_ACADEMIC', async () => {
+      await expect(
+        controller.createRecurring(
+          {
+            input: baseInputDto,
+            expandRangeDays: 30,
+            existingSchedules: [],
+            tenantSchema: TENANT,
+          },
+          mkReq({
+            user: {
+              sub: 'admin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1',
+              role: 'admin',
+              tenantId: null,
+              campusId: null,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
+    });
+
+    it('缺 tenantSchema → 400 TENANT_SCHEMA_REQUIRED', async () => {
+      await expect(
+        controller.createRecurring(
+          {
+            input: baseInputDto,
+            expandRangeDays: 30,
+            existingSchedules: [],
+          } as never,
           mkReq(),
         ),
       ).rejects.toThrow(/TENANT_SCHEMA_REQUIRED/);
 
-      // 不调 service，不查 repo
       expect(svc.createRecurring).not.toHaveBeenCalled();
       expect(studentRepo.findBrief).not.toHaveBeenCalled();
       expect(teacherRepo.findById).not.toHaveBeenCalled();
@@ -470,19 +403,19 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
   });
 
   // ===========================================================
-  // Sprint B.4-1 round 2: 4 个写 endpoint 早期 403（business P1-A）
+  // unbindBinding / archiveRecurring — Wave 11 早期 403 仅 academic
   // ===========================================================
-  describe('unbindBinding — 早期 403 角色限制 (Sprint B.4-1 round 2 P1-A)', () => {
+  describe('unbindBinding — Wave 11 早期 403 仅 academic', () => {
     const dummyBinding: StudentTeacherBinding = {
       id: BINDING_ID,
       studentId: STUDENT_S1,
       teacherId: TEACHER_T1,
       status: 'active',
       boundAt: new Date('2026-05-01T00:00:00Z'),
-      boundByUserId: USER_SALES_U1,
+      boundByUserId: USER_ACADEMIC,
     };
 
-    it('JWT role=admin → 403 ONLY_TEACHER_OR_SALES（早于 service）', async () => {
+    it('JWT role=admin → 403 ONLY_ACADEMIC（早于 service）', async () => {
       await expect(
         controller.unbindBinding(
           BINDING_ID,
@@ -496,9 +429,8 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
             },
           }),
         ),
-      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
       expect(svc.unbindBinding).not.toHaveBeenCalled();
-      // Sprint E backlog #3: 拒绝路径 audit_log
       expect(auditLog.log).toHaveBeenCalledWith(
         TENANT,
         expect.objectContaining({
@@ -509,7 +441,41 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
       );
     });
 
-    it('JWT role=finance → 403 ONLY_TEACHER_OR_SALES', async () => {
+    it('JWT role=sales → 403 ONLY_ACADEMIC（5/12 反向修复）', async () => {
+      await expect(
+        controller.unbindBinding(
+          BINDING_ID,
+          { binding: dummyBinding, tenantSchema: TENANT },
+          mkReq({
+            user: {
+              sub: USER_SALES,
+              role: 'sales',
+              tenantId: 'tenant-x',
+              campusId: CAMPUS_X,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
+    });
+
+    it('JWT role=teacher → 403 ONLY_ACADEMIC', async () => {
+      await expect(
+        controller.unbindBinding(
+          BINDING_ID,
+          { binding: dummyBinding, tenantSchema: TENANT },
+          mkReq({
+            user: {
+              sub: USER_TEACHER,
+              role: 'teacher',
+              tenantId: 'tenant-x',
+              campusId: CAMPUS_X,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
+    });
+
+    it('JWT role=finance → 403 ONLY_ACADEMIC', async () => {
       await expect(
         controller.unbindBinding(
           BINDING_ID,
@@ -519,31 +485,14 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
               sub: 'finance_ffffffffffffffffffffffffffffff1',
               role: 'finance',
               tenantId: 'tenant-x',
-              campusId: 'campus-x',
+              campusId: CAMPUS_X,
             },
           }),
         ),
-      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
     });
 
-    it('JWT role=academic → 403 ONLY_TEACHER_OR_SALES', async () => {
-      await expect(
-        controller.unbindBinding(
-          BINDING_ID,
-          { binding: dummyBinding, tenantSchema: TENANT },
-          mkReq({
-            user: {
-              sub: 'acad_ccccccccccccccccccccccccccccccc1',
-              role: 'academic',
-              tenantId: 'tenant-x',
-              campusId: 'campus-x',
-            },
-          }),
-        ),
-      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
-    });
-
-    it('JWT role=sales → 调用 service + 成功 audit_log', async () => {
+    it('JWT role=academic → 调用 service + 成功 audit_log', async () => {
       svc.unbindBinding.mockReturnValueOnce({
         ...dummyBinding,
         status: 'unbound',
@@ -555,40 +504,19 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
         mkReq(),
       );
       expect(svc.unbindBinding).toHaveBeenCalledTimes(1);
-      // Sprint E backlog #3: 成功路径 audit_log
       expect(auditLog.log).toHaveBeenCalledWith(
         TENANT,
         expect.objectContaining({
           action: 'recurring-binding.unbind',
           targetType: 'student_teacher_binding',
           targetId: BINDING_ID,
+          actorRole: 'academic',
         }),
       );
-    });
-
-    it('JWT role=teacher → 调用 service', async () => {
-      svc.unbindBinding.mockReturnValueOnce({
-        ...dummyBinding,
-        status: 'unbound',
-        unboundAt: new Date(),
-      } as StudentTeacherBinding);
-      await controller.unbindBinding(
-        BINDING_ID,
-        { binding: dummyBinding, tenantSchema: TENANT },
-        mkReq({
-          user: {
-            sub: USER_TEACHER_U3,
-            role: 'teacher',
-            tenantId: 'tenant-x',
-            campusId: 'campus-x',
-          },
-        }),
-      );
-      expect(svc.unbindBinding).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe('archiveRecurring — 早期 403 角色限制 (Sprint B.4-1 round 2 P1-A)', () => {
+  describe('archiveRecurring — Wave 11 早期 403 仅 academic', () => {
     const dummyRecurring: RecurringSchedule = {
       id: REC_ID,
       bindingId: BINDING_ID,
@@ -599,12 +527,12 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
       durationMin: 60,
       startDate: new Date('2026-05-04T00:00:00Z'),
       status: 'active',
-      createdByUserId: USER_SALES_U1,
-      createdByRole: 'sales',
+      createdByUserId: USER_ACADEMIC,
+      createdByRole: 'academic',
       createdAt: new Date('2026-05-01T00:00:00Z'),
     };
 
-    it('JWT role=admin → 403 ONLY_TEACHER_OR_SALES（早于 service）', async () => {
+    it('JWT role=admin → 403 ONLY_ACADEMIC（早于 service）', async () => {
       await expect(
         controller.archiveRecurring(
           REC_ID,
@@ -618,9 +546,8 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
             },
           }),
         ),
-      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
       expect(svc.archiveRecurring).not.toHaveBeenCalled();
-      // Sprint E backlog #3: 拒绝路径 audit_log
       expect(auditLog.log).toHaveBeenCalledWith(
         TENANT,
         expect.objectContaining({
@@ -631,24 +558,58 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
       );
     });
 
-    it('JWT role=parent → 403 ONLY_TEACHER_OR_SALES', async () => {
+    it('JWT role=sales → 403 ONLY_ACADEMIC（5/12 反向修复）', async () => {
       await expect(
         controller.archiveRecurring(
           REC_ID,
           { recurring: dummyRecurring, tenantSchema: TENANT },
           mkReq({
             user: {
-              sub: 'parent_ppppppppppppppppppppppppppppp1',
-              role: 'sales_director', // 取一个不在 {teacher,sales} 的合法角色
+              sub: USER_SALES,
+              role: 'sales',
+              tenantId: 'tenant-x',
+              campusId: CAMPUS_X,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
+    });
+
+    it('JWT role=sales_director → 403 ONLY_ACADEMIC', async () => {
+      await expect(
+        controller.archiveRecurring(
+          REC_ID,
+          { recurring: dummyRecurring, tenantSchema: TENANT },
+          mkReq({
+            user: {
+              sub: 'sd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+              role: 'sales_director',
               tenantId: 'tenant-x',
               campusId: null,
             },
           }),
         ),
-      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
     });
 
-    it('JWT role=sales → 调用 service + 成功 audit_log', async () => {
+    it('JWT role=teacher → 403 ONLY_ACADEMIC', async () => {
+      await expect(
+        controller.archiveRecurring(
+          REC_ID,
+          { recurring: dummyRecurring, tenantSchema: TENANT },
+          mkReq({
+            user: {
+              sub: USER_TEACHER,
+              role: 'teacher',
+              tenantId: 'tenant-x',
+              campusId: CAMPUS_X,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
+    });
+
+    it('JWT role=academic → 调用 service + 成功 audit_log', async () => {
       svc.archiveRecurring.mockReturnValueOnce({
         ...dummyRecurring,
         status: 'archived',
@@ -666,45 +627,26 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
           action: 'recurring-schedule.archive',
           targetType: 'recurring_schedule',
           targetId: REC_ID,
+          actorRole: 'academic',
         }),
       );
-    });
-
-    it('JWT role=teacher → 调用 service', async () => {
-      svc.archiveRecurring.mockReturnValueOnce({
-        ...dummyRecurring,
-        status: 'archived',
-        archivedAt: new Date(),
-      } as RecurringSchedule);
-      await controller.archiveRecurring(
-        REC_ID,
-        { recurring: dummyRecurring, tenantSchema: TENANT },
-        mkReq({
-          user: {
-            sub: USER_TEACHER_U3,
-            role: 'teacher',
-            tenantId: 'tenant-x',
-            campusId: 'campus-x',
-          },
-        }),
-      );
-      expect(svc.archiveRecurring).toHaveBeenCalledTimes(1);
     });
   });
 
   // ===========================================================
   // Sprint E backlog #3: createBinding / createRecurring 成功 audit_log
+  // Wave 11 actorRole = 'academic'
   // ===========================================================
-  describe('createBinding / createRecurring — 成功路径 audit_log (Sprint E #3)', () => {
-    it('createBinding 成功 → audit_log action=recurring-binding.create + 含 studentId/teacherId', async () => {
-      studentRepo.findBrief.mockResolvedValueOnce(studentS1OwnerU1);
+  describe('createBinding / createRecurring — 成功路径 audit_log', () => {
+    it('createBinding 成功 → audit_log action=recurring-binding.create + actorRole=academic', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(teacherT1SameCampus);
       svc.createBinding.mockResolvedValueOnce({
         id: BINDING_ID,
         studentId: STUDENT_S1,
         teacherId: TEACHER_T1,
         status: 'active',
         boundAt: new Date('2026-05-13T00:00:00Z'),
-        boundByUserId: USER_SALES_U1,
+        boundByUserId: USER_ACADEMIC,
       } as StudentTeacherBinding);
 
       await controller.createBinding(
@@ -723,8 +665,8 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
           action: 'recurring-binding.create',
           targetType: 'student_teacher_binding',
           targetId: BINDING_ID,
-          actorUserId: USER_SALES_U1,
-          actorRole: 'sales',
+          actorUserId: USER_ACADEMIC,
+          actorRole: 'academic',
           before: null,
           after: expect.objectContaining({
             id: BINDING_ID,
@@ -754,7 +696,7 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
             },
           }),
         ),
-      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
       expect(auditLog.log).toHaveBeenCalledWith(
         TENANT,
         expect.objectContaining({
@@ -772,7 +714,7 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
             id: BINDING_ID,
             studentId: STUDENT_S1,
             teacherId: TEACHER_T1,
-          } as any,
+          } as never,
           mkReq(),
         ),
       ).rejects.toThrow(/TENANT_SCHEMA_REQUIRED/);
@@ -788,7 +730,7 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
     });
 
     it('createRecurring 成功 → audit_log action=recurring-schedule.create', async () => {
-      studentRepo.findBrief.mockResolvedValueOnce(studentS1OwnerU1);
+      teacherRepo.findById.mockResolvedValueOnce(teacherT1SameCampus);
       svc.createRecurring.mockResolvedValueOnce({
         id: REC_ID,
         bindingId: BINDING_ID,
@@ -799,8 +741,8 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
         durationMin: 60,
         startDate: new Date('2026-05-04T00:00:00Z'),
         status: 'active',
-        createdByUserId: USER_SALES_U1,
-        createdByRole: 'sales',
+        createdByUserId: USER_ACADEMIC,
+        createdByRole: 'academic',
         createdAt: new Date('2026-05-13T00:00:00Z'),
       } as RecurringSchedule);
 
@@ -854,14 +796,14 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
           },
           mkReq({
             user: {
-              sub: 'acad_ccccccccccccccccccccccccccccccc1',
-              role: 'academic',
+              sub: USER_SALES,
+              role: 'sales',
               tenantId: 'tenant-x',
-              campusId: 'campus-x',
+              campusId: CAMPUS_X,
             },
           }),
         ),
-      ).rejects.toThrow(/ONLY_TEACHER_OR_SALES/);
+      ).rejects.toThrow(/ONLY_ACADEMIC/);
       expect(auditLog.log).toHaveBeenCalledWith(
         TENANT,
         expect.objectContaining({
@@ -879,14 +821,14 @@ describe('RecurringScheduleController — Sprint B.4-1 server-derived RBAC', () 
         studentRepo as unknown as StudentRepository,
         // auditLog 不传
       );
-      studentRepo.findBrief.mockResolvedValueOnce(studentS1OwnerU1);
+      teacherRepo.findById.mockResolvedValueOnce(teacherT1SameCampus);
       svc.createBinding.mockResolvedValueOnce({
         id: BINDING_ID,
         studentId: STUDENT_S1,
         teacherId: TEACHER_T1,
         status: 'active',
         boundAt: new Date(),
-        boundByUserId: USER_SALES_U1,
+        boundByUserId: USER_ACADEMIC,
       } as StudentTeacherBinding);
       await ctrlNoAudit.createBinding(
         {

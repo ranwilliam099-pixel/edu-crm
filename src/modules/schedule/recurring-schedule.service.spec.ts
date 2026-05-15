@@ -2,6 +2,13 @@
  * RecurringScheduleService 单元测试
  *
  * USER-AUTH(2026-05-02 PD §3.6 + 条目 32): 学员-老师绑定 + 周期性课表模板（P12）
+ *
+ * Wave 11（2026-05-15）拍板反向修复：
+ *   - 5/9 拍板「教务唯一创建」(fields-by-role.md L82/L102/L133/L201)
+ *   - 5/12 Sprint B.4-1 round 2 误读拍板写成 {teacher, sales} 创建
+ *   - Wave 11 修正 RecurringRbacContext.callerRole 域 = 'academic'
+ *   - assertRecurringRbac 改为 academic.campus_id === teacher.campus_id 比较
+ *   - 学生 ownership 校验已移除
  */
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
@@ -17,8 +24,10 @@ const ULID32_R1 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLREC1';
 const ULID32_S1 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMST1';
 const ULID32_T1 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMTC1';
 const ULID32_U1 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMUS1';
+const CAMPUS_X = 'cmp_x00000000000000000000000000X1';
+const CAMPUS_Y = 'cmp_y00000000000000000000000000Y1';
 
-describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
+describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6 (Wave 11 academic 唯一)', () => {
   let service: RecurringScheduleService;
 
   beforeEach(async () => {
@@ -28,15 +37,16 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
     service = module.get<RecurringScheduleService>(RecurringScheduleService);
   });
 
-  describe('createBinding - 学员-老师绑定', () => {
-    // Sprint B.4-1 round 2: rbacContext 必填，注入一个合法的 sales/自己学员 ctx
-    const validSalesCtx: RecurringRbacContext = {
-      callerRole: 'sales',
+  describe('createBinding - 学员-老师绑定（Wave 11 拍板：教务唯一）', () => {
+    // academic 同校：academicCampusId === teacherCampusId
+    const validAcademicCtx: RecurringRbacContext = {
+      callerRole: 'academic',
       currentUserId: ULID32_U1,
-      studentResponsibleSalesId: ULID32_U1,
+      academicCampusId: CAMPUS_X,
+      teacherCampusId: CAMPUS_X,
     };
 
-    it('合法创建', () => {
+    it('合法创建（academic 同校老师）', () => {
       const b = service.createBinding(
         {
           id: ULID32_B1,
@@ -45,7 +55,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
           subject: '数学',
           boundByUserId: ULID32_U1,
         },
-        validSalesCtx,
+        validAcademicCtx,
       );
       expect(b.status).toBe('active');
       expect(b.subject).toBe('数学');
@@ -60,12 +70,12 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
             teacherId: ULID32_T1,
             boundByUserId: ULID32_U1,
           },
-          validSalesCtx,
+          validAcademicCtx,
         ),
       ).toThrow(BadRequestException);
     });
 
-    it('Sprint B.4-1 round 2: rbacContext 缺失 → BadRequestException', () => {
+    it('rbacContext 缺失 → BadRequestException (A04 修复)', () => {
       expect(() =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (service.createBinding as any)({
@@ -120,9 +130,8 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
         now,
       );
       expect(result.length).toBeGreaterThanOrEqual(4);
-      // 全部应为周一
       for (const c of result) {
-        expect(c.startAt.getUTCDay()).toBe(1); // 周一 = 1
+        expect(c.startAt.getUTCDay()).toBe(1);
         expect(c.startAt.getUTCHours()).toBe(18);
       }
     });
@@ -139,7 +148,6 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
         7,
         now,
       );
-      // 5/4 周一 / 5/6 周三 / 5/8 周五 = 3 个
       expect(result.length).toBe(3);
       const days = result.map((r) => r.startAt.getUTCDay()).sort();
       expect(days).toEqual([1, 3, 5]);
@@ -147,7 +155,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
 
     it('endDate 截止 → 不超过 endDate', () => {
       const startDate = new Date('2026-05-04T00:00:00Z');
-      const endDate = new Date('2026-05-08T23:59:59Z'); // 5/4 ~ 5/8（5天）
+      const endDate = new Date('2026-05-08T23:59:59Z');
       const now = new Date('2026-05-02T00:00:00Z');
       const result = service.expandToCandidates(
         ['MO', 'TU', 'WE', 'TH', 'FR'],
@@ -158,7 +166,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
         30,
         now,
       );
-      expect(result).toHaveLength(5); // 周一到周五各一次
+      expect(result).toHaveLength(5);
       for (const c of result) {
         expect(c.startAt.getTime()).toBeLessThanOrEqual(
           endDate.getTime() + 24 * 60 * 60 * 1000,
@@ -167,13 +175,13 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
     });
   });
 
-  describe('createRecurring - 创建模板含冲突预检', () => {
+  describe('createRecurring - 创建模板含冲突预检（Wave 11 academic 唯一）', () => {
     const now = new Date('2026-05-02T00:00:00Z');
-    // Sprint B.4-1 round 2: rbacContext 必填，注入合法 sales ctx 不改变测试意图
     const ctx: RecurringRbacContext = {
-      callerRole: 'sales',
+      callerRole: 'academic',
       currentUserId: ULID32_U1,
-      studentResponsibleSalesId: ULID32_U1,
+      academicCampusId: CAMPUS_X,
+      teacherCampusId: CAMPUS_X,
     };
 
     it('无冲突 → 返回 active 模板', () => {
@@ -188,7 +196,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
           durationMin: 60,
           startDate: new Date('2026-05-04T00:00:00Z'),
           createdByUserId: ULID32_U1,
-          createdByRole: 'sales',
+          createdByRole: 'academic',
         },
         30,
         [], // 无现有排课
@@ -197,13 +205,14 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
       );
       expect(recurring.status).toBe('active');
       expect(recurring.byDay).toEqual(['MO']);
+      expect(recurring.createdByRole).toBe('academic');
     });
 
     it('展开后任一时段冲突 → ConflictException', () => {
       const conflictingSchedule = {
         teacherId: ULID32_T1,
         studentIds: [ULID32_S1],
-        startAt: new Date('2026-05-04T18:30:00Z'), // 与第一节冲突
+        startAt: new Date('2026-05-04T18:30:00Z'),
         endAt: new Date('2026-05-04T19:30:00Z'),
         status: '已排课',
       };
@@ -219,7 +228,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
             durationMin: 60,
             startDate: new Date('2026-05-04T00:00:00Z'),
             createdByUserId: ULID32_U1,
-            createdByRole: 'sales',
+            createdByRole: 'academic',
           },
           30,
           [conflictingSchedule],
@@ -248,7 +257,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
           durationMin: 60,
           startDate: new Date('2026-05-04T00:00:00Z'),
           createdByUserId: ULID32_U1,
-          createdByRole: 'sales',
+          createdByRole: 'academic',
         },
         30,
         [cancelledSchedule],
@@ -271,7 +280,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
             durationMin: 60,
             startDate: new Date('2026-05-04T00:00:00Z'),
             createdByUserId: ULID32_U1,
-            createdByRole: 'sales',
+            createdByRole: 'academic',
           },
           30,
           [],
@@ -294,7 +303,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
             durationMin: 60,
             startDate: new Date('2026-05-04T00:00:00Z'),
             createdByUserId: ULID32_U1,
-            createdByRole: 'sales',
+            createdByRole: 'academic',
           },
           30,
           [],
@@ -317,7 +326,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
             durationMin: 60,
             startDate: new Date('2026-05-04T00:00:00Z'),
             createdByUserId: ULID32_U1,
-            createdByRole: 'sales',
+            createdByRole: 'academic',
           },
           30,
           [],
@@ -327,7 +336,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
       ).toThrow(BadRequestException);
     });
 
-    it('Sprint B.4-1 round 2: rbacContext 缺失 → BadRequestException', () => {
+    it('rbacContext 缺失 → BadRequestException (A04 修复)', () => {
       expect(() =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (service.createRecurring as any)(
@@ -341,7 +350,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
             durationMin: 60,
             startDate: new Date('2026-05-04T00:00:00Z'),
             createdByUserId: ULID32_U1,
-            createdByRole: 'sales',
+            createdByRole: 'academic',
           },
           30,
           [],
@@ -355,9 +364,10 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
   describe('archiveRecurring - 归档', () => {
     it('active → archived 合法', () => {
       const ctx: RecurringRbacContext = {
-        callerRole: 'sales',
+        callerRole: 'academic',
         currentUserId: ULID32_U1,
-        studentResponsibleSalesId: ULID32_U1,
+        academicCampusId: CAMPUS_X,
+        teacherCampusId: CAMPUS_X,
       };
       const recurring = service.createRecurring(
         {
@@ -370,7 +380,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
           durationMin: 60,
           startDate: new Date('2026-05-04T00:00:00Z'),
           createdByUserId: ULID32_U1,
-          createdByRole: 'sales',
+          createdByRole: 'academic',
         },
         30,
         [],
@@ -394,7 +404,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
         startDate: new Date('2026-05-04T00:00:00Z'),
         status: 'archived' as const,
         createdByUserId: ULID32_U1,
-        createdByRole: 'sales' as const,
+        createdByRole: 'academic' as const,
         createdAt: new Date(),
         archivedAt: new Date(),
       };
@@ -403,9 +413,9 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
   });
 
   // ===========================================================
-  // Sprint B.4-1 RBAC（rbacContext 注入版）
+  // Wave 11 RBAC（academic + campus_id 校验）
   // ===========================================================
-  describe('Sprint B.4-1 RBAC — rbacContext 注入版', () => {
+  describe('Wave 11 RBAC — academic + campus 校验', () => {
     const baseInput = {
       id: ULID32_R1,
       bindingId: ULID32_B1,
@@ -416,7 +426,7 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
       durationMin: 60,
       startDate: new Date('2026-05-04T00:00:00Z'),
       createdByUserId: ULID32_U1,
-      createdByRole: 'sales' as const,
+      createdByRole: 'academic' as const,
     };
 
     const baseBindingInput = {
@@ -428,84 +438,90 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
     };
 
     describe('createBinding with rbacContext', () => {
-      it('sales 路径 + studentResponsibleSalesId === currentUserId → 通过', () => {
+      it('academic 路径 + teacher 同校 → 通过', () => {
         const ctx: RecurringRbacContext = {
-          callerRole: 'sales',
+          callerRole: 'academic',
           currentUserId: ULID32_U1,
-          studentResponsibleSalesId: ULID32_U1,
+          academicCampusId: CAMPUS_X,
+          teacherCampusId: CAMPUS_X,
         };
         const b = service.createBinding(baseBindingInput, ctx);
         expect(b.status).toBe('active');
       });
 
-      it('sales 路径 + studentResponsibleSalesId !== currentUserId → 403 STUDENT_NOT_OWNED_BY_SALES', () => {
+      it('academic 路径 + teacher 跨校 → 403 TEACHER_NOT_IN_ACADEMIC_CAMPUS', () => {
         const ctx: RecurringRbacContext = {
-          callerRole: 'sales',
+          callerRole: 'academic',
           currentUserId: ULID32_U1,
-          studentResponsibleSalesId: '01HX7Y6P5K9N3M2QABCDEFGHIJKLOTHR',
+          academicCampusId: CAMPUS_X,
+          teacherCampusId: CAMPUS_Y, // 跨校
         };
         expect(() => service.createBinding(baseBindingInput, ctx)).toThrow(
           ForbiddenException,
         );
         expect(() => service.createBinding(baseBindingInput, ctx)).toThrow(
-          /STUDENT_NOT_OWNED_BY_SALES/,
+          /TEACHER_NOT_IN_ACADEMIC_CAMPUS/,
         );
       });
 
-      it('sales 路径 + studentResponsibleSalesId 缺失（null）→ 403', () => {
+      it('academic 路径 + teacherCampusId 缺失（反查不到老师）→ 403', () => {
         const ctx: RecurringRbacContext = {
+          callerRole: 'academic',
+          currentUserId: ULID32_U1,
+          academicCampusId: CAMPUS_X,
+          teacherCampusId: null,
+        };
+        expect(() => service.createBinding(baseBindingInput, ctx)).toThrow(
+          /TEACHER_NOT_IN_ACADEMIC_CAMPUS/,
+        );
+      });
+
+      it('academic 路径 + academicCampusId 缺失（jwt 篡改）→ 403 ACADEMIC_CAMPUS_REQUIRED', () => {
+        const ctx: RecurringRbacContext = {
+          callerRole: 'academic',
+          currentUserId: ULID32_U1,
+          academicCampusId: null,
+          teacherCampusId: CAMPUS_X,
+        };
+        expect(() => service.createBinding(baseBindingInput, ctx)).toThrow(
+          /ACADEMIC_CAMPUS_REQUIRED/,
+        );
+      });
+
+      it('非法 callerRole=sales → 403 ONLY_ACADEMIC_CAN_CREATE_SCHEDULE（service 层兜底）', () => {
+        const ctx = {
           callerRole: 'sales',
           currentUserId: ULID32_U1,
-          studentResponsibleSalesId: null,
-        };
+          academicCampusId: CAMPUS_X,
+        } as unknown as RecurringRbacContext;
         expect(() => service.createBinding(baseBindingInput, ctx)).toThrow(
-          /STUDENT_NOT_OWNED_BY_SALES/,
+          /ONLY_ACADEMIC_CAN_CREATE_SCHEDULE/,
         );
       });
 
-      it('teacher 路径 + teacherUserId === currentUserId → 通过', () => {
-        const ctx: RecurringRbacContext = {
+      it('非法 callerRole=teacher → 403 ONLY_ACADEMIC（5/12 反向修复）', () => {
+        const ctx = {
           callerRole: 'teacher',
           currentUserId: ULID32_U1,
-          teacherUserId: ULID32_U1,
-        };
-        const b = service.createBinding(baseBindingInput, ctx);
-        expect(b.status).toBe('active');
-      });
-
-      it('teacher 路径 + teacherUserId !== currentUserId → 403 TEACHER_USER_NOT_BOUND', () => {
-        const ctx: RecurringRbacContext = {
-          callerRole: 'teacher',
-          currentUserId: ULID32_U1,
-          teacherUserId: '01HX7Y6P5K9N3M2QABCDEFGHIJKLOTHR',
-        };
+          academicCampusId: CAMPUS_X,
+        } as unknown as RecurringRbacContext;
         expect(() => service.createBinding(baseBindingInput, ctx)).toThrow(
-          /TEACHER_USER_NOT_BOUND/,
+          /ONLY_ACADEMIC_CAN_CREATE_SCHEDULE/,
         );
       });
 
-      it('teacher 路径 + teacherUserId 缺失（teacher 纯档案无 user_id）→ 403', () => {
-        const ctx: RecurringRbacContext = {
-          callerRole: 'teacher',
-          currentUserId: ULID32_U1,
-          teacherUserId: null,
-        };
-        expect(() => service.createBinding(baseBindingInput, ctx)).toThrow(
-          /TEACHER_USER_NOT_BOUND/,
-        );
-      });
-
-      it('非法 callerRole → 403 ONLY_TEACHER_OR_SALES（service 层兜底）', () => {
+      it('非法 callerRole=admin → 403 ONLY_ACADEMIC', () => {
         const ctx = {
           callerRole: 'admin',
           currentUserId: ULID32_U1,
+          academicCampusId: CAMPUS_X,
         } as unknown as RecurringRbacContext;
         expect(() => service.createBinding(baseBindingInput, ctx)).toThrow(
-          /ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE/,
+          /ONLY_ACADEMIC_CAN_CREATE_SCHEDULE/,
         );
       });
 
-      it('Sprint B.4-1 round 2: 不传 rbacContext → BadRequestException（A04 修复，删除旧 fixture 模式）', () => {
+      it('不传 rbacContext → BadRequestException（A04 修复，删除旧 fixture 模式）', () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         expect(() => (service.createBinding as any)(baseBindingInput)).toThrow(
           BadRequestException,
@@ -516,59 +532,64 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6', () => {
     describe('createRecurring with rbacContext', () => {
       const now = new Date('2026-05-02T00:00:00Z');
 
-      it('sales 路径 + studentResponsibleSalesId === currentUserId → 通过（无冲突）', () => {
+      it('academic 路径 + teacher 同校 → 通过（无冲突）', () => {
         const ctx: RecurringRbacContext = {
-          callerRole: 'sales',
-          currentUserId: ULID32_U1,
-          studentResponsibleSalesId: ULID32_U1,
-        };
-        const r = service.createRecurring(baseInput, 30, [], now, ctx);
-        expect(r.status).toBe('active');
-      });
-
-      it('sales 路径 + studentResponsibleSalesId !== currentUserId → 403', () => {
-        const ctx: RecurringRbacContext = {
-          callerRole: 'sales',
-          currentUserId: ULID32_U1,
-          studentResponsibleSalesId: '01HX7Y6P5K9N3M2QABCDEFGHIJKLOTHR',
-        };
-        expect(() => service.createRecurring(baseInput, 30, [], now, ctx)).toThrow(
-          /STUDENT_NOT_OWNED_BY_SALES/,
-        );
-      });
-
-      it('teacher 路径 + teacherUserId === currentUserId → 通过', () => {
-        const ctx: RecurringRbacContext = {
-          callerRole: 'teacher',
-          currentUserId: ULID32_U1,
-          teacherUserId: ULID32_U1,
-        };
-        const r = service.createRecurring(baseInput, 30, [], now, ctx);
-        expect(r.status).toBe('active');
-      });
-
-      it('teacher 路径 + teacherUserId !== currentUserId → 403', () => {
-        const ctx: RecurringRbacContext = {
-          callerRole: 'teacher',
-          currentUserId: ULID32_U1,
-          teacherUserId: '01HX7Y6P5K9N3M2QABCDEFGHIJKLOTHR',
-        };
-        expect(() => service.createRecurring(baseInput, 30, [], now, ctx)).toThrow(
-          /TEACHER_USER_NOT_BOUND/,
-        );
-      });
-
-      it('非法 callerRole → 403 ONLY_TEACHER_OR_SALES', () => {
-        const ctx = {
           callerRole: 'academic',
           currentUserId: ULID32_U1,
-        } as unknown as RecurringRbacContext;
+          academicCampusId: CAMPUS_X,
+          teacherCampusId: CAMPUS_X,
+        };
+        const r = service.createRecurring(baseInput, 30, [], now, ctx);
+        expect(r.status).toBe('active');
+        expect(r.createdByRole).toBe('academic');
+      });
+
+      it('academic 路径 + teacher 跨校 → 403 TEACHER_NOT_IN_ACADEMIC_CAMPUS', () => {
+        const ctx: RecurringRbacContext = {
+          callerRole: 'academic',
+          currentUserId: ULID32_U1,
+          academicCampusId: CAMPUS_X,
+          teacherCampusId: CAMPUS_Y,
+        };
         expect(() => service.createRecurring(baseInput, 30, [], now, ctx)).toThrow(
-          /ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE/,
+          /TEACHER_NOT_IN_ACADEMIC_CAMPUS/,
         );
       });
 
-      it('Sprint B.4-1 round 2: 不传 rbacContext → BadRequestException（A04 修复，删除旧 fixture 模式）', () => {
+      it('非法 callerRole=sales → 403 ONLY_ACADEMIC', () => {
+        const ctx = {
+          callerRole: 'sales',
+          currentUserId: ULID32_U1,
+          academicCampusId: CAMPUS_X,
+        } as unknown as RecurringRbacContext;
+        expect(() => service.createRecurring(baseInput, 30, [], now, ctx)).toThrow(
+          /ONLY_ACADEMIC_CAN_CREATE_SCHEDULE/,
+        );
+      });
+
+      it('非法 callerRole=teacher → 403 ONLY_ACADEMIC（5/12 反向修复）', () => {
+        const ctx = {
+          callerRole: 'teacher',
+          currentUserId: ULID32_U1,
+          academicCampusId: CAMPUS_X,
+        } as unknown as RecurringRbacContext;
+        expect(() => service.createRecurring(baseInput, 30, [], now, ctx)).toThrow(
+          /ONLY_ACADEMIC_CAN_CREATE_SCHEDULE/,
+        );
+      });
+
+      it('非法 callerRole=admin → 403 ONLY_ACADEMIC', () => {
+        const ctx = {
+          callerRole: 'admin',
+          currentUserId: ULID32_U1,
+          academicCampusId: CAMPUS_X,
+        } as unknown as RecurringRbacContext;
+        expect(() => service.createRecurring(baseInput, 30, [], now, ctx)).toThrow(
+          /ONLY_ACADEMIC_CAN_CREATE_SCHEDULE/,
+        );
+      });
+
+      it('不传 rbacContext → BadRequestException（A04 修复）', () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         expect(() => (service.createRecurring as any)(baseInput, 30, [], now)).toThrow(
           BadRequestException,

@@ -314,7 +314,8 @@ describe('CronJobsService - W3-1 收尾全局 cron 编排', () => {
         startDate: new Date('2026-05-04T00:00:00Z'),
         status: 'active',
         createdByUserId: ULID32_U1,
-        createdByRole: 'sales',
+        // Wave 11 拍板修复：仅 'academic' 合法
+        createdByRole: 'academic',
         createdAt: new Date(),
       };
       const r = await service.expandRecurringSchedules(
@@ -340,7 +341,8 @@ describe('CronJobsService - W3-1 收尾全局 cron 编排', () => {
         startDate: new Date('2026-05-04T00:00:00Z'),
         status: 'archived',
         createdByUserId: ULID32_U1,
-        createdByRole: 'sales',
+        // Wave 11 拍板修复：仅 'academic' 合法
+        createdByRole: 'academic',
         createdAt: new Date(),
       };
       const r = await service.expandRecurringSchedules(

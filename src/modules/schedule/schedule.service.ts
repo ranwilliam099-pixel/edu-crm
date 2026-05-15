@@ -13,12 +13,21 @@ import { ScheduleRepository } from '../db/schedule.repository';
  *
  * 来源：
  *   - 《PD设计稿-排课-教学反馈-家长订阅-V1-2026-05-02.md》§3
- *   - PD 硬规则 P1-P5（资源仅老师+学生 / 老师销售可排课 / 销售只能跟进学员 /
- *     老师跨校豁免 / 冲突硬阻塞）
+ *   - PD 硬规则 P1-P5（资源仅老师+学生 / 现有教师方可排课 / 冲突硬阻塞）
  *   - 用户拍板条目 31 #2（老师 RBAC 反查链路）
  *
  * USER-AUTH(2026-05-02): 排课 = 事务内冲突硬阻塞（teacher 同段 + 学员同段）+
- *   销售只能给跟进学员排课 + 老师跨校豁免 + 现有教师方可排课（status=在职）
+ *   教务本校排课（5/9 拍板「教务主责」）+ 现有教师方可排课（status=在职）
+ *
+ * Wave 11（2026-05-15）拍板反向修复：
+ *   - 5/9 拍板「教务唯一创建」(fields-by-role.md L82/L102/L133/L201/feedback L56)
+ *     5 处明文：教务是唯一 ✅ 创建，老师 ✅ 自己课（执行）不创建，销售/老板/校长 ❌ 创建
+ *   - 5/12 Sprint B.4-1 round 2 误读「教务主责」为「teacher + sales 创建，academic 403」
+ *     连锁导致 5/12-5/15 期间生产 RBAC 与拍板完全反向
+ *   - Wave 11 修正 callerRole 域 = ['academic']（admin/boss/sales/teacher/finance 全 403）
+ *   - 学生归属（owner_sales_id）校验从硬规则 P3 移除（拍板矩阵 L201 教务 ✅ 创建无限定）
+ *     学生层 ownership 校验留 Sprint X backlog（教务本校限制由 campus_id filter
+ *     + schedulableTeachers 列表过滤兜底）
  *
  * 严守边界：
  *   1. 内存对象 + 应用层冲突检测（INT-01 挂账期间）；真 DB 跑时换为 SELECT FOR UPDATE
@@ -28,7 +37,12 @@ import { ScheduleRepository } from '../db/schedule.repository';
 export type ScheduleStatus = '已排课' | '已完成' | '已取消' | '缺席';
 export type ScheduleSource = 'one_off' | 'recurring_expansion';
 export type AttendanceStatus = '待出勤' | '出勤' | '迟到' | '缺席' | '请假';
-export type SchedulerRole = 'teacher' | 'sales';
+/**
+ * 排课调用角色（Wave 11 拍板修复）
+ *
+ * 仅 academic（教务）可创建。其他 role 在 controller / service 层早期 403。
+ */
+export type SchedulerRole = 'academic';
 
 export interface Schedule {
   id: string;
@@ -70,7 +84,10 @@ export interface CreateScheduleInput {
   courseProductId?: string;
   notes?: string;
   currentUser: CurrentUser;
-  /** 调用方业务身份（teacher 即"通过 teachers.user_id 反查到的老师" / sales）*/
+  /**
+   * 调用方业务身份（Wave 11 拍板修复后仅 'academic' 合法）
+   * controller 层从 JWT.role 派生，body 自报字段被覆盖。
+   */
   callerRole: SchedulerRole;
   source?: ScheduleSource;
   recurringScheduleId?: string;
@@ -88,57 +105,44 @@ export class ScheduleService {
   /**
    * 创建排课（含 RBAC + 冲突硬阻塞）
    *
+   * Wave 11 拍板修复：
+   *   - callerRole = 'academic'（教务唯一）— 5/9 拍板 fields-by-role.md L201
+   *   - schedulableTeachers 由 controller 派生为「教务所在校区在职老师列表」
+   *     此处只校验 teacherId ∈ schedulableTeachers（兜底防 controller 漏过滤）
+   *   - 学生 ownership 校验已移除（教务 ✅ 创建拍板无任何限定语 — 留 Sprint X
+   *     backlog 评估是否补「学生本校」校验，需 students.customer_id → customers.campus_id join）
+   *
    * @param existingSchedules 当前 tenant 内非 cancelled 的全部排课（用于冲突检测）
-   * @param studentResponsibleSalesMap student_id → responsible_sales_id 映射（销售校验 P3）
-   * @param schedulableTeachers 可排课的 active 教师列表（用于 P4 跨校豁免校验）
+   * @param studentResponsibleSalesMap @deprecated Wave 11 — 教务路径不用，保留参数签名向后兼容
+   *                                   （传空 Map 即可；预留 future ownership 扩展点）
+   * @param schedulableTeachers 教务所在校区可排课的 active 教师列表（controller 派生）
    * @returns Schedule + ScheduleStudent[] 内存对象（不持久化）
    */
   createSchedule(
     input: CreateScheduleInput,
     existingSchedules: ReadonlyArray<Schedule>,
     existingStudentsAttachment: ReadonlyArray<ScheduleStudent>,
-    studentResponsibleSalesMap: Map<string, string>,
+    _studentResponsibleSalesMap: Map<string, string>,
     schedulableTeachers: ReadonlyArray<{ id: string; userId?: string }>,
   ): { schedule: Schedule; students: ScheduleStudent[] } {
     // ① 输入校验
     this.assertInputs(input);
 
-    // ② 教师必须 active 可排课（status=在职 + 在 schedulableTeachers 列表中）
-    const teacher = schedulableTeachers.find((t) => t.id === input.teacherId);
-    if (!teacher) {
-      throw new BadRequestException(
-        `teacher ${input.teacherId} not schedulable (not active or not in tenant)`,
+    // ② RBAC: 仅 academic 可创建（Wave 11 拍板）— controller 层已早期 403,
+    //   service 层兜底防内部直调
+    if (input.callerRole !== 'academic') {
+      throw new ForbiddenException(
+        `ONLY_ACADEMIC_CAN_CREATE_SCHEDULE: callerRole=${input.callerRole}`,
       );
     }
 
-    // ③ RBAC：销售只能给自己跟进的学员排课（P3）
-    if (input.callerRole === 'sales') {
-      const wrongStudents: string[] = [];
-      for (const sid of input.studentIds) {
-        const responsibleSalesId = studentResponsibleSalesMap.get(sid);
-        if (responsibleSalesId !== input.currentUser.id) {
-          wrongStudents.push(sid);
-        }
-      }
-      if (wrongStudents.length > 0) {
-        throw new ForbiddenException(
-          `SALES_ONLY_OWN_STUDENTS: ${wrongStudents.join(',')}`,
-        );
-      }
-    } else if (input.callerRole === 'teacher') {
-      // P4：老师身份必须能反查到 teachers.user_id = currentUser.id 且对应 teacherId
-      // （仅在 schedulableTeachers 中验证存在）— 跨校豁免：不校验 campus_id
-      const teacherForCurrentUser = schedulableTeachers.find(
-        (t) => t.userId === input.currentUser.id,
-      );
-      if (!teacherForCurrentUser) {
-        throw new ForbiddenException(
-          'TEACHER_USER_NOT_BOUND: 当前用户未在 teachers 表关联或 teacher 已归档',
-        );
-      }
-    } else {
+    // ③ 教师必须 active 可排课（status=在职 + 在 schedulableTeachers 列表中）
+    //   schedulableTeachers 已被 controller 按教务校区过滤,
+    //   teacherId 不在列表 = 跨校排课 / 离职老师 / 非本租户
+    const teacher = schedulableTeachers.find((t) => t.id === input.teacherId);
+    if (!teacher) {
       throw new ForbiddenException(
-        `ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE: callerRole=${input.callerRole}`,
+        `TEACHER_NOT_IN_ACADEMIC_CAMPUS: teacher ${input.teacherId} not in academic's campus or not active`,
       );
     }
 
@@ -199,7 +203,7 @@ export class ScheduleService {
   async createScheduleInDb(
     input: CreateScheduleInput,
     tenantSchema: string,
-    studentResponsibleSalesMap: Map<string, string>,
+    _studentResponsibleSalesMap: Map<string, string>,
     schedulableTeachers: ReadonlyArray<{ id: string; userId?: string }>,
   ): Promise<{ schedule: Schedule; students: ScheduleStudent[] }> {
     if (!this.repo) {
@@ -207,26 +211,17 @@ export class ScheduleService {
     }
     this.assertInputs(input);
 
-    // RBAC（同 createSchedule 内存版）
-    const teacher = schedulableTeachers.find((t) => t.id === input.teacherId);
-    if (!teacher) {
-      throw new BadRequestException(
-        `teacher ${input.teacherId} not schedulable`,
+    // RBAC（同 createSchedule 内存版 — Wave 11 拍板：仅 academic 可创建）
+    if (input.callerRole !== 'academic') {
+      throw new ForbiddenException(
+        `ONLY_ACADEMIC_CAN_CREATE_SCHEDULE: callerRole=${input.callerRole}`,
       );
     }
-    if (input.callerRole === 'sales') {
-      const wrong: string[] = [];
-      for (const sid of input.studentIds) {
-        if (studentResponsibleSalesMap.get(sid) !== input.currentUser.id) wrong.push(sid);
-      }
-      if (wrong.length > 0) {
-        throw new ForbiddenException(`SALES_ONLY_OWN_STUDENTS: ${wrong.join(',')}`);
-      }
-    } else if (input.callerRole === 'teacher') {
-      const matched = schedulableTeachers.find((t) => t.userId === input.currentUser.id);
-      if (!matched) throw new ForbiddenException('TEACHER_USER_NOT_BOUND');
-    } else {
-      throw new ForbiddenException(`ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE`);
+    const teacher = schedulableTeachers.find((t) => t.id === input.teacherId);
+    if (!teacher) {
+      throw new ForbiddenException(
+        `TEACHER_NOT_IN_ACADEMIC_CAMPUS: teacher ${input.teacherId} not in academic's campus or not active`,
+      );
     }
 
     const endAt = new Date(input.startAt.getTime() + input.durationMin * 60 * 1000);

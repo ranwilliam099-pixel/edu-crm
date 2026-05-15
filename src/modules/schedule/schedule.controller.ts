@@ -33,25 +33,31 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
  *
  * USER-AUTH(2026-05-02): PD §3 + 条目 31 #2 + 条目 32 L2
  *
- * Sprint B.4-1（2026-05-12）RBAC 收紧（leader 拍板 Q1/Q2/Q3）：
- *   1. Q1: callerRole 严格限定 {teacher, sales}，其他 role 直接 403
- *      ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE，admin/boss/academic 排课
- *      功能记入 backlog 独立 Sprint 评估
- *   2. Q3: server-derive 模式，前端 body 不再自报权限载荷
- *      - callerRole: JWT.role
- *      - currentUser: { id: JWT.sub, role: JWT.role, tenantId: JWT.tenantId }
- *      - schedulableTeachers: teacher → 自己 / sales → 全 active 列表（teacherRepo）
- *      - studentResponsibleSalesPairs: sales → batch findBrief input.studentIds（studentRepo）
- *   3. 即使前端 body 仍传上述字段，controller 全部忽略并以 server 派生为准
- *      （body 上的字段标 deprecated，spec 验证「攻击者自报 callerRole」无效）
+ * Wave 11（2026-05-15）拍板反向修复 — 教务唯一创建：
+ *   - 5/9 拍板 fields-by-role.md 5 处明文：教务是 ✅ 创建主责
+ *     L82 教务 home「+ 新建排课（教务主责）」
+ *     L102 教务 home YAML「主按钮：+ 新建排课」
+ *     L133 老师 home「不该有：+ 新建排课（5/9 拍板：教务主责）」
+ *     L201 schedule 矩阵「基础字段 务 ✅ 创建 / 师 ✅ 自己课（执行）/ 销 👁 自己客户孩子」
+ *     feedback_教培业务架构 L56 老板 home「不该有：+ 排课」
+ *   - 5/12 Sprint B.4-1 round 2 误读拍板，反向写成 {teacher, sales} 创建 +
+ *     academic/admin/boss 403 → 5/12-5/15 期间生产 RBAC 与拍板完全相反
+ *   - Wave 11 修正：callerRole 域 = ['academic']（教务唯一），admin/boss/sales/
+ *     teacher/finance 全早期 403
  *
- * Sprint B.4-1 round 2（business P1-A + security A04 修复）：
+ * Wave 11 server-derive 模式保留（B.4-1 Q3 设计正确）：
+ *   - callerRole: JWT.role
+ *   - currentUser: { id: JWT.sub, role: JWT.role, tenantId: JWT.tenantId }
+ *   - schedulableTeachers: academic → 本校（campus_id 匹配）active 老师列表
+ *     （listActiveInTenant 后 controller 层 filter campusId === JWT.campusId）
+ *   - studentResponsibleSalesPairs / Map: deprecated，传空 Map（教务无 ownership 校验）
+ *   - body 自报字段全部忽略
+ *
+ * Sprint B.4-1 round 2（business P1-A + security A04 修复）保留：
  *   1. cancel / complete / attendance 三个写 endpoint 加 @Req() + 早期 403
- *      （原本任何登录用户都能调 → 限到 {teacher, sales}，trust boundary 收紧）
- *   2. 内存版 createSchedule 强制要求 tenantSchema + server-derive schedulableTeachers
- *      / studentResponsibleSalesMap（与 /db 版本完全一致，不再支持 body 注入 fixture）
- *      —— A04 Insecure Design：tenantSchema 可选导致 RBAC skip 路径
- *   ⚠ ownership 校验（schedule 是否归属当前 sales/teacher）记入 Sprint X backlog
+ *      Wave 11 同样限到 ['academic']（与 createSchedule 对齐）
+ *   2. tenantSchema 必填（A04 client 控制安全级别防御）
+ *   ⚠ schedule ownership 校验（academic 是否本校 schedule）记入 Sprint X backlog
  *      本轮仅做角色级 trust boundary 修复，不引入 sched-level scope
  *
  * Sprint B.6 mini (2026-05-11) 深度防御：
@@ -63,7 +69,7 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
  *                  schedule.mark-attendance + 同名 .denied 后缀
  *   - targetType: 'schedule'
  *   - 拒绝路径含 BadRequestException(TENANT_SCHEMA_REQUIRED / JWT sub/role required)
- *     + ForbiddenException(ONLY_TEACHER_OR_SALES / TEACHER_USER_NOT_BOUND)
+ *     + ForbiddenException(ONLY_ACADEMIC / TEACHER_NOT_IN_ACADEMIC_CAMPUS)
  *   - 5 个原同步方法 (cancel/complete/attendance) → 全 async（audit 必须 await
  *     避免主业务流先返但 audit 还未写）
  *   - schedule 模块无 PII（仅 ID/时间），不需要 maskPhone
@@ -135,7 +141,7 @@ export class ScheduleController {
     }
     const inputDeserialized = this.deserializeInput(body.input, callerRole, currentUser);
 
-    // Sprint B.4-1 round 2: server-derive（A04 修复，不再接受 body 注入）
+    // Wave 11: server-derive（schedulableTeachers 按 academic.campus_id 过滤）
     let schedulableTeachers: Array<{ id: string; userId?: string }>;
     let studentResponsibleSalesMap: Map<string, string>;
     try {
@@ -143,6 +149,7 @@ export class ScheduleController {
         body.tenantSchema,
         callerRole,
         currentUser,
+        req.user?.campusId ?? null,
       );
       studentResponsibleSalesMap = await this.deriveStudentResponsibleSalesMap(
         body.tenantSchema,
@@ -229,7 +236,7 @@ export class ScheduleController {
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
     try {
-      this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
+      this.assertCallerRoleAndDeriveContext(req); // Wave 11 早期 403：仅 academic
     } catch (err) {
       await this.tryAuditDenied(
         req,
@@ -286,7 +293,7 @@ export class ScheduleController {
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
     try {
-      this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
+      this.assertCallerRoleAndDeriveContext(req); // Wave 11 早期 403：仅 academic
     } catch (err) {
       await this.tryAuditDenied(
         req,
@@ -314,8 +321,11 @@ export class ScheduleController {
   /**
    * POST /api/schedules/db — 真存盘版（自动查 PG 冲突 + 事务 INSERT）
    *
-   * Sprint B.4-1: callerRole / currentUser / schedulableTeachers / studentResponsibleSalesPairs
-   * 全部 server 派生，body 字段已 deprecated。
+   * Wave 11 拍板修复：教务唯一创建（fields-by-role.md L201）
+   *   - callerRole / currentUser 从 JWT 派生（仅 academic 合法）
+   *   - schedulableTeachers 派生为「教务所在校区在职老师列表」
+   *   - studentResponsibleSalesMap deprecated（教务无 ownership 校验）
+   *   - body 自报字段全部忽略
    *
    * Sprint E backlog #3: 成功路径 'schedule.create'；拒绝 'schedule.create.denied'
    */
@@ -326,9 +336,9 @@ export class ScheduleController {
     body: {
       input: CreateScheduleInput;
       tenantSchema: string;
-      // @deprecated Sprint B.4-1 起 server 派生
+      // @deprecated Wave 11 起 server 派生（教务无 ownership 校验）
       studentResponsibleSalesPairs?: Array<[string, string]>;
-      // @deprecated Sprint B.4-1 起 server 派生
+      // @deprecated Wave 11 起 server 派生（按 academic.campus_id 过滤）
       schedulableTeachers?: Array<{ id: string; userId?: string }>;
     },
     @Req() req: AuthenticatedRequest,
@@ -362,6 +372,7 @@ export class ScheduleController {
         body.tenantSchema,
         callerRole,
         currentUser,
+        req.user?.campusId ?? null,
       );
       studentResponsibleSalesMap = await this.deriveStudentResponsibleSalesMap(
         body.tenantSchema,
@@ -414,12 +425,17 @@ export class ScheduleController {
    * POST /api/schedules/db/list-by-teacher
    *
    * Sprint B.4-1 round 3 (Sprint E backlog #7 — A01 hardening 2026-05-13):
-   *   - 加 @Req() + assertCallerRoleAndDeriveContext 限 {teacher, sales}
+   *   - 加 @Req() + assertReadRoleForListByTeacher 限 read-side 角色
    *   - 原 pre-existing 风险：任何已登录 JWT role 可调取任意 teacherId 课表
-   *     （受 TenantScopeGuard 跨租户隔离，但同租户内任 admin/finance/parent/academic
-   *     都能查别人销售归属的老师课表，违反「教务全只读老师线」+ sales 不跨域）
-   *   - 本轮仅做角色级 trust boundary 收紧（同 cancel/complete/attendance 模式），
-   *     teacher self-only 反查 / sales ownership 校验留 Sprint X backlog（service 层）
+   *
+   * Wave 11（2026-05-15）拍板 read 路径调整：
+   *   - 拍板 L201: schedule 基础字段「师 ✅ 自己课 / 销 👁 自己客户孩子 / 务 ✅ 创建 + 看 /
+   *     老校 ✅」— read 路径合法角色 = {teacher, sales, academic, boss, admin}
+   *   - 写路径（create/cancel/complete/attendance）已收紧为仅 academic（Wave 11 fix）
+   *   - 本 endpoint 是 read，不在 Wave 11 写路径反向修复范围
+   *   - 仍保留 trust boundary：parent / finance / hr / marketing / sales_manager /
+   *     sales_director 不应调用此 read（不在拍板矩阵 read scope 内）
+   *   - teacher self-only 反查 / sales ownership 校验留 Sprint X backlog（service 层）
    *
    * Sprint E backlog #3: read-only 不补 audit_log（本拍板范围仅写操作）
    */
@@ -430,7 +446,7 @@ export class ScheduleController {
     body: { tenantSchema: string; teacherId: string; fromIso: string; toIso: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<Schedule[]> {
-    this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher, sales} 限制
+    this.assertReadRoleForListByTeacher(req); // Wave 11: read-path RBAC（与写路径区分）
     return this.service.listByTeacherInDb(
       body.tenantSchema,
       body.teacherId,
@@ -478,7 +494,7 @@ export class ScheduleController {
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
     try {
-      this.assertCallerRoleAndDeriveContext(req); // 早期 403 {teacher,sales} 限制
+      this.assertCallerRoleAndDeriveContext(req); // Wave 11 早期 403：仅 academic
     } catch (err) {
       await this.tryAuditDenied(
         req,
@@ -515,13 +531,15 @@ export class ScheduleController {
     return result;
   }
 
-  // -- helpers: server-derived RBAC context（Sprint B.4-1 拍板）--
+  // -- helpers: server-derived RBAC context（Wave 11 拍板修复）--
 
   /**
    * 从 JWT 派生 callerRole + currentUser，并在 controller 层挡掉
-   * non-{teacher,sales} 角色（不让到 service 才挡，避免业务路径多走一次冲突检测）。
+   * non-academic 角色（不让到 service 才挡，避免业务路径多走一次冲突检测）。
    *
-   * Sprint B.4-1 round 2: 移除 tenantSchema 派生（所有路径已强制 body.tenantSchema 必填）。
+   * Wave 11 拍板修复：教务唯一创建（fields-by-role.md L201 「务 ✅ 创建」）
+   *   - admin / boss / sales / teacher / finance / academic_admin 全早期 403
+   *   - 教务也是单校 role（campusId 必填 32-char ULID）
    */
   private assertCallerRoleAndDeriveContext(req: AuthenticatedRequest): {
     callerRole: SchedulerRole;
@@ -531,14 +549,14 @@ export class ScheduleController {
     if (!jwt?.sub || !jwt.role) {
       throw new BadRequestException('JWT sub/role required');
     }
-    if (jwt.role !== 'teacher' && jwt.role !== 'sales') {
-      // Q1 拍板：admin/boss/academic 等其他 role 一律 403
+    if (jwt.role !== 'academic') {
+      // Wave 11 拍板：仅 academic 可创建/调度/标考勤，其他 role 一律 403
       throw new ForbiddenException(
-        `ONLY_TEACHER_OR_SALES_CAN_CREATE_SCHEDULE: role=${jwt.role}`,
+        `ONLY_ACADEMIC_CAN_CREATE_SCHEDULE: role=${jwt.role}`,
       );
     }
     return {
-      callerRole: jwt.role as SchedulerRole,
+      callerRole: 'academic',
       currentUser: {
         id: jwt.sub,
         role: jwt.role,
@@ -548,57 +566,78 @@ export class ScheduleController {
   }
 
   /**
-   * 派生 schedulableTeachers（Q1 拍板）：
-   *   - teacher → 仅返回 [ownTeacher]，反查 teachers.user_id = JWT.sub
-   *     若反查不到 → 抛 ForbiddenException(TEACHER_USER_NOT_BOUND)，避免到 service
-   *     才感知到（前端会更早收到 403，UX 更好）
-   *   - sales → 该 tenant 全 active 老师列表（cross-campus 豁免）
+   * read 路径 RBAC（list-by-teacher 等 GET 类操作）
    *
-   * Sprint B.4-1 round 2: 内存版 和 DB 版都强制 tenantSchema 必填后调用此 helper。
+   * Wave 11 拍板修复：
+   *   - 写路径 = 仅 academic
+   *   - read 路径 = 拍板 L201 read scope: {teacher 自己课, sales 自己客户孩子,
+   *     academic 创建+看, boss 看, admin 看（拍板 admin 跨校全字段）}
+   *   - 不在 read scope: parent（C 端独立 endpoint）/ finance / hr / marketing /
+   *     sales_manager / sales_director / academic_admin
+   *
+   * ⚠ scope 内细化（teacher self-only / sales ownership）留 Sprint X backlog
+   */
+  private assertReadRoleForListByTeacher(req: AuthenticatedRequest): void {
+    const jwt = req.user;
+    if (!jwt?.sub || !jwt.role) {
+      throw new BadRequestException('JWT sub/role required');
+    }
+    const allowed = ['teacher', 'sales', 'academic', 'boss', 'admin'] as const;
+    if (!(allowed as readonly string[]).includes(jwt.role)) {
+      throw new ForbiddenException(
+        `SCHEDULE_READ_ROLE_NOT_ALLOWED: role=${jwt.role}`,
+      );
+    }
+  }
+
+  /**
+   * 派生 schedulableTeachers（Wave 11 拍板修复）：
+   *   - academic → 教务所在校区在职老师列表（campus_id === JWT.campusId）
+   *     防止教务跨校排课（拍板 L202 班型限制 / L211 教务 👁 不改 — 教务本校权限）
+   *   - JWT.campusId 缺 → 抛 ForbiddenException（academic 是单校 role，campusId 必填）
+   *
+   * 实现：listActiveInTenant 后 filter campus_id（避免新增 repo 方法，最小变更）
+   *   TODO(perf): 若 tenant 老师 N > 200 加 listActiveByCampus repo 方法直接 SQL filter
    */
   private async deriveSchedulableTeachers(
     tenantSchema: string,
     callerRole: SchedulerRole,
     currentUser: CurrentUser,
+    jwtCampusId: string | null,
   ): Promise<Array<{ id: string; userId?: string }>> {
-    if (callerRole === 'teacher') {
-      const own = await this.teacherRepo.findByUserId(tenantSchema, currentUser.id);
-      if (!own) {
-        throw new ForbiddenException(
-          'TEACHER_USER_NOT_BOUND: 当前用户未在 teachers 表关联（请联系校长建档）',
-        );
-      }
-      return [{ id: own.id, userId: own.userId }];
+    if (callerRole !== 'academic') {
+      // 防御性，controller 早期 403 已挡，这里兜底
+      throw new ForbiddenException('ONLY_ACADEMIC_CAN_CREATE_SCHEDULE');
     }
-    // sales: 全 active 列表
+    if (!jwtCampusId) {
+      // academic 是单校 role（jwt.strategy.ts L122-126 校验过）
+      // 此处兜底防止极端情况 (jwt 篡改 / token 无 campusId)
+      throw new ForbiddenException(
+        'ACADEMIC_CAMPUS_REQUIRED: 教务必须归属单一校区',
+      );
+    }
     const all = await this.teacherRepo.listActiveInTenant(tenantSchema);
-    return all.map((t) => ({ id: t.id, userId: t.userId }));
+    // 同校区过滤（teacher.campus_id === jwt.campusId）
+    const sameCampus = all.filter((t) => t.campusId === jwtCampusId);
+    return sameCampus.map((t) => ({ id: t.id, userId: t.userId }));
   }
 
   /**
-   * 派生 studentResponsibleSalesMap（Q3 拍板，sales 路径用）：
-   *   - sales → batch query students.owner_sales_id by input.studentIds
-   *     map studentId → ownerSalesId（null 时填空串，service 比较时不匹配 → 403）
-   *   - teacher → 空 map（service 不读，不用查）
+   * 派生 studentResponsibleSalesMap — Wave 11 拍板后已不需要
    *
-   * TODO(perf): 若学生 N > 50 改 studentRepo.findBriefsByIds(ids[]) 批量查询（当前 N 通常 1-3）
+   * 教务 ✅ 创建拍板矩阵 L201 无任何 ownership 限定（不像 sales「自己客户/孩子」）
+   * 保留空实现避免 service 层签名变动（service 参数也 deprecated，传空 Map）
+   *
+   * future: 若 Sprint X 决定加「学生本校」校验，应在此处 join customers.campus_id
+   *   过滤 wrongStudents（students 表本身无 campus_id，需 students.customer_id →
+   *   customers.campus_id）
    */
   private async deriveStudentResponsibleSalesMap(
-    tenantSchema: string,
-    callerRole: SchedulerRole,
-    studentIds: ReadonlyArray<string>,
+    _tenantSchema: string,
+    _callerRole: SchedulerRole,
+    _studentIds: ReadonlyArray<string>,
   ): Promise<Map<string, string>> {
-    if (callerRole !== 'sales') return new Map();
-    const map = new Map<string, string>();
-    for (const sid of studentIds) {
-      const brief = await this.studentRepo.findBrief(tenantSchema, sid);
-      if (brief) {
-        map.set(sid, brief.ownerSalesId ?? '');
-      }
-      // 反查不到学生 → map 中不存在该 key → service 用 map.get(sid) 返回 undefined
-      // → service 的 wrongStudents.push(sid) → 抛 SALES_ONLY_OWN_STUDENTS（合理）
-    }
-    return map;
+    return new Map();
   }
 
   // -- helpers: JSON Date 反序列化 + 强制覆盖 callerRole/currentUser --
