@@ -118,7 +118,7 @@ export class CustomerRepository {
    *   2. INSERT students（如 studentName 提供）
    *   3. INSERT opportunities（owner_user_id = 销售自己，stage='初步接触'）
    *
-   * RBAC：sales / sales_manager / sales_director / boss / admin（销售口可建）
+   * RBAC：sales / sales_manager / boss / admin（销售口可建）— 5/15 A-2 删 sales_director
    */
   async createWithOpportunity(
     tenantSchema: string,
@@ -318,7 +318,7 @@ export class CustomerRepository {
   }
 
   /**
-   * 老板视角（admin / sales_director）：跨校查看全部客户
+   * 老板视角（admin / sales_manager）：跨校查看全部客户 — 5/15 A-2 删 sales_director
    *
    * @param ownerFilter undefined = 所有；'unassigned' = 公共池；具体 sub = 某销售
    * @param campusId V26 校区切换过滤；undefined = 全部校区

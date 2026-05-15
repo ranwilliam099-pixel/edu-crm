@@ -102,8 +102,9 @@ export class LearningProfileController {
   }
 
   /**
-   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
-   *   - teacher / academic / academic_admin / admin / boss / sales / sales_manager / sales_director
+   * Sprint B RBAC (2026-05-11 复审补): 7 role 读（5/15 A-2 删 sales_director）
+   *   - teacher / academic / academic_admin / admin / boss / sales / sales_manager
+   *   - 5/15 A-2：删 sales_director（不在拍板角色清单）
    */
   @Post('db/students/:studentId/profile')
   @UseGuards(TenantScopeGuard, RbacGuard)
@@ -115,7 +116,7 @@ export class LearningProfileController {
     'boss',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
   async findInDb(
@@ -126,7 +127,7 @@ export class LearningProfileController {
   }
 
   /**
-   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
+   * Sprint B RBAC (2026-05-11 复审补): 7 role 读（5/15 A-2 删 sales_director）
    *   - 通常 cron 调，HTTP endpoint 仅给运营/admin 列陈旧档案（recompute 触发用）
    */
   @Post('db/stale')
@@ -139,7 +140,7 @@ export class LearningProfileController {
     'boss',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
   async listStaleInDb(

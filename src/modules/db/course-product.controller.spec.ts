@@ -14,7 +14,7 @@
  *   - 本 spec 聚焦 controller handler 业务逻辑 + audit_log 行为
  */
 
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { CourseProductController } from './course-product.controller';
 import { CourseProductRepository, CourseProductStats } from './course-product.repository';
 import { AuditLogRepository } from './audit-log.repository';
@@ -157,11 +157,15 @@ describe('CourseProductController.getStats (5/15 拍板 OOUX 聚合)', () => {
       expect(r.productId).toBe(PRODUCT_ID);
     });
 
-    it('repo 调用：传入 tenantSchema + productId', async () => {
+    it('repo 调用：传入 tenantSchema + productId + 默认 scope（admin 不限制）', async () => {
       repo.findStats.mockResolvedValueOnce(statsFixture());
       await controller.getStats(PRODUCT_ID, TENANT_SCHEMA, req(jwt('admin')));
       expect(repo.findStats).toHaveBeenCalledTimes(1);
-      expect(repo.findStats).toHaveBeenCalledWith(TENANT_SCHEMA, PRODUCT_ID);
+      // 5/15 r2 A-3/A-4：admin 不限制 owner / campus（null/null）
+      expect(repo.findStats).toHaveBeenCalledWith(TENANT_SCHEMA, PRODUCT_ID, {
+        callerOwnerSalesId: null,
+        callerCampusId: null,
+      });
     });
 
     it('200 成功路径不写 audit_log（高频读，不污染）', async () => {
@@ -326,6 +330,183 @@ describe('CourseProductController.getStats (5/15 拍板 OOUX 聚合)', () => {
       await expect(
         controller.getStats(PRODUCT_ID, TENANT_SCHEMA, req(jwt('admin'))),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ============================================================
+  // 5/15 r2 A-3: sales scope + 反伪造校验
+  // ============================================================
+  describe('A-3 sales scope + 反伪造校验', () => {
+    const SALES_A = 'salesA00000000000000000000000A01';
+    const SALES_B = 'salesB00000000000000000000000A02';
+
+    it('sales 调 → callerOwnerSalesId 强制 = jwt.sub（不传 query）', async () => {
+      repo.findStats.mockResolvedValueOnce(statsFixture());
+      await controller.getStats(
+        PRODUCT_ID,
+        TENANT_SCHEMA,
+        req(jwt('sales', SALES_A)),
+      );
+      expect(repo.findStats).toHaveBeenCalledWith(TENANT_SCHEMA, PRODUCT_ID, {
+        callerOwnerSalesId: SALES_A, // 强制 jwt.sub
+        callerCampusId: null, // sales 不走 campus path
+      });
+    });
+
+    it('sales 调 + query.ownerSalesId === jwt.sub → 放行', async () => {
+      repo.findStats.mockResolvedValueOnce(statsFixture());
+      await controller.getStats(
+        PRODUCT_ID,
+        TENANT_SCHEMA,
+        req(jwt('sales', SALES_A)),
+        SALES_A, // query.ownerSalesId 等于 jwt.sub
+      );
+      expect(repo.findStats).toHaveBeenCalledWith(TENANT_SCHEMA, PRODUCT_ID, {
+        callerOwnerSalesId: SALES_A,
+        callerCampusId: null,
+      });
+    });
+
+    it('sales 调 + query.ownerSalesId !== jwt.sub → 403 FORBIDDEN_OWNER_MISMATCH', async () => {
+      await expect(
+        controller.getStats(
+          PRODUCT_ID,
+          TENANT_SCHEMA,
+          req(jwt('sales', SALES_A)),
+          SALES_B, // 伪造他人 ownerSalesId
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      // repo 不应被调用（已在 403 前拦截）
+      expect(repo.findStats).not.toHaveBeenCalled();
+    });
+
+    it('sales 伪造路径 → audit_log 写入 stats-owner-mismatch', async () => {
+      await expect(
+        controller.getStats(
+          PRODUCT_ID,
+          TENANT_SCHEMA,
+          req(jwt('sales', SALES_A)),
+          SALES_B,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('course-product.stats-owner-mismatch');
+      expect(entry.targetType).toBe('course-product');
+      expect(entry.targetId).toBe(PRODUCT_ID);
+      expect(entry.actorUserId).toBe(SALES_A);
+      expect(entry.actorRole).toBe('sales');
+      expect(entry.after).toMatchObject({
+        attempted_role: 'sales',
+        attempted_owner_sales_id: SALES_B,
+        actual_jwt_sub: SALES_A,
+        reason: 'sales_role_cannot_query_other_owner',
+      });
+    });
+
+    it('admin 调 → callerOwnerSalesId = null（不限制 owner，看全部）', async () => {
+      repo.findStats.mockResolvedValueOnce(statsFixture());
+      await controller.getStats(
+        PRODUCT_ID,
+        TENANT_SCHEMA,
+        req(jwt('admin', ADMIN_USER)),
+        SALES_B, // admin 传 query 也不强制（看全部仍是 default null）
+      );
+      expect(repo.findStats).toHaveBeenCalledWith(TENANT_SCHEMA, PRODUCT_ID, {
+        callerOwnerSalesId: null, // admin 不限制
+        callerCampusId: null,
+      });
+    });
+
+    it('boss 调 → callerOwnerSalesId = null（不限制 owner，按本校 campus 看全销售）', async () => {
+      repo.findStats.mockResolvedValueOnce(statsFixture());
+      await controller.getStats(
+        PRODUCT_ID,
+        TENANT_SCHEMA,
+        req(jwt('boss', ADMIN_USER)),
+      );
+      const call = repo.findStats.mock.calls[0][2];
+      expect(call.callerOwnerSalesId).toBeNull();
+    });
+  });
+
+  // ============================================================
+  // 5/15 r2 A-4: campus scope（boss/academic 多校隔离）
+  // ============================================================
+  describe('A-4 campus scope（boss/academic 多校隔离）', () => {
+    const CAMPUS_B = 'campus_B0000000000000000000000A02';
+
+    it('boss + jwt.campusId → callerCampusId 注入', async () => {
+      repo.findStats.mockResolvedValueOnce(statsFixture());
+      await controller.getStats(
+        PRODUCT_ID,
+        TENANT_SCHEMA,
+        req(jwt('boss', ADMIN_USER)),
+      );
+      expect(repo.findStats).toHaveBeenCalledWith(TENANT_SCHEMA, PRODUCT_ID, {
+        callerOwnerSalesId: null,
+        callerCampusId: CAMPUS_A, // jwt fixture 默认 CAMPUS_A
+      });
+    });
+
+    it('academic + jwt.campusId → callerCampusId 注入', async () => {
+      repo.findStats.mockResolvedValueOnce(statsFixture());
+      await controller.getStats(
+        PRODUCT_ID,
+        TENANT_SCHEMA,
+        req(jwt('academic', ADMIN_USER)),
+      );
+      expect(repo.findStats).toHaveBeenCalledWith(TENANT_SCHEMA, PRODUCT_ID, {
+        callerOwnerSalesId: null,
+        callerCampusId: CAMPUS_A,
+      });
+    });
+
+    it('admin 跨校 → callerCampusId = null（不注入 campus 过滤，看全 campus 聚合）', async () => {
+      repo.findStats.mockResolvedValueOnce(statsFixture());
+      // admin jwt fixture 用了 CAMPUS_A，但 controller 不读 admin 的 campusId 注入
+      await controller.getStats(
+        PRODUCT_ID,
+        TENANT_SCHEMA,
+        req(jwt('admin', ADMIN_USER)),
+      );
+      expect(repo.findStats).toHaveBeenCalledWith(TENANT_SCHEMA, PRODUCT_ID, {
+        callerOwnerSalesId: null,
+        callerCampusId: null, // admin 看全
+      });
+    });
+
+    it('boss 不同校 (CAMPUS_B) → callerCampusId = CAMPUS_B', async () => {
+      repo.findStats.mockResolvedValueOnce(statsFixture());
+      const bossOtherCampus: JwtPayload = {
+        sub: ADMIN_USER,
+        tenantId: TENANT_A,
+        role: 'boss',
+        campusId: CAMPUS_B,
+      };
+      await controller.getStats(
+        PRODUCT_ID,
+        TENANT_SCHEMA,
+        req(bossOtherCampus),
+      );
+      expect(repo.findStats.mock.calls[0][2].callerCampusId).toBe(CAMPUS_B);
+    });
+
+    it('boss 无 campusId（边界） → callerCampusId = null', async () => {
+      repo.findStats.mockResolvedValueOnce(statsFixture());
+      // V10 拍板 boss 必须有 campusId，但 controller 兜底 if (campusId) 检查
+      const bossNoCampus: JwtPayload = {
+        sub: ADMIN_USER,
+        tenantId: TENANT_A,
+        role: 'boss',
+        campusId: null,
+      };
+      await controller.getStats(
+        PRODUCT_ID,
+        TENANT_SCHEMA,
+        req(bossNoCampus),
+      );
+      expect(repo.findStats.mock.calls[0][2].callerCampusId).toBeNull();
     });
   });
 });

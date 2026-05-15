@@ -108,9 +108,12 @@ describe('UserRepository (V27)', () => {
       expect(sql).not.toContain('campus_id');
     });
 
-    it('分支 3a：sales_director 离职 → 任一 active admin', async () => {
+    it('分支 3a：sales_director (legacy schema row) 离职 → 任一 active admin', async () => {
+      // 5/15 A-2：sales_director 应用层已删（TenantRole TS 类型不含）
+      //   但 schema V2 CHECK 仍允许此值 — findTransferTarget 保留字符串比对兜底
+      //   测试用 as never 绕过 TS 校验，模拟历史 schema 行
       pg.tenantQuery.mockResolvedValueOnce([userRow({ id: ADMIN_ID, role: 'admin' })]);
-      const target = await repo.findTransferTarget(TENANT, leaver('sales_director'));
+      const target = await repo.findTransferTarget(TENANT, leaver('sales_director' as never));
       expect(target?.role).toBe('admin');
     });
 

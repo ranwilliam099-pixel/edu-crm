@@ -11,6 +11,10 @@ import { PgPoolService } from './pg-pool.service';
  *               academic / academic_admin / edu_admin / ops /
  *               teacher / finance / hr / parent / platform_admin / system
  *
+ *   5/15 A-2 拍板：应用层 jwt.role 已删 sales_director（不在拍板角色清单），
+ *   但 V33 schema CHECK 仍允许 sales_director — 保留 ActorRole 枚举以兼容历史 audit_log
+ *   row 的读取查询，不会再有新 INSERT（normalizeActorRole 路径走 JWT，JWT 不再含此 role）。
+ *
  * 用法：
  *   await auditLog.log(tenantSchema, {
  *     actorUserId: 'usr_xxx',
@@ -30,6 +34,9 @@ import { PgPoolService } from './pg-pool.service';
  *   - 主业务流应在事务外调用 log()，避免 audit_log 失败回滚业务
  */
 
+// 5/15 A-2：sales_director 保留（schema V33 CHECK 仍含 + 历史 audit_log row 读取需要）
+//   应用层 JWT 不再发此 role → normalizeActorRole 不会再 fallback 到 sales_director
+//   仅为读取 listRecent / listByTarget 返回的旧 row.actor_role 时类型不报错
 export type ActorRole =
   | 'admin'
   | 'boss'

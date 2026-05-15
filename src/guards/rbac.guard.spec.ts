@@ -103,8 +103,9 @@ describe('RbacGuard', () => {
     );
   });
 
-  it('@Roles(sales_director) + user.role=sales → ForbiddenException', () => {
-    (reflector.getAllAndOverride as jest.Mock).mockReturnValue(['sales_director']);
+  it('@Roles(hr) + user.role=sales → ForbiddenException', () => {
+    // 5/15 A-2：原 sales_director 已删，改用 hr 测 role mismatch 语义（任一非匹配 role 等效）
+    (reflector.getAllAndOverride as jest.Mock).mockReturnValue(['hr']);
     expect(() => guard.canActivate(ctx(salesUser))).toThrow(ForbiddenException);
   });
 });

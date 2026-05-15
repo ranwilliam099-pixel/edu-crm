@@ -45,6 +45,8 @@ export class AuthController {
    *   真实场景：phone + password → 查 users 表 → bcrypt → 取 user.role
    *   当前 mock：直接采信传入的 role / tenantId / userId（前端登录页输入即可）
    *
+   * 5/15 A-2：role 白名单删 'sales_director'（应用层取消大区经理岗位）
+   *
    * @returns { token, tokenType: 'Bearer', expiresIn, payload }
    */
   // SPRINT-E.1(2026-05-13) 限流：登录 10 次/分钟（防暴力破解 / 撞库）
@@ -74,10 +76,13 @@ export class AuthController {
     // Sprint B (2026-05-11): TenantRole 加 teacher / academic / academic_admin
     //   - teacher / academic / academic_admin 均为单校 role，campusId 必填
     //   - 校验逻辑通过下方 isCrossCampusRole 分支自动覆盖（fall-through 到 single-campus 分支）
+    //
+    // 5/15 A-2 拍板：删 'sales_director'（不在拍板权威 9 角色清单 fields-by-role.md L6-17）
+    //   - 应用层不再接受 sales_director 登录，jwt 也不会签发 sales_director claim
+    //   - 历史 schema CHECK 仍允许，但应用层拒绝创建（与 user.service validRoles 一致）
     const validRoles = [
       'sales',
       'sales_manager',
-      'sales_director',
       'marketing',
       'finance',
       'boss',
@@ -91,8 +96,8 @@ export class AuthController {
       throw new BadRequestException(`role must be one of ${validRoles.join('/')}`);
     }
 
-    // V10 拍板：跨校组（admin/sales_director/hr）campusId 可空；
-    // 单校组（boss/sales/sales_manager/marketing/finance）必须 32 字符 ULID
+    // V10 拍板（+ 5/15 A-2 删 sales_director）：跨校组（admin/hr）campusId 可空；
+    // 单校组（boss/sales/sales_manager/marketing/finance/teacher/academic/academic_admin）必须 32 字符 ULID
     let campusId: string | null;
     if (isCrossCampusRole(body.role)) {
       if (body.campusId && body.campusId.length !== 32) {

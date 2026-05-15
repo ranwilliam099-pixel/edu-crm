@@ -4,7 +4,7 @@
  * 范围：
  *   - GET /db/customers/:id：scope filter（403）+ field mask
  *   - GET /db/customers/mine：listMine 已 SQL 过滤，验证 mask 应用
- *   - GET /db/customers/all：admin/sales_manager/sales_director 字段一致
+ *   - GET /db/customers/all：admin/sales_manager 字段一致（5/15 A-2 删 sales_director）
  *   - GET /db/customers/pool：pool 路径 isOwnerSelf=true（销售可见 phone 抢占）
  *
  * 红线（fields-by-role.md #3）：
@@ -130,18 +130,24 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
       expect(r.wechat).toBe('wx_parent_abc');
     });
 
-    it('sales_director 看任何客户 → 全字段（销售主管收口）', async () => {
+    // 5/15 A-2：sales_director 应用层已删（不在拍板角色清单）
+    //   - jwt.role='sales_director' 不应再发生（login validRoles 已删）
+    //   - 历史数据若仍有 sales_director claim 通过 jwt → actorGroupOf → unknown group
+    //     → canAccessCustomer 兜底返 false → 403 ForbiddenException（scope filter 优先于 field mask）
+    //   - 双层安全：即使 RbacGuard 漏过，controller scope filter 仍拦截
+    it('sales_director (legacy, 5/15 A-2 已删) → 403 ForbiddenException（unknown group 拒绝访问）', async () => {
+      const { ForbiddenException } = require('@nestjs/common');
       repo.findById.mockResolvedValueOnce(customerFixture({ ownerUserId: SALES_B }));
-      const r = (await controller.detail(
-        CUSTOMER_ID,
-        TENANT_SCHEMA,
-        req(jwt('sales_director', SALES_A)),
-      )) as Customer;
-      expect(r.phone).toBe('13800138000');
-      expect(r.wechat).toBe('wx_parent_abc');
+      await expect(
+        controller.detail(
+          CUSTOMER_ID,
+          TENANT_SCHEMA,
+          req(jwt('sales_director' as never, SALES_A)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
     });
 
-    it('sales_manager 同 sales_director → 全字段', async () => {
+    it('sales_manager → 全字段（销售校内主管收口）', async () => {
       repo.findById.mockResolvedValueOnce(customerFixture({ ownerUserId: SALES_B }));
       const r = (await controller.detail(
         CUSTOMER_ID,
@@ -250,7 +256,7 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
   // ============================================================
   // listAllForBoss()
   // ============================================================
-  describe('listAllForBoss() — admin/sales_manager/sales_director', () => {
+  describe('listAllForBoss() — admin/sales_manager (5/15 A-2 删 sales_director)', () => {
     it('admin 看到所有客户 phone/wechat', async () => {
       repo.listAllForBoss.mockResolvedValueOnce([
         customerFixture({ ownerUserId: SALES_A }),
@@ -270,7 +276,7 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
       expect(r.items[1].phone).toBe('13800138000');
     });
 
-    it('sales_director 看到所有客户 phone（销售主管收口）', async () => {
+    it('sales_manager 看到所有客户 phone（销售校内主管收口）— 5/15 A-2 sales_director 已删', async () => {
       repo.listAllForBoss.mockResolvedValueOnce([
         customerFixture({ ownerUserId: SALES_A }),
         customerFixture({ id: 'other', ownerUserId: SALES_B }),
@@ -282,7 +288,7 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
         undefined,
         undefined,
         undefined,
-        req(jwt('sales_director', SALES_A)),
+        req(jwt('sales_manager', SALES_A)),
       );
       expect(r.items[0].phone).toBe('13800138000');
       expect(r.items[1].phone).toBe('13800138000');
@@ -398,14 +404,14 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
       expect(repo.listFollowLog).toHaveBeenCalled();
     });
 
-    it('sales_director / sales_manager → admin group 放行', async () => {
+    it('sales_manager → admin group 放行（5/15 A-2 删 sales_director）', async () => {
       repo.findById.mockResolvedValueOnce(customerFixture({ ownerUserId: SALES_B }));
       repo.listFollowLog.mockResolvedValueOnce([]);
       await controller.listFollows(
         CUSTOMER_ID,
         TENANT_SCHEMA,
         undefined,
-        req(jwt('sales_director', SALES_A)),
+        req(jwt('sales_manager', SALES_A)),
       );
       expect(repo.listFollowLog).toHaveBeenCalled();
     });

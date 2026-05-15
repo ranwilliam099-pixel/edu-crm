@@ -26,8 +26,8 @@ import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.int
  *
  * Sprint B (2026-05-11) RBAC：
  *   - 写操作（publish / grade / return）: teacher / admin / boss
- *   - 读操作（list*）：teacher / academic / academic_admin / admin / boss / sales / sales_manager / sales_director
- *     （拍板「教务全只读老师线」+「销售看自己客户孩子作业」）
+ *   - 读操作（list*）：teacher / academic / academic_admin / admin / boss / sales / sales_manager
+ *     （5/15 A-2 删 sales_director；拍板「教务全只读老师线」+「销售看自己客户孩子作业」）
  *   - 老 mock 端点（无 tenantSchema 的 in-memory 版本）不上 RBAC（仅测试用）
  *   - 家长 c 端：走 /api/homework/db/students/* 前缀，middleware isParentDbPath 已含
  *
@@ -249,9 +249,10 @@ export class HomeworkController {
   }
 
   /**
-   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
-   *   - teacher / academic / academic_admin / admin / boss / sales / sales_manager / sales_director
+   * Sprint B RBAC (2026-05-11 复审补): 7 role 读（5/15 A-2 删 sales_director）
+   *   - teacher / academic / academic_admin / admin / boss / sales / sales_manager
    *   - 销售可看自己客户孩子的作业 — service 层做字段过滤
+   *   - 5/15 A-2 删 sales_director
    */
   @Post('db/teachers/:teacherId/assignments')
   @UseGuards(TenantScopeGuard, RbacGuard)
@@ -263,7 +264,7 @@ export class HomeworkController {
     'boss',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
   async listAssignmentsByTeacherInDb(
@@ -277,7 +278,7 @@ export class HomeworkController {
   }
 
   /**
-   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
+   * Sprint B RBAC (2026-05-11 复审补): 7 role 读（5/15 A-2 删 sales_director）
    *   - 注：家长 c 端走独立 endpoint /api/homework/db/students/:studentId/assignments?? 不再适用
    *     middleware isParentDbPath 含 /api/homework/db/students/ → parent JWT 也会走到此 controller
    *     但 RbacGuard 拦截 parent role → 路由失效
@@ -293,7 +294,7 @@ export class HomeworkController {
     'boss',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
   async listAssignmentsByStudentInDb(
@@ -304,7 +305,7 @@ export class HomeworkController {
   }
 
   /**
-   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
+   * Sprint B RBAC (2026-05-11 复审补): 7 role 读（5/15 A-2 删 sales_director）
    *   - teacher 看自己待批改
    *   - 教务双层 / 销售只读 看老师待批改 KPI
    */
@@ -318,7 +319,7 @@ export class HomeworkController {
     'boss',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
   async listPendingByTeacherInDb(

@@ -133,12 +133,12 @@ export class CustomerController {
    *   studentId / studentName     可选（提供则一并建学生）
    *   gradeOrAge / intendedSubject / source / note 可选
    *
-   * RBAC：sales / sales_manager / sales_director / boss / admin
+   * RBAC：sales / sales_manager / boss / admin — 5/15 A-2 删 sales_director
    * ownerSalesId 自动 = req.user.sub
    */
   @Post()
   @UseGuards(RbacGuard)
-  @Roles('sales', 'sales_manager', 'sales_director', 'boss', 'admin')
+  @Roles('sales', 'sales_manager', 'boss', 'admin') // 5/15 A-2：删 'sales_director'
   @HttpCode(HttpStatus.CREATED)
   async createSelfBuilt(
     @Body()
@@ -166,7 +166,7 @@ export class CustomerController {
     const campusId = body.campusId || req.user?.campusId;
     if (!campusId) {
       throw new BadRequestException(
-        '跨校 role 必须显式传 campusId（admin/sales_director/hr 无单一 campus）',
+        '跨校 role 必须显式传 campusId（admin/hr 无单一 campus；5/15 A-2 删 sales_director）',
       );
     }
     const result = await this.repo.createWithOpportunity(body.tenantSchema, {
@@ -239,12 +239,12 @@ export class CustomerController {
 
   /**
    * 老板视角：本租户全部销售的客户（含未分配 + 各销售归属）
-   * 仅 admin（老板）/ sales_director（大区经理）/ sales_manager 可调
+   * 仅 admin（老板）/ sales_manager（销售校内主管）可调 — 5/15 A-2 删 sales_director
    * @query campusId V26 校区切换过滤
    */
   @Get('all')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'sales_director', 'sales_manager')
+  @Roles('admin', 'sales_manager') // 5/15 A-2：删 'sales_director'
   @HttpCode(HttpStatus.OK)
   async listAllForBoss(
     @Query('tenantSchema') tenantSchema: string,
@@ -263,15 +263,14 @@ export class CustomerController {
       limit: limit ? Math.min(parseInt(limit, 10), 500) : 200,
       offset: offset ? parseInt(offset, 10) : 0,
     });
-    // Sprint B.3：admin/sales_director/sales_manager 都允许调，但字段裁剪按 role
+    // Sprint B.3：admin/sales_manager 都允许调，但字段裁剪按 role
     //   - admin / boss：全字段
-    //   - sales_director / sales_manager：admin group（按 actorGroupOf 归类 sales，但
-    //     canAccessCustomer 视为「主管类」全可看，maskCustomer 内 sales 路径需配合）
-    //   - sales_manager / sales_director 走 sales path 但 isOwnerSelf=ownerUserId 自比
-    //     主管类视为 owner（拍板「老板校长 + 销售主管 ✅ 看全」）— 这里走 admin group 视为全字段
+    //   - sales_manager：admin group（按 actorGroupOf 归类 admin，全字段）
+    //     主管类视为 owner（拍板「老板校长 + 销售校内主管 ✅ 看全」）
+    //   - 5/15 A-2：删 sales_director（不在拍板角色清单）
     const ownerUserId = req?.user?.sub ?? null;
     const items_masked = items.map((c) => {
-      // sales_director / sales_manager 走 admin group 等效（拍板 KPI 主可看）
+      // sales_manager 走 admin group 等效（拍板 KPI 主可看）
       // 实际取决于 actorGroupOf；这里直接传 owner 比对，subgroup 不影响 admin/boss
       const isOwnerSelf = ownerUserId !== null && c.ownerUserId === ownerUserId;
       return maskCustomer(c, req?.user, { isOwnerSelf });

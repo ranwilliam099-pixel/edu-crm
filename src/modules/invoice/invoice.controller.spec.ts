@@ -383,6 +383,7 @@ describe('InvoiceController (Wave 4A.2-T1)', () => {
       expect(createRoles).not.toContain('academic');
       expect(createRoles).not.toContain('parent');
       expect(createRoles).not.toContain('sales_manager');
+      // 5/15 A-2：sales_director 应用层已删 → 不应在任何 @Roles 装饰器里出现
       expect(createRoles).not.toContain('sales_director');
       expect(createRoles).not.toContain('hr');
     });

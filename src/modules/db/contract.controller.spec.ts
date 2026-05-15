@@ -127,14 +127,25 @@ describe('ContractController (Sprint B.3 字段级权限)', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('sales_director 看任何合同 → 全字段（销售主管收口）', async () => {
+    // 5/15 A-2：sales_director 应用层已删（不在拍板角色清单）
+    //   - 改测 sales_manager 仍生效（销售校内主管）
+    //   - 加测 sales_director (legacy) → unknown group → canAccessContract 拒绝 → 403
+    it('sales_manager 看任何合同 → 全字段（销售校内主管收口）', async () => {
       repo.findById.mockResolvedValueOnce(contractFixture({ ownerUserId: SALES_B }));
       const r = (await controller.detail(
         CONTRACT_ID,
         TENANT_SCHEMA,
-        req(jwt('sales_director', SALES_A)),
+        req(jwt('sales_manager', SALES_A)),
       )) as Contract;
       expect(r.standardPrice).toBe(9999);
+    });
+
+    it('sales_director (legacy, 5/15 A-2 已删) → unknown group → 403 ForbiddenException', async () => {
+      // canAccessContract default 分支返 false → 抛 ForbiddenException
+      repo.findById.mockResolvedValueOnce(contractFixture({ ownerUserId: SALES_B }));
+      await expect(
+        controller.detail(CONTRACT_ID, TENANT_SCHEMA, req(jwt('sales_director' as never, SALES_A))),
+      ).rejects.toThrow(ForbiddenException);
     });
 
     it('academic → totalAmount 保留 + 价格细节全 0', async () => {
@@ -353,7 +364,7 @@ describe('ContractController (Sprint B.3 字段级权限)', () => {
       expect(repo.listByStudent).not.toHaveBeenCalled();
     });
 
-    it('sales_director 看任意学生合同 → admin group 全放行', async () => {
+    it('sales_manager 看任意学生合同 → admin group 全放行（5/15 A-2 删 sales_director）', async () => {
       mockStudent({ ownerSalesId: SALES_B });
       repo.listByStudent.mockResolvedValueOnce([contractFixture({ ownerUserId: SALES_B })]);
       const r = await controller.listByStudent(
@@ -361,9 +372,9 @@ describe('ContractController (Sprint B.3 字段级权限)', () => {
         TENANT_SCHEMA,
         undefined,
         undefined,
-        req(jwt('sales_director', SALES_A)),
+        req(jwt('sales_manager', SALES_A)),
       );
-      // sales_director 走 admin group，全字段
+      // sales_manager 走 admin group，全字段
       expect(r.items[0].totalAmount).toBe(9000);
     });
 

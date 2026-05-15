@@ -575,14 +575,17 @@ describe('TeacherShowcaseController (C.2)', () => {
       expect(r.meta.testimonials).toHaveLength(1); // 老师美化展示
     });
 
-    it('sales_director → summary 遮蔽（修 5：销售线不看老师真实 KPI，拍板美化 only）', async () => {
+    // 5/15 A-2：sales_director 应用层已删（不在拍板角色清单）
+    //   - @Roles 装饰器已删；本 unit spec 跳过 guard 直接调 controller method
+    //   - sales_director (legacy) 走 isRealAdmin/isAcademic/isSelf 全 false →
+    //     summary 走 emptySummary（与原 sales_director 实现行为一致 → 拍板「销售线
+    //     不看真实 KPI」语义保持）
+    it('sales_director (legacy, 5/15 A-2 已删) → summary 遮蔽（销售线不看真实 KPI）', async () => {
       teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
       showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
       metaRepo.getMeta.mockResolvedValueOnce(baseMeta);
-      const r = await controller.getShowcase(TEACHER_A, TENANT, mkReq('sales_director'));
-      // Sprint B.3 复审 修 5：sales_director 虽然 actorGroupOf 归 admin（customer/contract 收口），
-      //   但 teacher KPI summary 拍板「销售看 showcase = 美化数据」
-      //   → 显式遮蔽 sales_director / sales_manager 的真实 KPI
+      const r = await controller.getShowcase(TEACHER_A, TENANT, mkReq('sales_director' as never));
+      // sales_director 不属于 admin/boss/academic/self → 走 emptySummary
       expect(r.summary.totalLessons).toBe(0);
       expect(r.summary.avgStars).toBeNull();
       expect(r.summary.recommendRate).toBeNull();
@@ -592,7 +595,7 @@ describe('TeacherShowcaseController (C.2)', () => {
       expect(r.meta.avatarUrl).toBe('https://cdn.example.com/avatar.jpg');
     });
 
-    it('sales_manager → summary 遮蔽（修 5：同 sales_director，销售线不看真实 KPI）', async () => {
+    it('sales_manager → summary 遮蔽（销售校内主管不看真实 KPI；5/15 A-2 删 sales_director）', async () => {
       teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
       showcaseRepo.getSummary.mockResolvedValueOnce(baseSummary);
       metaRepo.getMeta.mockResolvedValueOnce(baseMeta);

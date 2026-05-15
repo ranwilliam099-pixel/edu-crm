@@ -47,10 +47,12 @@ export class UserService {
     if (!dto.tenantId || dto.tenantId.length !== 32) {
       throw new BadRequestException(`tenantId must be 32-char ULID`);
     }
+    // 5/15 A-2：删 sales_director（拍板权威 9 角色清单不含此岗位）
+    //   - V2 schema CHECK 仍允许 sales_director 历史值（不可逆），但应用层拒绝创建
+    //   - V2 line 41 CHECK 8 枚举 → 应用层 7 枚举（删 sales_director）
     const validRoles = [
       'sales',
       'sales_manager',
-      'sales_director',
       'marketing',
       'finance',
       'boss',
@@ -59,7 +61,7 @@ export class UserService {
     ];
     if (!validRoles.includes(dto.role)) {
       throw new BadRequestException(
-        `role must be one of ${validRoles.join('/')} (V2 schema CHECK 8 枚举)`,
+        `role must be one of ${validRoles.join('/')} (5/15 A-2 删 sales_director，应用层 7 枚举)`,
       );
     }
     if (!dto.campusId || dto.campusId.length !== 32) {
@@ -90,6 +92,7 @@ export class UserService {
    * BE-W3-1（条目 14 §B Track CODE-1）扩展范围：admin 全校区 / 普通员工部门归属
    *
    * USER-AUTH(2026-05-02 台账条目 30 + 31): 用户拍板 8 枚举 campus_scope 默认填充策略
+   * 5/15 A-2（用户口头）: 应用层删 sales_director → 7 枚举（schema V2 仍兼容历史）
    *
    * 单校区组 → [campusId]（数据权限边界 = 本人所属校区，前端可显式覆盖为多校）：
    *   - sales（销售，条目 28 已锁）
@@ -99,7 +102,6 @@ export class UserService {
    *   - finance（财务，条目 31 拍板默认单校保守）
    *
    * 跨校区组 → []（业务层权限校验对此组跳过 campus_scope 过滤，可见全租户）：
-   *   - sales_director（大区销售总监 / 跨校区管理）
    *   - admin（系统管理员 / 跨校区管理）
    *   - hr（人事 / 跨校区管理，2026-05-02 修订）
    *
@@ -122,8 +124,8 @@ export class UserService {
       case 'finance':
         return [dto.campusId];
 
-      // 跨校区组 — 空数组 + 业务层豁免（admin/sales_director/hr 跨校区管理）
-      case 'sales_director':
+      // 跨校区组 — 空数组 + 业务层豁免（admin/hr 跨校区管理）
+      // 5/15 A-2：原 sales_director 已删（不在拍板角色清单）
       case 'admin':
       case 'hr':
         return [];

@@ -149,12 +149,12 @@ export class ContractController {
 
   /**
    * 老板视角：团队业绩排行
-   * 仅 admin（老板）/ sales_director（大区经理）/ sales_manager 可调
+   * 仅 admin（老板）/ sales_manager（销售校内主管）可调 — 5/15 A-2 删 sales_director
    * @query campusId V26 校区切换过滤
    */
   @Get('team-performance')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'sales_director', 'sales_manager')
+  @Roles('admin', 'sales_manager') // 5/15 A-2：删 'sales_director'
   @HttpCode(HttpStatus.OK)
   async teamPerformance(
     @Query('tenantSchema') tenantSchema: string,
@@ -228,8 +228,8 @@ export class ContractController {
    * RBAC（Sprint B.3 复审 2026-05-11 红线 A01 收紧）：
    *   - scope filter：
    *     - admin / boss / finance / academic / academic_admin：放行
-   *     - sales / sales_manager / sales_director：student.ownerSalesId === req.user.sub 才放行
-   *       （sales_director / sales_manager 走 admin group 收口，全放行）
+   *     - sales / sales_manager：student.ownerSalesId === req.user.sub 才放行
+   *       （sales_manager 走 admin group 收口，全放行 — 5/15 A-2 删 sales_director）
    *     - teacher：student.assignedTeacherId === ownTeacherId 才放行
    *     - parent / hr：403（拍板 hr 不参与；parent 走 c 端独立 endpoint）
    *   - 失败 → ForbiddenException
@@ -359,7 +359,7 @@ export class ContractController {
     }
     const ownerUserId = req.user?.sub;
     if (!ownerUserId) throw new BadRequestException('user sub required');
-    // V26 校区归属：跨校 role（admin/sales_director）允许 body.campusId 显式传，
+    // V26 校区归属：跨校 role（admin/hr，5/15 A-2 删 sales_director）允许 body.campusId 显式传，
     // 单校 role 从 jwt.campusId 自动填，前端不需要传。
     const campusId = body.campusId || req.user?.campusId || null;
     const result = await this.repo.create(body.tenantSchema, {

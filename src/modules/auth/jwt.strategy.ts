@@ -111,8 +111,10 @@ export class JwtStrategy {
     if (!payload.tenantId || payload.tenantId.length !== 32) {
       throw new UnauthorizedException('tenant role must have 32-char tenantId');
     }
-    // V10 拍板：跨校组（admin / sales_director / hr）campusId 可空（业务上无单一校区）
-    // 单校组（含 boss 校长 / sales / sales_manager / marketing / finance）必须 32 字符
+    // V10 拍板（+ 5/15 A-2 删 sales_director）：
+    //   跨校组（admin / hr）campusId 可空（业务上无单一校区）
+    //   单校组（含 boss 校长 / sales / sales_manager / marketing / finance / teacher / academic / academic_admin）
+    //   必须 32 字符
     if (isCrossCampusRole(payload.role)) {
       if (payload.campusId !== null && payload.campusId.length !== 32) {
         throw new UnauthorizedException(

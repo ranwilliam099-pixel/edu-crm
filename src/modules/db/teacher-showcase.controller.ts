@@ -33,8 +33,8 @@ import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.int
 // Sprint B.3 (2026-05-11): showcase 双轨硬红线
 //   - summary（系统真实 KPI）→ 仅 admin/boss/academic/teacher 自己可看
 //   - meta（美化展示）→ 全角色可看（包括 sales / parent，因为是宣传卡）
-//   - sales/parent/sales_director/sales_manager 调 → summary 自动遮蔽（returnEmptySummary）
-// 注：Sprint B.3 复审 — 不再用 actorGroupOf（sales_director 归 admin group，但 KPI 拍板要求遮蔽）
+//   - sales/parent/sales_manager 调 → summary 自动遮蔽（returnEmptySummary）— 5/15 A-2 删 sales_director
+// 注：Sprint B.3 复审 — 不再用 actorGroupOf（sales_manager 归 admin group，但 KPI 拍板要求遮蔽）
 //     改用 raw role 显式判定，保持 actorGroupOf 在 customer/contract 模块的收口语义
 
 /**
@@ -106,7 +106,7 @@ export class TeacherShowcaseController {
     'boss',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   async getShowcase(
     @Param('id') teacherId: string,
@@ -156,9 +156,9 @@ export class TeacherShowcaseController {
     //   - meta 字段不限制（业务展示卡本来就是宣传）
     //
     // Sprint B.3 复审 (2026-05-11) 修 5：拍板边界 — KPI summary ≠ customer/contract
-    //   - actorGroupOf 把 sales_director/sales_manager 归 admin（customer/contract 收口拍板 ✅）
+    //   - actorGroupOf 把 sales_manager 归 admin（customer/contract 收口拍板 ✅）
     //   - 但 teacher KPI summary 拍板「销售看 showcase = 美化数据」
-    //     → sales_director / sales_manager 也走 emptySummary
+    //     → sales_manager 也走 emptySummary（5/15 A-2 删 sales_director）
     //   - 实现：显式检测 raw role 而非 group（保持 actorGroupOf 在其他模块的语义）
     const role = req?.user?.role;
     const isRealAdmin = role === 'admin' || role === 'boss';
@@ -167,8 +167,9 @@ export class TeacherShowcaseController {
       role === 'teacher' &&
       teacher.userId &&
       teacher.userId === req?.user?.sub;
-    // sales / sales_manager / sales_director / marketing / hr / finance / parent / teacher(看别人)
+    // sales / sales_manager / marketing / hr / finance / parent / teacher(看别人)
     //   → 全部走 emptySummary（销售线不看真实 KPI；拍板「美化数据 only」）
+    //   5/15 A-2 删 sales_director（落入 unknown group → 也不可见）
     const canSeeSummary = isRealAdmin || isAcademic || isSelf;
     const finalSummary: TeacherShowcaseSummary = canSeeSummary
       ? summary

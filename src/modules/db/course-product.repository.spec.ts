@@ -310,10 +310,91 @@ describe('CourseProductRepository (V29 R6)', () => {
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([{ total: '0' }]);
       await repo.findStats(TENANT, PRODUCT_ID);
-      // 4 个 query 都用相同 tenant + productId
+      // 4 个 query 都用相同 tenant + productId 作 $1
       pg.tenantQuery.mock.calls.forEach((call) => {
         expect(call[0]).toBe(TENANT);
-        expect(call[2]).toEqual([PRODUCT_ID]);
+        // 5/15 r2 A-3/A-4：unscoped 调用 params 应仅含 productId（callerOwnerSalesId/CampusId 都 null）
+        expect(call[2][0]).toBe(PRODUCT_ID);
+      });
+    });
+  });
+
+  // ============================================================
+  // 5/15 r2 A-3 / A-4：findStats 加 scope 参数
+  // ============================================================
+  describe('findStats — A-3 sales scope + A-4 campus scope', () => {
+    const SALES_A = 'salesA00000000000000000000000A01';
+    const CAMPUS_A = 'campus_A0000000000000000000000A01';
+
+    it('callerOwnerSalesId 注入 → students query 加 c.owner_user_id = $2', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ id: PRODUCT_ID, product_name: '英语' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ total: '0' }]);
+      await repo.findStats(TENANT, PRODUCT_ID, { callerOwnerSalesId: SALES_A });
+      const studentCall = pg.tenantQuery.mock.calls[1];
+      const sql = studentCall[1] as string;
+      const params = studentCall[2] as unknown[];
+      expect(sql).toMatch(/AND c\.owner_user_id = \$2/);
+      expect(params).toEqual([PRODUCT_ID, SALES_A]);
+    });
+
+    it('callerCampusId 注入 → students/teachers/consumed 全部加 campus_id = $X', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ id: PRODUCT_ID, product_name: '英语' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ total: '0' }]);
+      await repo.findStats(TENANT, PRODUCT_ID, { callerCampusId: CAMPUS_A });
+
+      // students query
+      const studentSql = pg.tenantQuery.mock.calls[1][1] as string;
+      const studentParams = pg.tenantQuery.mock.calls[1][2] as unknown[];
+      expect(studentSql).toMatch(/AND c\.campus_id = \$2/);
+      expect(studentParams).toEqual([PRODUCT_ID, CAMPUS_A]);
+
+      // teachers query
+      const teacherSql = pg.tenantQuery.mock.calls[2][1] as string;
+      const teacherParams = pg.tenantQuery.mock.calls[2][2] as unknown[];
+      expect(teacherSql).toMatch(/AND sc\.campus_id = \$2/);
+      expect(teacherParams).toEqual([PRODUCT_ID, CAMPUS_A]);
+
+      // consumed query
+      const consumedSql = pg.tenantQuery.mock.calls[3][1] as string;
+      const consumedParams = pg.tenantQuery.mock.calls[3][2] as unknown[];
+      expect(consumedSql).toMatch(/AND sc\.campus_id = \$2/);
+      expect(consumedParams).toEqual([PRODUCT_ID, CAMPUS_A]);
+    });
+
+    it('双 scope 注入 → students query 加 owner + campus 两个 filter', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ id: PRODUCT_ID, product_name: '英语' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ total: '0' }]);
+      await repo.findStats(TENANT, PRODUCT_ID, {
+        callerOwnerSalesId: SALES_A,
+        callerCampusId: CAMPUS_A,
+      });
+      const studentSql = pg.tenantQuery.mock.calls[1][1] as string;
+      const studentParams = pg.tenantQuery.mock.calls[1][2] as unknown[];
+      expect(studentSql).toMatch(/AND c\.owner_user_id = \$2/);
+      expect(studentSql).toMatch(/AND c\.campus_id = \$3/);
+      expect(studentParams).toEqual([PRODUCT_ID, SALES_A, CAMPUS_A]);
+    });
+
+    it('无 scope 注入 → 仅 productId 参数（向后兼容）', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ id: PRODUCT_ID, product_name: '英语' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ total: '0' }]);
+      await repo.findStats(TENANT, PRODUCT_ID);
+      // 默认 options 全 undefined → 全部仅含 productId 一个参数
+      pg.tenantQuery.mock.calls.forEach((call) => {
+        expect((call[2] as unknown[]).length).toBe(1);
+        expect((call[2] as unknown[])[0]).toBe(PRODUCT_ID);
       });
     });
   });

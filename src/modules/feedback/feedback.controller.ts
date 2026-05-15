@@ -346,7 +346,7 @@ export class FeedbackController {
     'boss',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
   async findFeedbackInDb(
@@ -366,7 +366,7 @@ export class FeedbackController {
     'boss',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
   async listFeedbacksByStudentInDb(

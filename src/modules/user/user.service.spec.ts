@@ -3,10 +3,14 @@
  *
  * USER-AUTH(2026-05-02 台账条目 28/30/31): 8 枚举 campus_scope 默认填充全部由用户拍板锁定
  *   - 单校区组（sales / sales_manager / boss / marketing / finance）→ [campusId]
- *   - 跨校区组（sales_director / admin / hr）→ []（业务层豁免）
+ *   - 跨校区组（admin / hr）→ []（业务层豁免）— 5/15 A-2 删 sales_director
  *   - 条目 31 修订：marketing / finance 从 throw 改为单校默认；显式 campusScope 仍优先
  *
  * teacher 走独立 teachers 表（条目 29 方向 B），不在本 service
+ *
+ * 5/15 A-2 拍板：sales_director 应用层取消（不在拍板权威 9 角色清单）
+ *   - validRoles 删 → 创建时 BadRequestException
+ *   - 加测拒绝路径
  */
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
@@ -58,8 +62,8 @@ describe('UserService', () => {
     });
   });
 
-  describe('createUser - 跨校区组 → []（USER-AUTH 条目 30 用户拍板）', () => {
-    const crossCampusRoles = ['sales_director', 'admin', 'hr'] as const;
+  describe('createUser - 跨校区组 → []（USER-AUTH 条目 30 用户拍板；5/15 A-2 删 sales_director）', () => {
+    const crossCampusRoles = ['admin', 'hr'] as const;
 
     crossCampusRoles.forEach((role) => {
       it(`role=${role} 不传 campusScope → 默认 []（业务层豁免，跨校区管理）`, () => {
@@ -72,6 +76,17 @@ describe('UserService', () => {
         const result = service.createUser(dto);
         expect(result.campusScope).toEqual([]);
       });
+    });
+
+    // 5/15 A-2：sales_director 应用层取消（不在拍板权威 9 角色清单）
+    it('role=sales_director (5/15 A-2 已删) → BadRequestException（不在 validRoles）', () => {
+      const dto = {
+        id: ULID32_A,
+        tenantId: ULID32_B,
+        role: 'sales_director' as never,
+        campusId: ULID32_C,
+      };
+      expect(() => service.createUser(dto)).toThrow(BadRequestException);
     });
 
     it('admin 显式传 campusScope → 按显式值（特定 admin 限制场景）', () => {

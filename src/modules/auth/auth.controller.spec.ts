@@ -135,14 +135,17 @@ describe('AuthController - 登录接口 + Sprint E.1 logout', () => {
       ).toThrow(/cross-campus.*null.*32-char/);
     });
 
-    it('sales_director (跨校 / 大区经理) 不传 campusId → 接受', () => {
-      const result = controller.login({
-        phone: '13800001111',
-        tenantId: ULID32_T,
-        role: 'sales_director',
-        userId: ULID32,
-      });
-      expect(result.payload.campusId).toBeNull();
+    // 5/15 A-2：sales_director 应用层已删（不在拍板权威 9 角色清单）
+    //   - login validRoles 删 sales_director → BadRequestException(role must be one of ...)
+    it('sales_director (5/15 A-2 已删) → BadRequestException（不在 validRoles）', () => {
+      expect(() =>
+        controller.login({
+          phone: '13800001111',
+          tenantId: ULID32_T,
+          role: 'sales_director',
+          userId: ULID32,
+        }),
+      ).toThrow(BadRequestException);
     });
 
     it('hr (跨校) 不传 campusId → 接受', () => {

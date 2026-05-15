@@ -575,17 +575,19 @@ describe('RecurringScheduleController — Wave 11 academic 唯一', () => {
       ).rejects.toThrow(/ONLY_ACADEMIC/);
     });
 
-    it('JWT role=sales_director → 403 ONLY_ACADEMIC', async () => {
+    // 5/15 A-2：sales_director 应用层已删（不在拍板 9 角色清单）
+    //   原意是测「非 academic role → 403」语义；改用 sales_manager 等效测试
+    it('JWT role=sales_manager → 403 ONLY_ACADEMIC', async () => {
       await expect(
         controller.archiveRecurring(
           REC_ID,
           { recurring: dummyRecurring, tenantSchema: TENANT },
           mkReq({
             user: {
-              sub: 'sd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx1',
-              role: 'sales_director',
+              sub: 'sm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+              role: 'sales_manager',
               tenantId: 'tenant-x',
-              campusId: null,
+              campusId: CAMPUS_X,
             },
           }),
         ),

@@ -120,11 +120,16 @@ describe('actorGroupOf', () => {
     expect(actorGroupOf('boss')).toBe('admin');
   });
 
-  it('sales_manager / sales_director → admin group（销售主管收口）', () => {
-    // 拍板：sales_director 大区经理收口；sales_manager 校内主管
-    // 字段权限与 admin / boss 一致（跨销售可看全部）
+  it('sales_manager → admin group（销售校内主管收口）', () => {
+    // 拍板：sales_manager 校内主管字段权限与 admin / boss 一致（跨销售可看全部）
     expect(actorGroupOf('sales_manager')).toBe('admin');
-    expect(actorGroupOf('sales_director')).toBe('admin');
+  });
+
+  it('sales_director (legacy, 5/15 A-2 已删) → unknown group（保守安全）', () => {
+    // 5/15 A-2：sales_director 不在拍板权威 9 角色清单（fields-by-role.md L6-17）
+    //   - actorGroupOf switch 不再含 sales_director case → 落 default → unknown
+    //   - 历史 JWT 含此 role（不应发生）或字符串透传时：全字段 mask（兜底安全）
+    expect(actorGroupOf('sales_director' as never)).toBe('unknown');
   });
 
   it('sales/marketing → sales group（个人销售视角）', () => {
@@ -476,9 +481,13 @@ describe('canAccessCustomer', () => {
     expect(canAccessCustomer({ ownerUserId: null }, jwt('sales', USER_OTHER))).toBe(true);
   });
 
-  it('sales_director / sales_manager → 全部可看', () => {
-    expect(canAccessCustomer(c, jwt('sales_director', USER_OTHER))).toBe(true);
+  it('sales_manager → 全部可看（销售校内主管收口）', () => {
     expect(canAccessCustomer(c, jwt('sales_manager', USER_OTHER))).toBe(true);
+  });
+
+  it('sales_director (legacy, 5/15 A-2 已删) → 拒绝（unknown group 默认拒绝）', () => {
+    // 5/15 A-2：actorGroupOf 不识别 sales_director → unknown → canAccessCustomer 兜底返 false
+    expect(canAccessCustomer(c, jwt('sales_director' as never, USER_OTHER))).toBe(false);
   });
 
   it('academic → 全部可看（campus 校验在 controller）', () => {
@@ -522,9 +531,12 @@ describe('canAccessContract', () => {
     expect(canAccessContract(c, jwt('sales', USER_OTHER))).toBe(false);
   });
 
-  it('sales_director / sales_manager → 全部可看（销售主管收口）', () => {
-    expect(canAccessContract(c, jwt('sales_director', USER_OTHER))).toBe(true);
+  it('sales_manager → 全部可看（销售校内主管收口）', () => {
     expect(canAccessContract(c, jwt('sales_manager', USER_OTHER))).toBe(true);
+  });
+
+  it('sales_director (legacy, 5/15 A-2 已删) → 拒绝（unknown group 兜底）', () => {
+    expect(canAccessContract(c, jwt('sales_director' as never, USER_OTHER))).toBe(false);
   });
 
   it('teacher → 可看（学生关系在 controller 校验）', () => {
@@ -571,9 +583,12 @@ describe('canAccessStudent', () => {
     expect(canAccessStudent(s, jwt('teacher'))).toBe(false);
   });
 
-  it('sales_director / sales_manager → 全部可看（销售主管收口）', () => {
-    expect(canAccessStudent(s, jwt('sales_director', USER_OTHER))).toBe(true);
+  it('sales_manager → 全部可看（销售校内主管收口）', () => {
     expect(canAccessStudent(s, jwt('sales_manager', USER_OTHER))).toBe(true);
+  });
+
+  it('sales_director (legacy, 5/15 A-2 已删) → 拒绝（unknown group 兜底）', () => {
+    expect(canAccessStudent(s, jwt('sales_director' as never, USER_OTHER))).toBe(false);
   });
 
   it('academic → 全部可看', () => {

@@ -5,7 +5,7 @@
  *   - POST /db/students/list：scope filter
  *     - sales（个人）→ ownerSalesId 强制 = req.user.sub
  *     - teacher → assignedTeacherId 强制 = ownTeacherId（反查 teachers.user_id）
- *     - admin/boss/academic/sales_manager/sales_director → 按 body 传
+ *     - admin/boss/academic/sales_manager → 按 body 传（5/15 A-2 删 sales_director）
  *
  * 红线（fields-by-role.md #1）：
  *   - 销售只看 owner=me 学生（拍板「sales ✅ 自己客户」）
@@ -170,16 +170,22 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
       });
     });
 
-    it('sales_director → admin group 不强制覆盖（跨销售可看）', async () => {
+    // 5/15 A-2：sales_director 应用层已删 → actorGroupOf 落 unknown group
+    //   - listAll 走 controller scope filter，unknown group 不属于 sales 也不属于 admin
+    //   - 不强制覆盖 ownerSalesId（与 admin/sales_manager 等同 — 不走 sales 强制 path）
+    //   - 但 @Roles 装饰器已删 sales_director → RbacGuard 实际会拦截；本 unit spec
+    //     直接 new controller 跳过 guard，仅验证 controller method 内 scope filter 不强制覆盖
+    it('sales_director (legacy, 5/15 A-2 已删) → 不属于 sales group，不强制覆盖 ownerSalesId', async () => {
       repo.listAll.mockResolvedValueOnce([studentBriefFixture()]);
       await controller.listAll(
         { tenantSchema: TENANT_SCHEMA, ownerSalesId: SALES_B },
-        req(jwt('sales_director', SALES_A)),
+        req(jwt('sales_director' as never, SALES_A)),
       );
+      // sales_director 落入 unknown group，scope filter 不强制覆盖（与 admin 等同）
       expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
         limit: 100,
         offset: 0,
-        ownerSalesId: SALES_B, // sales_director 是 admin group，不覆盖
+        ownerSalesId: SALES_B,
         assignedTeacherId: undefined,
       });
     });

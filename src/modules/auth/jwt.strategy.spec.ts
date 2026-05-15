@@ -85,15 +85,19 @@ describe('JwtStrategy (W1 BE-W1-3 real + Sprint E.1 async + jti blacklist)', () 
       expect(result.campusId).toBeNull();
     });
 
-    it('accepts sales_director (大区经理 / cross-campus) with campusId=null', async () => {
+    // 5/15 A-2：sales_director 应用层已删（jwt.strategy CROSS_CAMPUS_ROLES 删此值）
+    //   - 旧 token 签发 role='sales_director' + campusId=null：
+    //     parse 时 isCrossCampusRole('sales_director') === false（不在 CROSS_CAMPUS_ROLES 列表）
+    //     → 走 single-campus 分支 → campusId=null 抛 single-campus.*sales_director.*campusId
+    //   - 验证拒绝路径生效（5/15 A-2 红线 — 历史 sales_director token 不再被识别为跨校）
+    it('rejects sales_director (legacy 5/15 A-2 已删) with campusId=null — 不再识别跨校', async () => {
       const token = jwt.sign({
         sub: ULID_32,
         tenantId: ULID_32_B,
-        role: 'sales_director',
+        role: 'sales_director', // 历史 schema 允许，但应用层 jwt parse 不再识别
         campusId: null,
       });
-      const result = await strategy.parse(token);
-      expect(result.campusId).toBeNull();
+      await expect(strategy.parse(token)).rejects.toThrow(/single-campus.*sales_director.*campusId/);
     });
 
     it('accepts hr (cross-campus) with campusId=null', async () => {

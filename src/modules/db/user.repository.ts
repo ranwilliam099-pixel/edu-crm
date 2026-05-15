@@ -28,8 +28,11 @@ export interface User {
   updatedAt: string;
 }
 
+// 5/15 A-2 拍板：应用层 7 枚举（删 sales_director — 不在拍板权威角色清单）
+//   注：V2 schema CHECK 仍 8 枚举（保留历史兼容），本地 TenantRole 仅用于应用层校验
+//   findTransferTarget 仍保留 sales_director 分支以处理历史 row（如真有此类用户离职）
 export type TenantRole =
-  | 'sales' | 'sales_manager' | 'sales_director'
+  | 'sales' | 'sales_manager'
   | 'marketing' | 'finance' | 'boss' | 'admin' | 'hr';
 
 export interface InactiveWithPending {
@@ -58,7 +61,8 @@ export interface HandoverResult {
   reason: '校长再分配' | '主动认领';
 }
 
-const CROSS_CAMPUS_ROLES: ReadonlyArray<TenantRole> = ['admin', 'sales_director', 'hr'];
+// 5/15 A-2：删 'sales_director'（与 jwt-payload.interface.ts CROSS_CAMPUS_ROLES 对齐）
+const CROSS_CAMPUS_ROLES: ReadonlyArray<TenantRole> = ['admin', 'hr'];
 
 function isCrossCampus(role: TenantRole): boolean {
   return (CROSS_CAMPUS_ROLES as readonly string[]).includes(role);
@@ -104,8 +108,9 @@ function assertCanDeactivate(
       return;
     }
     case 'hr': {
+      // 5/15 A-2：allowedTargets 删 sales_director
       const allowedTargets: TenantRole[] = [
-        'sales', 'sales_manager', 'sales_director',
+        'sales', 'sales_manager',
         'marketing', 'finance', 'boss',
       ];
       if (!allowedTargets.includes(target.role)) {
@@ -250,9 +255,13 @@ export class UserRepository {
    *
    * 1. 单校 role（sales/sales_manager/marketing/finance）→ 同 campus 的 active boss
    * 2. boss 离职                                         → 该租户任一 active admin
-   * 3. 跨校 role 离职 (sales_director / hr)              → 该租户任一 active admin
+   * 3. 跨校 role 离职 (hr / 历史 sales_director)         → 该租户任一 active admin
    * 4. admin 离职                                        → 该租户任一 active boss
    * 5. 全部分支兜底找不到 → null（owner 改 NULL，前端展示「待校长认领」）
+   *
+   * 5/15 A-2 历史兼容：分支 3 保留 `sales_director` 字符串比对（leaver.role 来自 DB 行，
+   *   V2 schema CHECK 仍允许 sales_director 历史值；如生产真有此类用户被标记离职，仍能
+   *   正确转交给 admin）。TenantRole TS 类型已删 sales_director，故用字符串比对 + 注释说明。
    */
   async findTransferTarget(
     tenantSchema: string,
@@ -276,8 +285,13 @@ export class UserRepository {
       // 同校区无 boss → 走兜底（admin）
     }
 
-    // 分支 2/3：boss 离职 / 跨校 role (sales_director, hr) 离职 → 任一 admin
-    if (leaver.role === 'boss' || leaver.role === 'sales_director' || leaver.role === 'hr') {
+    // 分支 2/3：boss 离职 / 跨校 role (hr / 历史 sales_director) 离职 → 任一 admin
+    //   5/15 A-2：sales_director 应用层已删，但 schema 历史数据可能仍存在 → 字符串比对兜底
+    if (
+      leaver.role === 'boss' ||
+      (leaver.role as string) === 'sales_director' ||
+      leaver.role === 'hr'
+    ) {
       const rows = await this.pg.tenantQuery<PgRow>(
         tenantSchema,
         `SELECT * FROM users

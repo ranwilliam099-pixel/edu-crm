@@ -200,8 +200,8 @@ export class AssessmentController {
   }
 
   /**
-   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
-   *   - teacher / academic / academic_admin / admin / boss / sales / sales_manager / sales_director
+   * Sprint B RBAC (2026-05-11 复审补): 7 role 读（5/15 A-2 删 sales_director）
+   *   - teacher / academic / academic_admin / admin / boss / sales / sales_manager
    */
   @Post('db/:id/results/list')
   @UseGuards(TenantScopeGuard, RbacGuard)
@@ -213,7 +213,7 @@ export class AssessmentController {
     'boss',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
   async listResultsByAssessmentInDb(
@@ -224,7 +224,7 @@ export class AssessmentController {
   }
 
   /**
-   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
+   * Sprint B RBAC (2026-05-11 复审补): 7 role 读（5/15 A-2 删 sales_director）
    */
   @Post('db/teachers/:teacherId/list')
   @UseGuards(TenantScopeGuard, RbacGuard)
@@ -236,7 +236,7 @@ export class AssessmentController {
     'boss',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
   async listByTeacherInDb(
@@ -247,7 +247,7 @@ export class AssessmentController {
   }
 
   /**
-   * Sprint B RBAC (2026-05-11 复审补): 8 role 读
+   * Sprint B RBAC (2026-05-11 复审补): 7 role 读（5/15 A-2 删 sales_director）
    *   - 注：家长 c 端不走此 endpoint，走专门 c 端 path（待 Sprint D 拆分）
    */
   @Post('db/students/:studentId/results')
@@ -260,7 +260,7 @@ export class AssessmentController {
     'boss',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
   async listResultsByStudentInDb(

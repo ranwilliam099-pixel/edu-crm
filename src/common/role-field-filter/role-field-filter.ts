@@ -47,16 +47,21 @@ import { Teacher } from '../../modules/teacher/teacher.service';
 
 /**
  * 角色判定（business validator 用 group 而不是单个 role 减少重复）
+ *
+ * 5/15 A-2 拍板：删 sales_director（不在 fields-by-role.md L6-17 角色清单）
+ *   - 原归类 sales_director → admin group（KPI 主可看）已删
+ *   - 仍保留 sales_manager → admin group（拍板「销售校内主管收口」）
+ *   - 字符串 'sales_director' 如出现 → 落入 default → unknown group（全字段 mask）
  */
 export type ActorGroup =
-  | 'admin' // admin / boss = 老板校长（拍板 ✅ 全权）
-  | 'sales' // sales / sales_manager / sales_director = 销售线
+  | 'admin' // admin / boss / sales_manager = 老板/校长/销售校内主管（拍板 ✅ 全权）
+  | 'sales' // sales / marketing = 个人销售线
   | 'academic' // academic / academic_admin = 教务双层
   | 'teacher' // teacher = 老师本人
   | 'finance' // finance = 财务
   | 'hr' // hr = 人事
   | 'parent' // parent = 家长 C 端（独立 JWT 流；本 helper 默认拒绝任何 B 端字段）
-  | 'unknown'; // 兜底（未识别 → 等同 parent 最小集）
+  | 'unknown'; // 兜底（未识别 → 等同 parent 最小集；含 5/15 删的 sales_director）
 
 export function actorGroupOf(role: TenantRole | string | undefined | null): ActorGroup {
   switch (role) {
@@ -67,10 +72,8 @@ export function actorGroupOf(role: TenantRole | string | undefined | null): Acto
     case 'marketing':
       return 'sales';
     case 'sales_manager':
-    case 'sales_director':
-      // 销售主管类：业务上等同于「跨销售看全部」的 admin 类（拍板 KPI 主可看，
-      // 5/9 拍板 sales_director 大区经理收口；sales_manager 校内主管）
-      // 字段权限和 admin/boss 一致：所有客户/合同/学生的 PII 都可见
+      // 5/15 A-2：sales_manager 仍归 admin group（拍板「销售校内主管」字段全可看）
+      //   原 sales_director 同组并列已删 — fields-by-role.md 角色清单不含此岗位
       return 'admin';
     case 'academic':
     case 'academic_admin':
@@ -84,6 +87,8 @@ export function actorGroupOf(role: TenantRole | string | undefined | null): Acto
     case 'parent':
       return 'parent';
     default:
+      // 5/15 A-2：'sales_director' 字符串如来自 JWT（不应该发生 — login validRoles 已删）
+      //   或来自历史 schema row → 落入 unknown，全字段 mask（保守安全）
       return 'unknown';
   }
 }
@@ -359,9 +364,11 @@ export function maskContract<T extends Contract>(
 // ============================================================
 
 /**
- * 判定 sales 是否可看某客户（owner_user_id === me 或 admin/boss/sales_director）
+ * 判定 sales 是否可看某客户（owner_user_id === me 或 admin/boss/sales_manager）
  *
  * 用于 controller 层 detail / list 路径的访问决策（先 scope filter，再 field filter）
+ *
+ * 5/15 A-2：actorGroupOf 已删 sales_director → admin group 内仅含 admin/boss/sales_manager
  *
  * @returns true 允许访问；false 拒绝（controller 抛 403 / 返 {found:false}）
  */
@@ -374,7 +381,8 @@ export function canAccessCustomer(
 
   switch (group) {
     case 'admin':
-      // 老板校长 / sales_director / sales_manager（销售主管收口）：全部可看
+      // 老板校长 / sales_manager（销售主管收口）：全部可看
+      // 5/15 A-2 删 sales_director（不在拍板角色清单）
       return true;
     case 'sales':
       // 销售（sales / marketing）：仅看 owner=me 或公共池
@@ -414,7 +422,7 @@ export function canAccessContract(
   switch (group) {
     case 'admin':
     case 'finance':
-      // admin 含 sales_manager / sales_director（销售主管收口）
+      // admin 含 sales_manager（销售主管收口）— 5/15 A-2 删 sales_director
       return true;
     case 'sales':
       // 个人销售：仅自己签约的合同
@@ -449,7 +457,7 @@ export function canAccessStudent(
 
   switch (group) {
     case 'admin':
-      // admin / boss / sales_director / sales_manager
+      // admin / boss / sales_manager — 5/15 A-2 删 sales_director
       return true;
     case 'sales':
       // 个人销售：仅 owner_sales_id=me

@@ -20,7 +20,7 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 // Sprint B.3 (2026-05-11): student 范围过滤
 //   - sales 只看 owner_sales_id=me
 //   - teacher 只看 assigned_teacher_id=ownTeacherId（OOUX 主带）
-//   - admin / boss / academic / sales_manager / sales_director：全部
+//   - admin / boss / academic / sales_manager：全部（5/15 A-2 删 sales_director）
 // 注：student 现 schema 无 phone/家庭住址等 PII（仅 brief 字段），不做字段 mask
 import { actorGroupOf } from '../../common/role-field-filter';
 import { TeacherRepository } from './teacher.repository';
@@ -118,11 +118,11 @@ export class StudentController {
    *   gradeOrAge / intendedSubject / schoolName / gender / assignedTeacherId — 可选
    *   ownerSalesId 自动 = req.user.sub（销售自己创建归自己）
    *
-   * RBAC：sales / sales_manager / sales_director / boss / admin
+   * RBAC：sales / sales_manager / boss / admin（5/15 A-2 删 sales_director）
    */
   @Post()
   @UseGuards(RbacGuard)
-  @Roles('sales', 'sales_manager', 'sales_director', 'boss', 'admin')
+  @Roles('sales', 'sales_manager', 'boss', 'admin')
   @HttpCode(HttpStatus.CREATED)
   async create(
     @Body()
@@ -185,7 +185,7 @@ export class StudentController {
    *
    * RBAC（Sprint B.3 复审 2026-05-11 红线 A01 收紧）：
    *   - teacher / admin / boss / academic / academic_admin /
-   *     sales / sales_manager / sales_director 8 role 读权限
+   *     sales / sales_manager 7 role 读权限（5/15 A-2 删 sales_director）
    *   - 拍板「sales 看老师推荐」需可看主带学生列表
    *   - finance / hr / parent 不该看（教学线对象，不参与作账/HR）
    *
@@ -205,7 +205,7 @@ export class StudentController {
     'academic_admin',
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
   async listByTeacher(
@@ -248,7 +248,7 @@ export class StudentController {
   @Roles(
     'sales',
     'sales_manager',
-    'sales_director',
+    // 5/15 A-2：删 'sales_director'
     'boss',
     'admin',
     'hr',
@@ -273,7 +273,8 @@ export class StudentController {
     // Sprint B.3：范围过滤
     //   - sales（个人）：强制 ownerSalesId = req.user.sub（即便 body 传别人也覆盖）
     //   - teacher：强制 assignedTeacherId = ownTeacherId（反查 teachers.user_id）
-    //   - admin / boss / academic / sales_manager / sales_director / hr：按 body 传的过滤（或全部）
+    //   - admin / boss / academic / sales_manager / hr：按 body 传的过滤（或全部）
+    //     5/15 A-2 删 sales_director
     let ownerSalesId = body.ownerSalesId;
     let assignedTeacherId = body.assignedTeacherId;
     const group = actorGroupOf(req.user?.role);
@@ -316,12 +317,12 @@ export class StudentController {
    *   lessonHours / standardPrice / totalAmount
    *   opportunityId / campusId / classType / discountAmount / giftHours / orderType / signedAt / note 可选
    *
-   * RBAC：sales / sales_manager / sales_director / boss / admin（拍板「销售签约」）
+   * RBAC：sales / sales_manager / boss / admin（拍板「销售签约」）— 5/15 A-2 删 sales_director
    * ownerUserId 自动 = req.user.sub（签约归签约销售）
    */
   @Post(':id/contracts')
   @UseGuards(RbacGuard)
-  @Roles('sales', 'sales_manager', 'sales_director', 'boss', 'admin')
+  @Roles('sales', 'sales_manager', 'boss', 'admin')
   @HttpCode(HttpStatus.CREATED)
   async createContract(
     @Param('id') studentId: string,
@@ -360,7 +361,7 @@ export class StudentController {
     }
     const ownerUserId = req.user?.sub;
     if (!ownerUserId) throw new BadRequestException('user sub required');
-    // V26 校区归属：跨校 role（admin/sales_director）允许 body.campusId 显式传，
+    // V26 校区归属：跨校 role（admin/hr，5/15 A-2 删 sales_director）允许 body.campusId 显式传，
     // 单校 role 从 jwt.campusId 自动填
     const campusId = body.campusId || req.user?.campusId || null;
     const result = await this.contractRepo.create(body.tenantSchema, {
@@ -418,7 +419,7 @@ export class StudentController {
 
   @Post(':id/transfer-sales')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss', 'sales', 'sales_manager', 'sales_director')
+  @Roles('admin', 'boss', 'sales', 'sales_manager') // 5/15 A-2：删 'sales_director'
   @HttpCode(HttpStatus.OK)
   async transferSales(
     @Param('id') id: string,

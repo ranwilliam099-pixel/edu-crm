@@ -30,7 +30,7 @@ import { ActorRole, AuditLogRepository } from '../db/audit-log.repository';
  *
  * RBAC（按 V2 8 枚举）：
  *   - 创建/状态变更：admin / boss / hr（管理类）
- *   - 查询：admin / boss / hr / sales_manager / sales_director（管理可视）
+ *   - 查询：admin / boss / hr / sales_manager（管理可视） — 5/15 A-2 删 sales_director
  *
  * Sprint B (2026-05-11) 深度防御：
  *   - class-level @UseGuards(TenantScopeGuard) — 兜底所有 endpoint 跨租户校验
@@ -186,7 +186,7 @@ export class TeacherController {
    */
   @Post('db/list')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss', 'hr', 'sales_manager', 'sales_director')
+  @Roles('admin', 'boss', 'hr', 'sales_manager') // 5/15 A-2：删 'sales_director'
   @HttpCode(HttpStatus.OK)
   async listFromDb(@Body() body: { tenantSchema: string }): Promise<Teacher[]> {
     return this.service.listFromDb(body.tenantSchema);

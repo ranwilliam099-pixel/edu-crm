@@ -215,10 +215,32 @@ export class CourseProductRepository {
    *
    * @returns null = product 不存在；否则 CourseProductStats（含 students/teachers 数组）
    */
+  /**
+   * 5/15 r2 拍板：findStats 加 RBAC scope 参数（A-3 sales filter + A-4 campus filter）
+   *
+   * 来源：用户 2026-05-15「sales 角色调 stats 时仅返回自己客户的学员；boss/academic
+   *   多校区时仅看本校 course-product 聚合」(fields-by-role.md L285「校长 ✅ 本校」)
+   *
+   * 参数（均可选 — admin/boss 不传则看全部）：
+   *   - callerOwnerSalesId: 限制 students[] 列表为 contract.owner_user_id = $X 的学员
+   *     - sales 角色 controller 强制传 jwt.sub（防伪造他人）
+   *     - admin/boss/academic 不传 → 看全部
+   *   - callerCampusId: 限制 contracts/schedules/consumptions 校区 = $X（OR campus_id IS NULL 兜底）
+   *     - boss/academic 多校 controller 传 jwt.campusId
+   *     - admin 不传 → 看全部
+   *     - 注：course_products 表是机构标准库（无 campus_id），过滤发生在 contract/schedule 层
+   */
   async findStats(
     tenantSchema: string,
     productId: string,
+    options: {
+      callerOwnerSalesId?: string | null;
+      callerCampusId?: string | null;
+    } = {},
   ): Promise<CourseProductStats | null> {
+    const callerOwnerSalesId = options.callerOwnerSalesId ?? null;
+    const callerCampusId = options.callerCampusId ?? null;
+
     // 1. 校验 product 存在 + 拿 name
     const productRows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
@@ -231,6 +253,25 @@ export class CourseProductRepository {
     // 2. students[]：合同 active + pending 视为在册
     //    LEFT JOIN student_course_packages 求 remaining_lessons（同 course_product_id 关联），
     //    一个学员同 product 多个 contract 可能多个 package，全部累加
+    //
+    // 5/15 r2 A-3 sales scope：callerOwnerSalesId IS NOT NULL → contract.owner_user_id = $X
+    //   仅返回此 sales 自己签约的学员（防 sales 看到他校/他人客户）
+    //
+    // 5/15 r2 A-4 campus scope：callerCampusId IS NOT NULL → contract.campus_id = $X
+    //   仅返回本校签约的学员（boss/academic 多校）
+    //   注：contract.campus_id 可能 NULL（V26 之前老合同）→ 用 IS NOT DISTINCT 兜底太宽松，
+    //   保守要求严格匹配（NULL 校区合同视为「未指定」不计入 boss 本校 view，由 admin/平台清理）
+    const studentParams: unknown[] = [productId];
+    let studentScopeSql = '';
+    if (callerOwnerSalesId) {
+      studentParams.push(callerOwnerSalesId);
+      studentScopeSql += ` AND c.owner_user_id = $${studentParams.length}`;
+    }
+    if (callerCampusId) {
+      studentParams.push(callerCampusId);
+      studentScopeSql += ` AND c.campus_id = $${studentParams.length}`;
+    }
+
     const studentRows = await this.pg.tenantQuery<{
       id: string;
       student_name: string;
@@ -266,11 +307,11 @@ export class CourseProductRepository {
           WHERE c.student_id = s.id
             AND c.course_product_id = $1
             AND c.deleted_at IS NULL
-            AND c.status IN ('active','pending')
+            AND c.status IN ('active','pending')${studentScopeSql}
        )
        ORDER BY s.created_at DESC
        LIMIT 500`,
-      [productId],
+      studentParams,
     );
 
     const students: CourseProductStatsStudent[] = studentRows.map((r) => ({
@@ -282,6 +323,22 @@ export class CourseProductRepository {
 
     // 3. teachers[]：本周此 product 实际排课的老师（仅 status='在职'）
     //    GROUP BY teacher_id 聚合 weeklyLessonCount
+    //
+    // 5/15 r2 A-4 campus scope：sc.campus_id = callerCampusId（boss/academic 多校时）
+    //   注：schedules.campus_id 是 V8 已有字段（V8 schema_template），单校 role 总传
+    //
+    // 5/15 r2 A-3 sales scope：sales 角色不调 boss/products/detail 不走 stats
+    //   （fields-by-role.md L261「老板 ✅ / 校长 ✅ 本校 / 教务 👁」无 sales 视角）
+    //   但 controller 层加 sales → 自动按学员所属 contract.owner_user_id 过滤
+    //   teacher list 不强制按 sales 过滤（学员可能由其他销售签约共享同一老师）
+    //   仅 callerCampusId 影响 teachers list
+    const teacherParams: unknown[] = [productId];
+    let teacherScopeSql = '';
+    if (callerCampusId) {
+      teacherParams.push(callerCampusId);
+      teacherScopeSql += ` AND sc.campus_id = $${teacherParams.length}`;
+    }
+
     const teacherRows = await this.pg.tenantQuery<{
       id: string;
       user_id: string | null;
@@ -299,11 +356,11 @@ export class CourseProductRepository {
        WHERE sc.course_product_id = $1
          AND sc.start_at >= date_trunc('week', NOW())
          AND sc.status IN ('已排课','已完成','缺席')
-         AND t.status = '在职'
+         AND t.status = '在职'${teacherScopeSql}
        GROUP BY t.id, t.user_id, t.name
        ORDER BY weekly_lesson_count DESC, t.name ASC
        LIMIT 200`,
-      [productId],
+      teacherParams,
     );
 
     const teachers: CourseProductStatsTeacher[] = teacherRows.map((r) => ({
@@ -317,6 +374,15 @@ export class CourseProductRepository {
     //    course_consumptions JOIN schedules WHERE schedules.course_product_id = $1
     //    本周 = consumption 对应 schedule.start_at >= date_trunc('week', NOW())
     //    status IN ('confirmed', 'locked')：confirmed=老师已填反馈；locked=24h 锁
+    //
+    // 5/15 r2 A-4 campus scope：sc.campus_id = callerCampusId（同 teachers query）
+    const consumedParams: unknown[] = [productId];
+    let consumedScopeSql = '';
+    if (callerCampusId) {
+      consumedParams.push(callerCampusId);
+      consumedScopeSql += ` AND sc.campus_id = $${consumedParams.length}`;
+    }
+
     const consumedRows = await this.pg.tenantQuery<{ total: string }>(
       tenantSchema,
       `SELECT COALESCE(SUM(cc.amount_yuan), 0) AS total
@@ -324,8 +390,8 @@ export class CourseProductRepository {
          JOIN schedules sc ON sc.id = cc.schedule_id
         WHERE sc.course_product_id = $1
           AND sc.start_at >= date_trunc('week', NOW())
-          AND cc.status IN ('confirmed','locked')`,
-      [productId],
+          AND cc.status IN ('confirmed','locked')${consumedScopeSql}`,
+      consumedParams,
     );
     const weeklyConsumedYuan = Number(consumedRows[0]?.total ?? 0) || 0;
 

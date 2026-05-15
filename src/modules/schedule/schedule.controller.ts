@@ -433,8 +433,8 @@ export class ScheduleController {
    *     老校 ✅」— read 路径合法角色 = {teacher, sales, academic, boss, admin}
    *   - 写路径（create/cancel/complete/attendance）已收紧为仅 academic（Wave 11 fix）
    *   - 本 endpoint 是 read，不在 Wave 11 写路径反向修复范围
-   *   - 仍保留 trust boundary：parent / finance / hr / marketing / sales_manager /
-   *     sales_director 不应调用此 read（不在拍板矩阵 read scope 内）
+   *   - 仍保留 trust boundary：parent / finance / hr / marketing / sales_manager
+   *     不应调用此 read（不在拍板矩阵 read scope 内）— 5/15 A-2 删 sales_director
    *   - teacher self-only 反查 / sales ownership 校验留 Sprint X backlog（service 层）
    *
    * Sprint E backlog #3: read-only 不补 audit_log（本拍板范围仅写操作）
@@ -574,7 +574,7 @@ export class ScheduleController {
    *   - read 路径 = 拍板 L201 read scope: {teacher 自己课, sales 自己客户孩子,
    *     academic 创建+看, boss 看, admin 看（拍板 admin 跨校全字段）}
    *   - 不在 read scope: parent（C 端独立 endpoint）/ finance / hr / marketing /
-   *     sales_manager / sales_director / academic_admin
+   *     sales_manager / academic_admin（5/15 A-2 删 sales_director）
    *
    * ⚠ scope 内细化（teacher self-only / sales ownership）留 Sprint X backlog
    */
