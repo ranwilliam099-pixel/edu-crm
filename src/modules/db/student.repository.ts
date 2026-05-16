@@ -1,5 +1,7 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Optional, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PgPoolService, PgRow } from './pg-pool.service';
+import { AuditLogRepository, normalizeActorRole } from './audit-log.repository';
+import { ParentRepository } from './parent.repository';
 
 /**
  * StudentRepository — V28 学生归属字段读写 + 单条学生归属转移
@@ -11,6 +13,11 @@ import { PgPoolService, PgRow } from './pg-pool.service';
  *   assigned_teacher_id   主带老师（FK teachers）
  *   owner_changed_at      最近一次归属变更时间
  *   owner_change_reason   变更原因（'老师手动转交' / '销售手动转交' / '老师归档' / ...）
+ *
+ * V44 软删除（2026-05-16 T12）：
+ *   deleted_at TIMESTAMPTZ NULL — NULL=active；NOT NULL=已软删
+ *   所有 SELECT 默认加 WHERE s.deleted_at IS NULL（排除已删学员）
+ *   softDelete(id, operator) 事务内 UPDATE deleted_at=NOW() + 联动 binding 解绑 + audit_log
  */
 
 export interface StudentBrief {
@@ -36,9 +43,22 @@ export interface StudentTransferResult {
   reason: string;
 }
 
+/**
+ * V44 软删除结果（softDelete 返回值）
+ */
+export interface StudentSoftDeleteResult {
+  studentId: string;
+  deletedAt: string;
+  bindingsExpired: number;
+}
+
 @Injectable()
 export class StudentRepository {
-  constructor(private readonly pg: PgPoolService) {}
+  constructor(
+    private readonly pg: PgPoolService,
+    private readonly parentRepo: ParentRepository,
+    @Optional() private readonly auditLog?: AuditLogRepository,
+  ) {}
 
   static mapBrief(r: PgRow): StudentBrief {
     return {
@@ -138,6 +158,7 @@ export class StudentRepository {
                  LIMIT 1) AS contract_class_type
          FROM students s
          WHERE s.assigned_teacher_id = $1
+           AND s.deleted_at IS NULL
          ORDER BY s.created_at DESC
          LIMIT $2 OFFSET $3`,
       [teacherId, limit, offset],
@@ -151,7 +172,8 @@ export class StudentRepository {
   ): Promise<StudentBrief[]> {
     const limit = options.limit ?? 100;
     const offset = options.offset ?? 0;
-    const where: string[] = [];
+    // V44: 默认排除已软删学员
+    const where: string[] = ['s.deleted_at IS NULL'];
     const params: any[] = [];
     if (options.ownerSalesId) {
       params.push(options.ownerSalesId);
@@ -175,7 +197,7 @@ export class StudentRepository {
                  ORDER BY COALESCE(c.signed_at, c.created_at) DESC
                  LIMIT 1) AS contract_class_type
          FROM students s
-         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+         WHERE ${where.join(' AND ')}
          ORDER BY s.created_at DESC
          LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       params,
@@ -184,11 +206,12 @@ export class StudentRepository {
   }
 
   async findBrief(tenantSchema: string, id: string): Promise<StudentBrief | null> {
+    // V44: 默认排除已软删学员（已删学员 findBrief 返回 null，等同 NotFound）
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `SELECT id, student_name, customer_id, owner_sales_id, assigned_teacher_id,
               owner_changed_at, owner_change_reason, grade_or_age, intended_subject
-         FROM students WHERE id = $1`,
+         FROM students WHERE id = $1 AND deleted_at IS NULL`,
       [id],
     );
     return rows.length === 0 ? null : StudentRepository.mapBrief(rows[0]);
@@ -265,5 +288,95 @@ export class StudentRepository {
       field: 'assigned_teacher_id',
       reason,
     };
+  }
+
+  /**
+   * V44 软删除（2026-05-16 T12）
+   *
+   * 来源：R1 audit P0-3 / doc 主键设计与唯一性保证.md §6.2 承诺
+   *
+   * 行为（事务内）：
+   *   1. UPDATE students SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL
+   *      - 幂等：已软删的学员（deleted_at NOT NULL）→ BadRequestException
+   *      - 不存在的学员 → NotFoundException
+   *   2. 联动调用 parent.expireBindingsForDeletedStudents 解绑 active 的 parent-student bindings
+   *      （跨 schema：tenant.students → public.parent_student_bindings）
+   *
+   * 事务外（V33 设计）：
+   *   3. audit_log action='student.soft-delete'（fail-open，写失败不阻塞主业务）
+   *
+   * 接口契约配套：
+   *   - cron 兜底（每日扫 tenant.students.deleted_at NOT NULL → 同步 binding）
+   *     由 T-CRON-BINDING-SYNC backlog 实施，复用 expireBindingsForDeletedStudents
+   *
+   * @param tenantSchema  tenant_xxx schema 名（pg-pool 自动 sanitize）
+   * @param studentId     32-char ULID
+   * @param tenantId      raw tenant id（用于 binding 跨 schema 解绑 WHERE tenant_id）
+   * @param operator      操作者上下文（actorUserId + actorRole 写 audit_log）
+   */
+  async softDelete(
+    tenantSchema: string,
+    studentId: string,
+    tenantId: string,
+    operator: { userId: string; role?: string | null },
+  ): Promise<StudentSoftDeleteResult> {
+    if (!studentId || studentId.length !== 32) {
+      throw new BadRequestException('studentId must be 32-char ULID');
+    }
+    if (!tenantId) {
+      throw new BadRequestException('tenantId required');
+    }
+
+    const result = await this.pg.transaction(
+      async (client) => {
+        // 1. UPDATE students.deleted_at
+        const updRes = await client.query<PgRow>(
+          `UPDATE students
+              SET deleted_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+          RETURNING id, deleted_at`,
+          [studentId],
+        );
+        if (updRes.rowCount === 0) {
+          // 区分「不存在」vs「已软删」: 再查一次原始行
+          const probe = await client.query<PgRow>(
+            `SELECT id, deleted_at FROM students WHERE id = $1`,
+            [studentId],
+          );
+          if (probe.rowCount === 0) {
+            throw new NotFoundException(`student ${studentId} not found`);
+          }
+          throw new BadRequestException(`student ${studentId} 已软删除（幂等保护）`);
+        }
+
+        // 2. 同事务联动解绑 binding
+        const bindingResult = await this.parentRepo.expireBindingsForDeletedStudents(
+          tenantId,
+          [studentId],
+          client,
+        );
+
+        return {
+          studentId: updRes.rows[0].id,
+          deletedAt: new Date(updRes.rows[0].deleted_at).toISOString(),
+          bindingsExpired: bindingResult.unbounded,
+        };
+      },
+      { tenantSchema },
+    );
+
+    // 3. audit_log（事务外，V33 fail-open；audit-log.repository.ts L34
+    //   "主业务流应在事务外调用 log()，避免 audit_log 失败回滚业务"）
+    await this.auditLog?.log(tenantSchema, {
+      actorUserId: operator.userId,
+      actorRole: normalizeActorRole(operator.role),
+      action: 'student.soft-delete',
+      targetType: 'student',
+      targetId: studentId,
+      before: { deletedAt: null },
+      after: { deletedAt: result.deletedAt, bindingsExpired: result.bindingsExpired },
+    });
+
+    return result;
   }
 }

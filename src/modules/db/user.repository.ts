@@ -158,12 +158,13 @@ export class UserRepository {
    * 列出 active 用户（toUser 选择器用）
    * - 可选 role 过滤（如 ['boss','sales','sales_manager']）
    * - 可选 campusId 过滤（同校区）
+   * V44: deleted_at IS NULL 排除已软删（status='启用' + 未软删 = 真正可选接棒人）
    */
   async listActive(
     tenantSchema: string,
     options: { roles?: TenantRole[]; campusId?: string } = {},
   ): Promise<User[]> {
-    const where: string[] = [`status = '启用'`];
+    const where: string[] = [`status = '启用'`, `deleted_at IS NULL`];
     const params: any[] = [];
     if (options.roles && options.roles.length > 0) {
       params.push(options.roles);
@@ -185,6 +186,7 @@ export class UserRepository {
 
   /**
    * 列出 active 但名下有 opportunities/contracts 的用户（校长「主动转交」起点选择器）
+   * V44: u.deleted_at IS NULL + s.deleted_at IS NULL（学员子查询同步排除软删）
    */
   async listActiveWithData(tenantSchema: string): Promise<InactiveWithPending[]> {
     const rows = await this.pg.tenantQuery<PgRow>(
@@ -195,9 +197,12 @@ export class UserRepository {
                  WHERE c.owner_user_id = u.id
                    AND c.status IN ('pending','active')
                    AND c.deleted_at IS NULL) AS pending_contracts,
-              (SELECT COUNT(*) FROM students s WHERE s.owner_sales_id = u.id) AS pending_students
+              (SELECT COUNT(*) FROM students s
+                 WHERE s.owner_sales_id = u.id
+                   AND s.deleted_at IS NULL) AS pending_students
          FROM users u
          WHERE u.status = '启用'
+           AND u.deleted_at IS NULL
          ORDER BY u.role, u.name`,
     );
     return rows
@@ -210,10 +215,14 @@ export class UserRepository {
       .filter((x) => x.pendingOpportunities + x.pendingContracts + x.pendingStudents > 0);
   }
 
+  /**
+   * V44: deleted_at IS NULL 排除已软删
+   * 已软删用户 findById 返回 null，等同于 NotFound（含 deactivate 路径的幂等保护）
+   */
   async findById(tenantSchema: string, id: string): Promise<User | null> {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT * FROM users WHERE id = $1`,
+      `SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL`,
       [id],
     );
     return rows.length === 0 ? null : UserRepository.mapRow(rows[0]);
@@ -268,6 +277,7 @@ export class UserRepository {
     leaver: User,
   ): Promise<User | null> {
     // 分支 1：单校 role → 同校区 boss
+    // V44: deleted_at IS NULL 排除已软删（不能转交给已删用户）
     if (
       leaver.role === 'sales' ||
       leaver.role === 'sales_manager' ||
@@ -277,7 +287,7 @@ export class UserRepository {
       const rows = await this.pg.tenantQuery<PgRow>(
         tenantSchema,
         `SELECT * FROM users
-           WHERE role = 'boss' AND campus_id = $1 AND status = '启用'
+           WHERE role = 'boss' AND campus_id = $1 AND status = '启用' AND deleted_at IS NULL
            ORDER BY created_at ASC LIMIT 1`,
         [leaver.campusId],
       );
@@ -295,7 +305,7 @@ export class UserRepository {
       const rows = await this.pg.tenantQuery<PgRow>(
         tenantSchema,
         `SELECT * FROM users
-           WHERE role = 'admin' AND status = '启用'
+           WHERE role = 'admin' AND status = '启用' AND deleted_at IS NULL
            ORDER BY created_at ASC LIMIT 1`,
       );
       if (rows.length > 0) return UserRepository.mapRow(rows[0]);
@@ -306,7 +316,7 @@ export class UserRepository {
       const rows = await this.pg.tenantQuery<PgRow>(
         tenantSchema,
         `SELECT * FROM users
-           WHERE role = 'boss' AND status = '启用'
+           WHERE role = 'boss' AND status = '启用' AND deleted_at IS NULL
            ORDER BY created_at ASC LIMIT 1`,
       );
       if (rows.length > 0) return UserRepository.mapRow(rows[0]);
@@ -317,7 +327,7 @@ export class UserRepository {
       const rows = await this.pg.tenantQuery<PgRow>(
         tenantSchema,
         `SELECT * FROM users
-           WHERE role = 'admin' AND status = '启用'
+           WHERE role = 'admin' AND status = '启用' AND deleted_at IS NULL
            ORDER BY created_at ASC LIMIT 1`,
       );
       if (rows.length > 0) return UserRepository.mapRow(rows[0]);
@@ -509,12 +519,14 @@ export class UserRepository {
             [fromUserId, toUserId, reason],
           );
           // V28 students.owner_sales_id 联动转交
+          // V44: handover 路径排除已软删学员（不必把已删数据再次转交）
           studentsRes = await client.query<{ id: string }>(
             `UPDATE students
                 SET owner_sales_id = $2,
                     owner_changed_at = NOW(),
                     owner_change_reason = $3
               WHERE owner_sales_id = $1
+                AND deleted_at IS NULL
               RETURNING id`,
             [fromUserId, toUserId, reason],
           );

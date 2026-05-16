@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { PoolClient } from 'pg';
 import { PgPoolService, PgRow } from './pg-pool.service';
 import { Parent, ParentStudentBinding, Relationship } from '../parent/parent.service';
 import { FieldEncryptor } from '../../common/crypto/field-encryptor';
@@ -160,6 +161,49 @@ export class ParentRepository {
     );
     if (rows.length === 0) throw new NotFoundException(`binding ${bindingId} not found`);
     return this.mapBindingRow(rows[0]);
+  }
+
+  /**
+   * V44 软删除联动（2026-05-16 T12）
+   *
+   * 来源：R1 audit P0-3 / spec §3.3 §4 — student 软删后 binding 应用层主动 + cron 兜底双层
+   *
+   * 行为：把指定 tenant 内、指定 studentIds 列表的 active binding 批量改为 unbound。
+   *   - WHERE student_id = ANY($1) AND tenant_id = $2 AND binding_status = 'active'
+   *   - SET binding_status='unbound', unbound_at = COALESCE(unbound_at, NOW())（幂等：保留首次 unbound 时间）
+   *
+   * 调用方：
+   *   - student.repository.softDelete 同事务内调用（应用层主动）
+   *   - T-CRON-BINDING-SYNC backlog cron 每日扫 deleted_at NOT NULL 学员后兜底调用
+   *
+   * @param tenantId   raw tenant id（public.parent_student_bindings.tenant_id 字段）
+   * @param studentIds 学员 id 列表（32-char ULID）
+   * @param client     可选 PoolClient — 若传则在该 client/事务内执行（softDelete 同事务）；
+   *                   否则用 pg.query（cron 兜底独立连接）
+   * @returns { unbounded: number } 受影响行数
+   */
+  async expireBindingsForDeletedStudents(
+    tenantId: string,
+    studentIds: string[],
+    client?: PoolClient,
+  ): Promise<{ unbounded: number }> {
+    if (!tenantId || !studentIds || studentIds.length === 0) {
+      return { unbounded: 0 };
+    }
+    const sql = `UPDATE public.parent_student_bindings
+                    SET binding_status = 'unbound',
+                        unbound_at = COALESCE(unbound_at, NOW())
+                  WHERE student_id = ANY($1::varchar[])
+                    AND tenant_id = $2
+                    AND binding_status = 'active'
+                  RETURNING id`;
+    const params: any[] = [studentIds, tenantId];
+    if (client) {
+      const res = await client.query<{ id: string }>(sql, params);
+      return { unbounded: res.rowCount || 0 };
+    }
+    const rows = await this.pg.query<{ id: string }>(sql, params);
+    return { unbounded: rows.length };
   }
 
   // ===== helpers (V40 加密辅助) =====

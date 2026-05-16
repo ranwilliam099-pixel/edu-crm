@@ -108,9 +108,10 @@ export class PromotionEligibilityService {
   }> {
     const out = { teachers: 0, students: 0, parents: 0, schedules: 0 };
     try {
+      // V44: deleted_at IS NULL 排除已软删（促销门槛只数可见教师/学员）
       const r = await this.pg.tenantQuery<{ count: string }>(
         tenantSchema,
-        `SELECT COUNT(*) as count FROM teachers WHERE status = 'active'`,
+        `SELECT COUNT(*) as count FROM teachers WHERE status = 'active' AND deleted_at IS NULL`,
       );
       out.teachers = parseInt(r[0]?.count || '0', 10);
     } catch (e) {
@@ -119,7 +120,7 @@ export class PromotionEligibilityService {
     try {
       const r = await this.pg.tenantQuery<{ count: string }>(
         tenantSchema,
-        `SELECT COUNT(*) as count FROM students`,
+        `SELECT COUNT(*) as count FROM students WHERE deleted_at IS NULL`,
       );
       out.students = parseInt(r[0]?.count || '0', 10);
     } catch (e) {

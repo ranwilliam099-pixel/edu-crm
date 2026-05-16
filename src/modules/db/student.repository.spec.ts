@@ -2,17 +2,29 @@ import { Test } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { StudentRepository } from './student.repository';
 import { PgPoolService } from './pg-pool.service';
+import { ParentRepository } from './parent.repository';
+import { AuditLogRepository } from './audit-log.repository';
 
-describe('StudentRepository (V28)', () => {
+describe('StudentRepository (V28 + V44 软删除)', () => {
   let repo: StudentRepository;
-  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock };
+  let pg: {
+    tenantQuery: jest.Mock;
+    query: jest.Mock;
+    withClient: jest.Mock;
+    transaction: jest.Mock;
+  };
+  let txClient: { query: jest.Mock };
+  let parentRepo: { expireBindingsForDeletedStudents: jest.Mock };
+  let auditLog: { log: jest.Mock };
 
   const TENANT = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const TENANT_ID_RAW = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const STUDENT_ID = 'student00000000000000000000A001S';
   const SALES_A = 'salesA00000000000000000000000A01';
   const SALES_B = 'salesB00000000000000000000000A02';
   const TEACHER_A = 'teacherA00000000000000000000A001';
   const TEACHER_B = 'teacherB00000000000000000000A002';
+  const OPERATOR_ID = 'opUserABC00000000000000000000A001';
 
   const studentRow = (overrides: Partial<{ owner_sales_id: string | null; assigned_teacher_id: string | null }> = {}) => ({
     id: STUDENT_ID,
@@ -27,9 +39,24 @@ describe('StudentRepository (V28)', () => {
   });
 
   beforeEach(async () => {
-    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn() };
+    txClient = { query: jest.fn() };
+    pg = {
+      tenantQuery: jest.fn(),
+      query: jest.fn(),
+      withClient: jest.fn(),
+      transaction: jest.fn().mockImplementation(async (fn: any) => fn(txClient)),
+    };
+    parentRepo = {
+      expireBindingsForDeletedStudents: jest.fn().mockResolvedValue({ unbounded: 0 }),
+    };
+    auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     const m = await Test.createTestingModule({
-      providers: [StudentRepository, { provide: PgPoolService, useValue: pg }],
+      providers: [
+        StudentRepository,
+        { provide: PgPoolService, useValue: pg },
+        { provide: ParentRepository, useValue: parentRepo },
+        { provide: AuditLogRepository, useValue: auditLog },
+      ],
     }).compile();
     repo = m.get(StudentRepository);
   });
@@ -164,11 +191,12 @@ describe('StudentRepository (V28)', () => {
   });
 
   describe('listByTeacher (V29 R4 老师视角)', () => {
-    it('SQL 包含 WHERE s.assigned_teacher_id = $1 + 默认 limit 100 + V29 R14.4 contract_class_type join', async () => {
+    it('SQL 包含 WHERE s.assigned_teacher_id = $1 + V44 deleted_at IS NULL + 默认 limit 100 + V29 R14.4 contract_class_type join', async () => {
       pg.tenantQuery.mockResolvedValueOnce([]);
       await repo.listByTeacher(TENANT, TEACHER_A);
       const [, sql, params] = pg.tenantQuery.mock.calls[0];
       expect(sql).toContain('s.assigned_teacher_id = $1');
+      expect(sql).toContain('s.deleted_at IS NULL'); // V44 软删除排除
       expect(sql).toContain('ORDER BY s.created_at DESC');
       expect(sql).toContain('contract_class_type');  // R14.4 join
       expect(params[0]).toBe(TEACHER_A);
@@ -215,6 +243,206 @@ describe('StudentRepository (V28)', () => {
     it('null when not found', async () => {
       pg.tenantQuery.mockResolvedValueOnce([]);
       expect(await repo.findBrief(TENANT, STUDENT_ID)).toBeNull();
+    });
+
+    it('V44: SQL 包含 deleted_at IS NULL（软删学员返回 null）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.findBrief(TENANT, STUDENT_ID);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('deleted_at IS NULL');
+    });
+  });
+
+  describe('listAll (V44 软删除 filter)', () => {
+    it('默认 SQL 包含 s.deleted_at IS NULL 即使无 owner/teacher 过滤', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listAll(TENANT);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('s.deleted_at IS NULL');
+      expect(sql).toContain('ORDER BY s.created_at DESC');
+    });
+
+    it('owner_sales_id 过滤时仍包含 deleted_at IS NULL', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listAll(TENANT, { ownerSalesId: SALES_A });
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(sql).toContain('s.deleted_at IS NULL');
+      expect(sql).toContain('s.owner_sales_id = $1');
+      expect(params[0]).toBe(SALES_A);
+    });
+
+    it('两个过滤联合 + V44 filter 三者并存', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listAll(TENANT, { ownerSalesId: SALES_A, assignedTeacherId: TEACHER_A });
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('s.deleted_at IS NULL');
+      expect(sql).toContain('s.owner_sales_id = $1');
+      expect(sql).toContain('s.assigned_teacher_id = $2');
+    });
+  });
+
+  // ============================================================
+  // V44 软删除 — softDelete()
+  // 来源：2026-05-16 T12 spec / R1 audit P0-3
+  // ============================================================
+  describe('softDelete (V44 软删除)', () => {
+    const DELETED_AT = '2026-05-16T10:00:00.000Z';
+
+    it('成功软删 → UPDATE deleted_at + 同事务调 binding 解绑 + audit_log', async () => {
+      // 事务内 client.query 顺序：
+      //   1. UPDATE students RETURNING id, deleted_at
+      txClient.query.mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: STUDENT_ID, deleted_at: DELETED_AT }],
+      });
+      parentRepo.expireBindingsForDeletedStudents.mockResolvedValueOnce({ unbounded: 2 });
+
+      const r = await repo.softDelete(TENANT, STUDENT_ID, TENANT_ID_RAW, {
+        userId: OPERATOR_ID,
+        role: 'admin',
+      });
+
+      expect(r.studentId).toBe(STUDENT_ID);
+      expect(r.deletedAt).toBe(DELETED_AT);
+      expect(r.bindingsExpired).toBe(2);
+
+      // 事务执行
+      expect(pg.transaction).toHaveBeenCalledTimes(1);
+      // UPDATE SQL 含 WHERE id = $1 AND deleted_at IS NULL（幂等保护）
+      const updateSql = txClient.query.mock.calls[0][0] as string;
+      expect(updateSql).toContain('UPDATE students');
+      expect(updateSql).toContain('SET deleted_at = NOW()');
+      expect(updateSql).toContain('WHERE id = $1 AND deleted_at IS NULL');
+      expect(txClient.query.mock.calls[0][1]).toEqual([STUDENT_ID]);
+
+      // binding 解绑同事务调用（传 client）
+      expect(parentRepo.expireBindingsForDeletedStudents).toHaveBeenCalledWith(
+        TENANT_ID_RAW,
+        [STUDENT_ID],
+        txClient,
+      );
+
+      // audit_log 事务外（V33 设计：fail-open 避免审计失败回滚业务）
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const auditCall = auditLog.log.mock.calls[0];
+      expect(auditCall[0]).toBe(TENANT);
+      expect(auditCall[1]).toMatchObject({
+        actorUserId: OPERATOR_ID,
+        actorRole: 'admin',
+        action: 'student.soft-delete',
+        targetType: 'student',
+        targetId: STUDENT_ID,
+      });
+      expect(auditCall[1].before).toEqual({ deletedAt: null });
+      expect(auditCall[1].after).toEqual({
+        deletedAt: DELETED_AT,
+        bindingsExpired: 2,
+      });
+    });
+
+    it('幂等：已软删的学员 → BadRequestException（probe 找到行但 deleted_at NOT NULL）', async () => {
+      // UPDATE rowCount=0
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      // probe SELECT 找到行（表示存在，但已软删）
+      txClient.query.mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: STUDENT_ID, deleted_at: '2026-05-15T08:00:00Z' }],
+      });
+
+      await expect(
+        repo.softDelete(TENANT, STUDENT_ID, TENANT_ID_RAW, {
+          userId: OPERATOR_ID,
+          role: 'admin',
+        }),
+      ).rejects.toThrow(/已软删除/);
+
+      // 软删失败 → 不调 binding，不写 audit_log
+      expect(parentRepo.expireBindingsForDeletedStudents).not.toHaveBeenCalled();
+      expect(auditLog.log).not.toHaveBeenCalled();
+    });
+
+    it('不存在的学员 → NotFoundException', async () => {
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // probe 也找不到
+
+      await expect(
+        repo.softDelete(TENANT, STUDENT_ID, TENANT_ID_RAW, {
+          userId: OPERATOR_ID,
+          role: 'admin',
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('studentId 非 32-char → BadRequest（不进事务）', async () => {
+      await expect(
+        repo.softDelete(TENANT, 'short', TENANT_ID_RAW, {
+          userId: OPERATOR_ID,
+          role: 'admin',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(pg.transaction).not.toHaveBeenCalled();
+    });
+
+    it('tenantId 空 → BadRequest', async () => {
+      await expect(
+        repo.softDelete(TENANT, STUDENT_ID, '', {
+          userId: OPERATOR_ID,
+          role: 'admin',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('FK 联动：bindingsExpired=0 也成功返回（学员无 binding）', async () => {
+      txClient.query.mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: STUDENT_ID, deleted_at: DELETED_AT }],
+      });
+      parentRepo.expireBindingsForDeletedStudents.mockResolvedValueOnce({ unbounded: 0 });
+
+      const r = await repo.softDelete(TENANT, STUDENT_ID, TENANT_ID_RAW, {
+        userId: OPERATOR_ID,
+        role: 'boss',
+      });
+      expect(r.bindingsExpired).toBe(0);
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+    });
+
+    it('audit_log fail-open：未注入 auditLog 也能完成软删（@Optional 占位）', async () => {
+      const repoNoAudit = await Test.createTestingModule({
+        providers: [
+          StudentRepository,
+          { provide: PgPoolService, useValue: pg },
+          { provide: ParentRepository, useValue: parentRepo },
+        ],
+      }).compile().then((m) => m.get(StudentRepository));
+
+      txClient.query.mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: STUDENT_ID, deleted_at: DELETED_AT }],
+      });
+      parentRepo.expireBindingsForDeletedStudents.mockResolvedValueOnce({ unbounded: 1 });
+
+      await expect(
+        repoNoAudit.softDelete(TENANT, STUDENT_ID, TENANT_ID_RAW, {
+          userId: OPERATOR_ID,
+          role: 'admin',
+        }),
+      ).resolves.toMatchObject({ bindingsExpired: 1 });
+    });
+
+    it('actorRole 越界字符串 → normalize 到 system（V33 白名单兜底）', async () => {
+      txClient.query.mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: STUDENT_ID, deleted_at: DELETED_AT }],
+      });
+      parentRepo.expireBindingsForDeletedStudents.mockResolvedValueOnce({ unbounded: 0 });
+
+      await repo.softDelete(TENANT, STUDENT_ID, TENANT_ID_RAW, {
+        userId: OPERATOR_ID,
+        role: 'unknown_role_xyz',
+      });
+      // normalizeActorRole 未命中白名单 → fallback 'system'
+      expect(auditLog.log.mock.calls[0][1].actorRole).toBe('system');
     });
   });
 });

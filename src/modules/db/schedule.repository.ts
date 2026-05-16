@@ -122,6 +122,7 @@ export class ScheduleRepository {
     }
     return this.pg.transaction(async (client) => {
       if (schedule.classType) {
+        // V44: 排课班型校验时排除已软删学员（schedulable 学员必须 active）
         const checkRes = await client.query(
           `SELECT s.id AS student_id,
                   (SELECT c.class_type FROM contracts c
@@ -131,7 +132,8 @@ export class ScheduleRepository {
                      ORDER BY COALESCE(c.signed_at, c.created_at) DESC
                      LIMIT 1) AS contract_class_type
              FROM students s
-             WHERE s.id = ANY($1)`,
+             WHERE s.id = ANY($1)
+               AND s.deleted_at IS NULL`,
           [studentIds as string[]],
         );
         const mismatched = checkRes.rows.filter(

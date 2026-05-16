@@ -302,13 +302,14 @@ export class CourseProductRepository {
            0
          )                                                       AS remaining_hours
        FROM students s
-       WHERE EXISTS (
-         SELECT 1 FROM contracts c
-          WHERE c.student_id = s.id
-            AND c.course_product_id = $1
-            AND c.deleted_at IS NULL
-            AND c.status IN ('active','pending')${studentScopeSql}
-       )
+       WHERE s.deleted_at IS NULL
+         AND EXISTS (
+           SELECT 1 FROM contracts c
+            WHERE c.student_id = s.id
+              AND c.course_product_id = $1
+              AND c.deleted_at IS NULL
+              AND c.status IN ('active','pending')${studentScopeSql}
+         )
        ORDER BY s.created_at DESC
        LIMIT 500`,
       studentParams,

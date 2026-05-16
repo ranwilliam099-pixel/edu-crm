@@ -110,10 +110,11 @@ export class DashboardRepository {
     }
 
     // 学员总数
+    // V44: deleted_at IS NULL 排除已软删（KPI 只统计可见学员）
     try {
       const rows = await this.pg.tenantQuery<{ count: string }>(
         tenantSchema,
-        `SELECT COUNT(*) as count FROM students`,
+        `SELECT COUNT(*) as count FROM students WHERE deleted_at IS NULL`,
       );
       studentsTotal = parseInt(rows[0]?.count || '0', 10);
     } catch (e) {
@@ -314,7 +315,7 @@ export class DashboardRepository {
            COALESCE(ls.lessons, 0) as lessons
          FROM teachers t
          LEFT JOIN lesson_stats ls ON ls.teacher_id = t.id
-         WHERE t.status = 'active'
+         WHERE t.status = 'active' AND t.deleted_at IS NULL
          ORDER BY ls.lessons DESC NULLS LAST`,
         [monthStart, monthEnd],
       );
@@ -336,7 +337,7 @@ export class DashboardRepository {
              WHERE cc.teacher_id = t.id
                AND cc.created_at >= $1 AND cc.created_at < $2) as cc_count
          FROM teachers t
-         WHERE t.status = 'active'`,
+         WHERE t.status = 'active' AND t.deleted_at IS NULL`,
         [monthStart, monthEnd],
       );
       const fbRateMap = new Map<string, number>();

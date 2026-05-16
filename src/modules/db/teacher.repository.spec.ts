@@ -343,4 +343,68 @@ describe('TeacherRepository (V28 archive + V34 字段加密双写双读)', () =>
       expect(params).toEqual([USER_X]);
     });
   });
+
+  // ============================================================
+  // V44 软删除 — filter 回归
+  // 来源：2026-05-16 T12 spec / R1 audit P0-3
+  // ============================================================
+  describe('V44 软删除 filter 回归', () => {
+    it('findById SQL 包含 deleted_at IS NULL（已软删教师返回 null）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.findById(TENANT, TEACHER_A);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toMatch(/deleted_at IS NULL/);
+    });
+
+    it('findByUserId SQL 包含 deleted_at IS NULL', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.findByUserId(TENANT, 'usr00000000000000000000000000U00X');
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toMatch(/deleted_at IS NULL/);
+    });
+
+    it('listActiveInTenant SQL 包含 deleted_at IS NULL（与 status=在职 联合）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listActiveInTenant(TENANT);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain(`status = '在职'`);
+      expect(sql).toContain('deleted_at IS NULL');
+    });
+
+    it('list SQL 包含 WHERE deleted_at IS NULL（分页列表）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.list(TENANT);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toMatch(/WHERE deleted_at IS NULL/);
+    });
+
+    it('countInTenant SQL 包含 WHERE deleted_at IS NULL', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ count: '5' }]);
+      const n = await repo.countInTenant(TENANT);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toMatch(/WHERE deleted_at IS NULL/);
+      expect(n).toBe(5);
+    });
+
+    it('archive 内查接棒人 SQL 含 deleted_at IS NULL（不转交给已软删教师）', async () => {
+      // findById 拿目标教师
+      pg.tenantQuery.mockResolvedValueOnce([teacherRow({ id: TEACHER_A })]);
+      // candidates 查询
+      pg.tenantQuery.mockResolvedValueOnce([{ id: TEACHER_B, name: '李老师' }]);
+      // 事务内：UPDATE teachers RETURNING + UPDATE students RETURNING
+      txClient.query.mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [teacherRow({ id: TEACHER_A, status: '归档' })],
+      });
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+      await repo.archive(TENANT, TEACHER_A, 'op-id', {
+        role: 'admin',
+        campusId: CAMPUS_A,
+      });
+
+      const candidatesSql = pg.tenantQuery.mock.calls[1][1] as string;
+      expect(candidatesSql).toMatch(/status = '在职' AND deleted_at IS NULL/);
+    });
+  });
 });

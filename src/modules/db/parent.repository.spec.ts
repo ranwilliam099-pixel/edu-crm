@@ -259,4 +259,57 @@ describe('ParentRepository (V40 phone hash+encrypted 双列加密)', () => {
       expect(sql).toMatch(/['"]active['"]/);
     });
   });
+
+  // ============================================================
+  // V44 软删除联动 — expireBindingsForDeletedStudents
+  // 来源：2026-05-16 T12 spec §3.3 §4 / R1 audit P0-3
+  // ============================================================
+  describe('expireBindingsForDeletedStudents (V44 软删除联动)', () => {
+    const TENANT_ID = 'tnt00000000000000000000000000A1';
+    const STUDENT_1 = 'stu00000000000000000000000000001';
+    const STUDENT_2 = 'stu00000000000000000000000000002';
+
+    it('独立连接（无 client）→ pg.query 写 + 返回 unbounded 行数', async () => {
+      pg.query.mockResolvedValueOnce([{ id: 'b1' }, { id: 'b2' }]);
+      const r = await repo.expireBindingsForDeletedStudents(TENANT_ID, [STUDENT_1, STUDENT_2]);
+      expect(r.unbounded).toBe(2);
+      const [sql, params] = pg.query.mock.calls[0];
+      expect(sql).toContain('UPDATE public.parent_student_bindings');
+      expect(sql).toContain(`binding_status = 'unbound'`);
+      expect(sql).toContain('unbound_at = COALESCE(unbound_at, NOW())'); // 幂等保留首次时间
+      expect(sql).toContain('student_id = ANY($1::varchar[])');
+      expect(sql).toContain('tenant_id = $2');
+      expect(sql).toContain(`binding_status = 'active'`);
+      expect(params).toEqual([[STUDENT_1, STUDENT_2], TENANT_ID]);
+    });
+
+    it('同事务（传 client）→ 不调 pg.query，调 client.query', async () => {
+      const client = { query: jest.fn().mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'b1' }] }) };
+      const r = await repo.expireBindingsForDeletedStudents(TENANT_ID, [STUDENT_1], client as any);
+      expect(r.unbounded).toBe(1);
+      expect(pg.query).not.toHaveBeenCalled();
+      expect(client.query).toHaveBeenCalledTimes(1);
+    });
+
+    it('空 studentIds → 直接返回 0，不发 SQL', async () => {
+      const r = await repo.expireBindingsForDeletedStudents(TENANT_ID, []);
+      expect(r.unbounded).toBe(0);
+      expect(pg.query).not.toHaveBeenCalled();
+    });
+
+    it('空 tenantId → 直接返回 0，不发 SQL', async () => {
+      const r = await repo.expireBindingsForDeletedStudents('', [STUDENT_1]);
+      expect(r.unbounded).toBe(0);
+      expect(pg.query).not.toHaveBeenCalled();
+    });
+
+    it('同 tenant + 同 student 重复调（cron 兜底）→ 已 unbound 行不再变化（WHERE binding_status=active 兜底幂等）', async () => {
+      // 二次调用 0 行受影响
+      pg.query.mockResolvedValueOnce([]);
+      const r = await repo.expireBindingsForDeletedStudents(TENANT_ID, [STUDENT_1]);
+      expect(r.unbounded).toBe(0);
+      const sql = pg.query.mock.calls[0][0];
+      expect(sql).toContain(`binding_status = 'active'`);
+    });
+  });
 });

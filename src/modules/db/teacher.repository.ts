@@ -77,13 +77,14 @@ export class TeacherRepository {
 
   /**
    * 查询 tenant 内全部 active 教师（用于 V8 排课 schedulableTeachers）
+   * V44: deleted_at IS NULL 排除已软删（status='在职' 已隐含未归档，但软删层独立）
    */
   async listActiveInTenant(tenantSchema: string): Promise<Teacher[]> {
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
       `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
        FROM teachers
-       WHERE status = '在职'
+       WHERE status = '在职' AND deleted_at IS NULL
        ORDER BY created_at DESC`,
     );
     return rows.map((r) => this.mapRow(r));
@@ -91,12 +92,13 @@ export class TeacherRepository {
 
   /**
    * 按 ID 取
+   * V44: deleted_at IS NULL 排除已软删
    */
   async findById(tenantSchema: string, id: string): Promise<Teacher | null> {
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
       `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
-       FROM teachers WHERE id = $1`,
+       FROM teachers WHERE id = $1 AND deleted_at IS NULL`,
       [id],
     );
     return rows.length === 0 ? null : this.mapRow(rows[0]);
@@ -118,10 +120,11 @@ export class TeacherRepository {
    *   — 但 mapRow 仍走解密链路（V34 fail-open），所以无副作用
    */
   async findByUserId(tenantSchema: string, userId: string): Promise<Teacher | null> {
+    // V44: deleted_at IS NULL 排除已软删
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
       `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
-       FROM teachers WHERE user_id = $1
+       FROM teachers WHERE user_id = $1 AND deleted_at IS NULL
        ORDER BY created_at ASC
        LIMIT 1`,
       [userId],
@@ -131,6 +134,7 @@ export class TeacherRepository {
 
   /**
    * 列表（分页）
+   * V44: deleted_at IS NULL 排除已软删
    */
   async list(
     tenantSchema: string,
@@ -142,6 +146,7 @@ export class TeacherRepository {
       tenantSchema,
       `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
        FROM teachers
+       WHERE deleted_at IS NULL
        ORDER BY created_at DESC
        LIMIT $1 OFFSET $2`,
       [limit, offset],
@@ -217,10 +222,11 @@ export class TeacherRepository {
     }
 
     // 找同 campus 其他 active 老师作接棒人（排除自己）
+    // V44: deleted_at IS NULL 排除已软删
     const candidates = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `SELECT id, name FROM teachers
-         WHERE campus_id = $1 AND id <> $2 AND status = '在职'
+         WHERE campus_id = $1 AND id <> $2 AND status = '在职' AND deleted_at IS NULL
          ORDER BY created_at ASC LIMIT 1`,
       [target.campusId, teacherId],
     );
@@ -267,11 +273,12 @@ export class TeacherRepository {
 
   /**
    * 计数
+   * V44: deleted_at IS NULL 排除已软删（业务可见教师数，不含已删归档）
    */
   async countInTenant(tenantSchema: string): Promise<number> {
     const rows = await this.pg.tenantQuery<{ count: string }>(
       tenantSchema,
-      `SELECT COUNT(*) as count FROM teachers`,
+      `SELECT COUNT(*) as count FROM teachers WHERE deleted_at IS NULL`,
     );
     return parseInt(rows[0]?.count || '0', 10);
   }

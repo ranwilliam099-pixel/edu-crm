@@ -591,4 +591,110 @@ describe('UserRepository (V27)', () => {
       expect(items).toHaveLength(0);
     });
   });
+
+  // ============================================================
+  // V44 软删除 — filter 回归
+  // 来源：2026-05-16 T12 spec / R1 audit P0-3
+  // ============================================================
+  describe('V44 软删除 filter 回归', () => {
+    it('findById SQL 包含 deleted_at IS NULL（已软删用户返回 null）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.findById(TENANT, SALES_ID);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toMatch(/WHERE id = \$1 AND deleted_at IS NULL/);
+    });
+
+    it('listActive SQL 包含 status=启用 + deleted_at IS NULL', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listActive(TENANT);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain(`status = '启用'`);
+      expect(sql).toContain('deleted_at IS NULL');
+    });
+
+    it('listActiveWithData SQL 同时排除已软删用户 + 已软删学员', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listActiveWithData(TENANT);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('u.deleted_at IS NULL'); // 外层 user
+      expect(sql).toContain('s.deleted_at IS NULL'); // 内层 students 子查询
+    });
+
+    it('findTransferTarget 分支 1（sales 离职找同校 boss）含 deleted_at IS NULL', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([userRow({ role: 'boss', id: BOSS_A_ID })]);
+      await repo.findTransferTarget(TENANT, {
+        id: SALES_ID,
+        name: '离职销售',
+        mobile: '13800000000',
+        role: 'sales' as any,
+        campusId: CAMPUS_A,
+        status: '启用',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toMatch(/role = 'boss'.*campus_id = \$1.*status = '启用'.*deleted_at IS NULL/s);
+    });
+
+    it('handover scope=all UPDATE students 含 deleted_at IS NULL（不转交已删数据）', async () => {
+      // findById toUser
+      pg.tenantQuery.mockResolvedValueOnce([userRow({ id: BOSS_A_ID, role: 'boss' })]);
+      // 事务内：UPDATE opportunities / contracts / students × 3
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+      await repo.handover(TENANT, {
+        fromUserId: SALES_ID,
+        toUserId: BOSS_A_ID,
+        scope: 'all',
+        operator: { userId: BOSS_A_ID, label: '校长', role: 'boss', campusId: CAMPUS_A },
+      });
+
+      // 第 3 个事务 query 是 UPDATE students
+      const studentsSql = txClient.query.mock.calls[2][0] as string;
+      expect(studentsSql).toContain('UPDATE students');
+      expect(studentsSql).toContain('AND deleted_at IS NULL');
+    });
+
+    it('deactivate UPDATE students 保持现状（不加 deleted_at IS NULL，spec 拍板）', async () => {
+      // findById leaver
+      pg.tenantQuery.mockResolvedValueOnce([
+        userRow({ id: SALES_ID, role: 'sales', status: '启用' }),
+      ]);
+      // findTransferTarget → 同校 boss
+      pg.tenantQuery.mockResolvedValueOnce([
+        userRow({ id: BOSS_A_ID, role: 'boss', status: '启用' }),
+      ]);
+      // 事务内：UPDATE users / opportunities / contracts / students × 4 + follow_log
+      txClient.query.mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [userRow({ id: SALES_ID, status: '停用' })],
+      });
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // opps
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // contracts
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // students
+
+      await repo.deactivate(TENANT, SALES_ID, {
+        userId: BOSS_A_ID,
+        label: '校长',
+        role: 'boss',
+        campusId: CAMPUS_A,
+      });
+
+      // 第 4 个事务 query 是 UPDATE students (deactivate path → 保持现状)
+      const studentsSql = txClient.query.mock.calls[3][0] as string;
+      expect(studentsSql).toContain('UPDATE students');
+      expect(studentsSql).not.toContain('deleted_at IS NULL'); // 保持现状（spec 拍板）
+    });
+
+    it('listInactiveWithPending 保持现状（不加 deleted_at IS NULL，spec §3.2 拍板）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listInactiveWithPending(TENANT);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      // 该方法查 status='停用' 用户（handover 起点），保持现状不加 deleted_at filter
+      expect(sql).toContain(`u.status = '停用'`);
+      expect(sql).not.toContain('u.deleted_at IS NULL');
+    });
+  });
 });

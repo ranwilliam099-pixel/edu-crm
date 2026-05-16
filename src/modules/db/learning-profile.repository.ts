@@ -77,9 +77,10 @@ export class LearningProfileRepository {
    * （这里返回所有学员 ID — 实际可以根据 last_seen 优化）
    */
   async listAllStudentIds(tenantSchema: string): Promise<string[]> {
+    // V44: cron 重算只针对未软删学员（避免对 deleted 学员重算 learning_profiles）
     const rows = await this.pg.tenantQuery<{ id: string }>(
       tenantSchema,
-      `SELECT id FROM students ORDER BY id`,
+      `SELECT id FROM students WHERE deleted_at IS NULL ORDER BY id`,
     );
     return rows.map((r) => r.id);
   }
