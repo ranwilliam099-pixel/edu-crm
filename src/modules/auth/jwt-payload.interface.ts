@@ -9,7 +9,6 @@
  */
 export const AUDIENCE_B_APP = 'b-app' as const;
 export const AUDIENCE_PARENT_APP = 'parent-app' as const;
-export type JwtAudience = typeof AUDIENCE_B_APP | typeof AUDIENCE_PARENT_APP;
 
 /**
  * JWT Claims（接口清单 V1 §6.1）
@@ -95,15 +94,6 @@ export const CROSS_CAMPUS_ROLES: readonly TenantRole[] = [
 export function isCrossCampusRole(role: string): boolean {
   return (CROSS_CAMPUS_ROLES as readonly string[]).includes(role);
 }
-
-/**
- * T11 (2026-05-16) refresh token subject 区分（与 refresh_tokens.subject_type CHECK 对齐）
- *   - 'b-user'  B 端员工 user（含 admin/boss/sales/teacher/academic/...）
- *   - 'parent'  C 端家长 parent
- *
- * 与 TenantRole 区分：role 是 B 端内的角色枚举，subject_type 是 token 主体类型。
- */
-export type RefreshTokenSubjectType = 'b-user' | 'parent';
 
 /**
  * Express Request 扩展类型 — controller 用 `@Req() req: AuthenticatedRequest`

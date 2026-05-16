@@ -552,11 +552,6 @@ export class RealWxPayClient implements WxPayClient, OnModuleInit {
     this.privateKeyPem = null;
   }
 
-  /** 暴露给单测：直接注入私钥（避免依赖文件系统） */
-  injectPrivateKeyForTest(pem: string): void {
-    this.privateKeyPem = pem;
-  }
-
   private requirePrivateKey(): string {
     if (!this.privateKeyPem) {
       // loadConfig 已读过；fallback safety

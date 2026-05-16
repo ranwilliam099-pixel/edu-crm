@@ -24,17 +24,20 @@ import { AuditLogRepository } from '../db/audit-log.repository';
  *   - PD 设计稿 §3.6.4 / §4.2 / §4.3 / §5.5
  *   - 用户拍板条目 31 #4 (7 天试用 + 自动续费) + 条目 32 L 系列
  *
- * 调度时点（cron expression 注释中标明，未来接 @nestjs/schedule 后加 @Cron 装饰器）：
- *   - scan_and_lock_consumptions:    每 10 分钟    '*​/10 * * * *'
- *   - convert_expired_trials:        每 5 分钟     '*​/5 * * * *'
- *   - monthly_renew_active:          每天 0 点     '0 0 * * *'
- *   - generate_monthly_reports:      每月 1 号 0:30 '30 0 1 * *'
- *   - expand_recurring_schedules:    每天 0:30     '30 0 * * *'
+ * 调度时点（cron expression 在每个方法 @Cron 装饰器 / 注释里）：
+ *   - scan_and_lock_consumptions:    每 10 分钟    '*​/10 * * * *' (HTTP 触发，未装 @Cron)
+ *   - convert_expired_trials:        每 5 分钟     '*​/5 * * * *' (HTTP 触发，未装 @Cron)
+ *   - monthly_renew_active:          每天 0 点     '0 0 * * *' (HTTP 触发，未装 @Cron)
+ *   - generate_monthly_reports:      每月 1 号 0:30 '30 0 1 * *' (HTTP 触发，未装 @Cron)
+ *   - expand_recurring_schedules:    每天 0:30     '30 0 * * *' (HTTP 触发，未装 @Cron)
+ *   - expireOverdueTrials (T9-EPIC): 每天 03:30   '30 3 * * *' (✅ 已装 @Cron L332)
  *
- * 当前不引入 @nestjs/schedule（避免新依赖）；外部触发器 / k8s CronJob /
- * 系统 cron 通过 HTTP 调用对应 controller 路由（如 POST /api/course-consumptions/scan-and-lock）。
+ * T-DEPLOY-FIX-1 round 2 (2026-05-16 pr-code-reviewer W-5 注释修正)：
+ *   原注释 "当前不引入 @nestjs/schedule" 已 stale。T7 (2026-05-16 commit 6632589) 装了
+ *   @nestjs/schedule + NestScheduleModule.forRoot() 在 cron.module.ts:21。
+ *   未来 @Cron 包装其他方法（scan_and_lock / convert_expired_trials / 等）在 T7-b backlog。
  *
- * 本 Service 提供**统一编排接口**，方便单元测试 + 未来真接入。
+ * 本 Service 提供**统一编排接口**，方便单元测试 + 未来 T7-b 包装时一处加 @Cron 即可触发。
  */
 @Injectable()
 export class CronJobsService {

@@ -54,6 +54,18 @@ const TENANT_MIGRATIONS = [
   'V34__sensitive_fields_encrypted.sql',
   'V35__teacher_showcase_meta.sql',
   'V36__monthly_reports_audience_columns.sql',
+  // T-DEPLOY-FIX-1 (2026-05-16 code-architect 部署前架构审 BLOCKER)：
+  //   5/11-5/16 新增 4 个 tenant schema 占位符 migration 漏加，导致新 tenant
+  //   通过 POST /api/public/onboarding/provision-tenant 创建后第一次业务调用
+  //   就 PG error：column does not exist。
+  //   V37 drop payroll / V39 rename hourly_rate / V42 invoices / V44 deleted_at
+  //   全部含 __TENANT_SCHEMA__ 占位符（grep 验证），必须按 V36 之后顺序跑。
+  //   V40/V41/V43/V45 不在此列（V40 单独 backfill，V41 customers 也单独 backfill,
+  //   V43 refresh_tokens 在 public schema，V45 tenants subscription_status 也在 public）
+  'V37__drop_monthly_aggregates_payroll.sql',
+  'V39__rename_hourly_rate_to_hourly_price.sql',
+  'V42__invoices_in_tenant_schema.sql',
+  'V44__add_deleted_at_to_students_teachers_users.sql',
 ];
 
 @Injectable()

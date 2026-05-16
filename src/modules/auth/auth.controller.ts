@@ -24,6 +24,10 @@ import { RedisService } from '../redis/redis.service';
 import { WxCodeSessionService } from './wx-code-session.service';
 // T11 (2026-05-16) refresh token rotation
 import { RefreshTokenService } from './refresh-token.service';
+// T-DEPLOY-FIX-1 round 2 (2026-05-16 user 拍板决策 #2 + 3 agent 共识 HIGH-3)：
+//   T11-FU-1 完整实施 — refresh endpoint 查 users 表取真实 role/campusId
+//   原 mock 'sales' 硬编码会让 admin/boss/academic refresh 后掉权限
+import { UserRepository } from '../db/user.repository';
 
 /**
  * AuthController — 联调收尾 Q-FE-2 + 待补 B 端 /auth/login
@@ -46,6 +50,8 @@ export class AuthController {
     private readonly redis: RedisService,
     private readonly wxCodeSession: WxCodeSessionService,
     private readonly refreshTokenService: RefreshTokenService,
+    // T-DEPLOY-FIX-1 round 2：T11-FU-1 INT-01 用 users 表查真实 role/campusId
+    private readonly userRepo: UserRepository,
   ) {}
 
   /**
@@ -291,26 +297,49 @@ export class AuthController {
     );
 
     if (oldRow.subjectType === 'b-user') {
-      // B 端：用旧 row.subjectId/tenantId 续签 access token（role/campusId 需从用户表查；
-      //   当前 mock 模式：role/campusId 不在 refresh_tokens 表 → 由前端在 login 时缓存，
-      //   refresh 后前端继续使用旧 role/campusId，下次 access token 复用旧 claims）
-      // 注：spec §2.2 step 4 假定 jwt 库可签出含 role/campusId 的 access token；
-      //   mock 阶段仅签 sub/tenantId/jti/aud；真实接 users 表后会从 DB 查出 role/campusId 填上。
+      // B 端续签：T-DEPLOY-FIX-1 round 2 (2026-05-16 user 拍板决策 #2)
+      //   T11-FU-1 完整实施：查 users 表取真实 role/campusId（原 mock 'sales' 硬编码已下线）
+      //
+      //   流程：
+      //     1. oldRow.tenantId 派生 schema (同 refresh-token.service.ts:227+255 模式)
+      //     2. userRepo.findById(schema, oldRow.subjectId) → User | null
+      //     3a. user 存在 → 用真实 role + campusId 签新 access token
+      //     3b. user 不存在 / 已软删 → throw 401 强制重新 login
+      //         （refresh_token 已被 rotate 撤销旧 row，user 被删后 token 也要失效）
+      //
+      //   安全考量：
+      //     - tenantId.toLowerCase() 保持 schema 命名一致（V2 schema 全 lowercase）
+      //     - 不能 fallback 到 'sales'（pr-code-reviewer HIGH-3 + silent-failure F-9 silent role downgrade）
+      //     - user 软删（deleted_at IS NOT NULL）走 findById 返 null 分支（V44 + user.repository.ts:220-228）
+      //
+      //   Platform user 限制（T-DEPLOY-FIX-1 round 2 边界）：
+      //     - tenantId === null 时（platform_admin / finance_admin 跨 tenant 角色）
+      //       无法定位 tenant schema → users 表不存在 platform_admin 行 → throw 强制重新 login
+      //     - T11-FU-3 backlog: platform users 落到 public.platform_users 表（独立 schema）
+      if (!oldRow.tenantId) {
+        throw new UnauthorizedException(
+          'platform-user refresh not supported (T11-FU-3 backlog), please re-login',
+        );
+      }
+      const schema = `tenant_${oldRow.tenantId.toLowerCase()}`;
+      const realUser = await this.userRepo.findById(schema, oldRow.subjectId);
+      if (!realUser) {
+        // user 不存在 / 已 deactivate / 已软删 → refresh 链路终止
+        //   audit_log 由 refresh-token.service rotate() 内部已写（rotated 事件）
+        //   此处仅 throw，client 必须 prompt 重新登录
+        throw new UnauthorizedException(
+          'B-user not found or deactivated, please re-login',
+        );
+      }
+
       const accessJti = ulid();
       const signPayload: Pick<JwtPayload, 'sub' | 'tenantId' | 'role' | 'campusId'> = {
         sub: oldRow.subjectId,
         tenantId: oldRow.tenantId,
-        // Backlog T11-FU-1 (Sprint 后续): INT-01 users 表落地后 query 真实 role/campusId
-        //   当前 mock 限制：role 写死 'sales'，所有 B 端 user refresh 后 access token role=sales
-        //   规避：T11 round 2 三审 security finding P1 — 待 INT-01 修
-        //   规避方案（精确 API 引用，已 grep 验证 user.repository.ts:222 签名）:
-        //     1. 注入 UserRepository (constructor 加 private readonly userRepo: UserRepository)
-        //     2. 派 schema: const schema = `tenant_${oldRow.tenantId}` (同 refresh-token.service.ts:227+255 模式)
-        //     3. query: const realUser = await this.userRepo.findById(schema, oldRow.subjectId)
-        //     4. 取值: signPayload.role = realUser?.role ?? 'sales' as TenantRole; campusId = realUser?.campusId ?? null;
-        //   User interface (user.repository.ts:20-26): { id, role: TenantRole, campusId: string, ... }
-        role: 'sales' as TenantRole,
-        campusId: null,
+        role: realUser.role,
+        // realUser.campusId 类型为 string（user.repository.ts:25），但 JwtPayload.campusId
+        // 允许 null（跨校 role 如 boss / admin / hr）— V2 schema users.campus_id 可空
+        campusId: realUser.campusId ?? null,
       };
       const accessToken = this.jwt.sign(signPayload, {
         jwtid: accessJti,

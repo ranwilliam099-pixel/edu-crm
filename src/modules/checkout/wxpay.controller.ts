@@ -154,11 +154,14 @@ export class WxPayController {
           'subscription unified-order: only admin/boss/platform can trigger',
         );
       }
-      // T9-EPIC round 2 (2026-05-16 security audit P0): 跨 tenant 支付构造攻击防御
+      // T9-EPIC round 2 (2026-05-16 security audit P0): 跨 tenant 支付构造攻击 defense-in-depth
       //   前端 URL 参数 body.tenantId 不可信，攻击者 admin from tenant A 可
       //   body.tenantId=TENANT_B_ID 构造 prepay 单跨 tenant 创建付款单
-      //   TenantScopeGuard 只校验 schema 前缀，不校验 tenantId — 后端唯一守门
-      //   platform role 豁免（运维场景需为多 tenant 创建付款）
+      //
+      //   T-DEPLOY-FIX-1 round 2 注释修正 (2026-05-16 pr-code-reviewer I-1)：
+      //   TenantScopeGuard (tenant-scope.guard.ts:70-79) 已校验 body.tenantId === user.tenantId
+      //   平台敏感金融操作 defense-in-depth 双层校验（5/10 P0 拍板「跨租户隔离硬红线」）
+      //   platform role 豁免（运维场景需为多 tenant 创建付款，与 TenantScopeGuard L58 一致）
       if (!isPlatformRole(role) && body.tenantId && req.user.tenantId !== body.tenantId) {
         throw new ForbiddenException(
           'subscription unified-order: body.tenantId must match JWT user.tenantId',
@@ -356,8 +359,15 @@ export class WxPayController {
         // 4. T9-EPIC(2026-05-16) §6.3：trade_state=SUCCESS → subscription_status='active'
         //   tenantId 来源（按优先级，遵循 spec §6.3 SQL 用 $1=tenantId）：
         //     a) decrypted.attach (V3 协议允许业务侧 携带, prepay 时设置)
-        //     b) attach 缺失 → 跳过 UPDATE（OrderRepository W3-3 落地后由 outTradeNo 反查）
-        //   fail-open：UPDATE 失败不返 FAIL（微信侧不应重试已确认收到的回调）
+        //     b) attach 缺失 → 跳过 UPDATE（OrderRepository W3-3 落地后由 outTradeNo 反查，T9-FU-2 backlog）
+        //
+        //   T-DEPLOY-FIX-1 round 2 (2026-05-16 silent-failure-hunter F-1 + user 拍板决策 #1)：
+        //   行为分级（PG fail-close vs attach 缺失 fail-open 区分）：
+        //     - PG UPDATE 抛错（transient: 连接 / 死锁 / 超时）→ 返 FAIL，微信重试 4 次自愈
+        //       理由：5/10 P0 「PG 是核心数据源」/ 微信 V3 协议原生支持回调重试 (15s/15s/30s/3m/10m...)
+        //       理由：付款成功是商业 source-of-truth，silent skip = 用户付款无效化 + 14d 后被锁
+        //     - attach 缺失（deterministic: platform_admin 路径 / 旧订单回滚）→ 返 SUCCESS skip
+        //       理由：永远重试也无 attach，T9-FU-2 (OrderRepository) 落地后由 outTradeNo 反查兜底
         if (tradeState === 'SUCCESS' && this.pg) {
           const attach = (decrypted as Record<string, unknown>).attach as string | undefined;
           const tenantId =
@@ -376,13 +386,25 @@ export class WxPayController {
                 `[wxpay V3 callback] tenant ${tenantId} subscription -> active (365d)`,
               );
             } catch (e) {
-              // fail-open：UPDATE 失败不阻塞回调返 SUCCESS（避免微信侧无限重试）
-              //   监控由 audit_log + pino + Sentry 兜底
-              this.logger.warn(
-                `[wxpay V3 callback] subscription UPDATE failed tenant=${tenantId}: ${(e as Error).message}`,
+              // T-DEPLOY-FIX-1 fail-close 改造：PG UPDATE 抛错 → 返 FAIL 触发微信重试
+              const errMsg = (e as Error).message;
+              this.logger.error(
+                `[wxpay V3 callback] subscription UPDATE PG failed tenant=${tenantId}: ${errMsg} — returning FAIL for WeChat retry`,
               );
+              await this.tryAudit(req, {
+                action: 'wxpay.callback.subscription-update-failed',
+                targetType: 'payment_order',
+                targetId: outTradeNo || 'unknown',
+                after: {
+                  tenantId,
+                  reason: errMsg.slice(0, 200),
+                  trade_state: tradeState,
+                },
+              });
+              return { code: 'FAIL', message: 'subscription UPDATE failed, please retry' };
             }
           } else {
+            // attach 缺失 = T9-FU-2 backlog（platform / parent-extra 路径），永远重试也无 attach
             this.logger.warn(
               `[wxpay V3 callback] attach missing / not 32-ULID, skip subscription UPDATE out_trade_no=${outTradeNo}`,
             );

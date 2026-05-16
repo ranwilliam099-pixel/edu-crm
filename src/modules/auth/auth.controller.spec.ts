@@ -12,6 +12,7 @@ import { AuthenticatedRequest } from './jwt-payload.interface';
 import { WxCodeSessionService } from './wx-code-session.service';
 import { RefreshTokenService } from './refresh-token.service';
 import { RefreshTokenRow } from './refresh-token.repository';
+import { UserRepository } from '../db/user.repository';
 
 const ULID32 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMN01';
 const ULID32_T = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMNTN';
@@ -25,6 +26,8 @@ describe('AuthController - 登录接口 + Sprint E.1 logout', () => {
   let refreshIssueSpy: jest.Mock;
   let refreshRotateSpy: jest.Mock;
   let refreshRevokeByRawSpy: jest.Mock;
+  // T-DEPLOY-FIX-1 round 2 (T11-FU-1)：T11 refresh 走 userRepo.findById 查真实 role
+  let userRepoFindByIdSpy: jest.Mock;
 
   const buildReqWithMeta = (auth?: string): AuthenticatedRequest =>
     ({
@@ -50,6 +53,17 @@ describe('AuthController - 登录接口 + Sprint E.1 logout', () => {
     });
     refreshRotateSpy = jest.fn();
     refreshRevokeByRawSpy = jest.fn().mockResolvedValue(undefined);
+    // T-DEPLOY-FIX-1 round 2：默认返一个合法 user（admin role）— 各 test 可单独 mockResolvedValueOnce 覆盖
+    userRepoFindByIdSpy = jest.fn().mockResolvedValue({
+      id: ULID32,
+      name: 'mock user',
+      mobile: '13800138000',
+      role: 'admin',
+      campusId: ULID32_C,
+      status: '启用',
+      createdAt: '2026-05-16T00:00:00Z',
+      updatedAt: '2026-05-16T00:00:00Z',
+    });
     const module: TestingModule = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: 'test-secret', signOptions: { expiresIn: '1d' } })],
       controllers: [AuthController],
@@ -73,6 +87,13 @@ describe('AuthController - 登录接口 + Sprint E.1 logout', () => {
             issue: refreshIssueSpy,
             rotate: refreshRotateSpy,
             revokeByRaw: refreshRevokeByRawSpy,
+          },
+        },
+        // T-DEPLOY-FIX-1 round 2 (T11-FU-1)：refresh endpoint 查 users 表取真实 role
+        {
+          provide: UserRepository,
+          useValue: {
+            findById: userRepoFindByIdSpy,
           },
         },
       ],
@@ -652,6 +673,82 @@ describe('AuthController - 登录接口 + Sprint E.1 logout', () => {
         }),
       ).rejects.toThrow(BadRequestException);
       expect(refreshRotateSpy).not.toHaveBeenCalled();
+    });
+
+    // T-DEPLOY-FIX-1 round 2 (T11-FU-1)：refresh endpoint 查 users 表取真实 role/campusId
+    //   原 mock 'sales' 硬编码 → 任何 B 端 boss/admin/academic refresh 后掉权限
+    //   3 agent 共识 HIGH-3 + silent-failure F-9 + user 拍板决策 #2
+    it('T11-FU-1: B-user refresh → userRepo 派真实 role + campusId（非 mock sales）', async () => {
+      const oldRow = makeBUserRow();
+      refreshRotateSpy.mockResolvedValueOnce({
+        oldRow,
+        newToken: {
+          refreshToken: 'rt_new_b_token_xxxxxxxxxxxxxxxxxxxxxxx',
+          refreshExpiresIn: 604800,
+          jti: '01HX7Y6P5K9N3M2QABCDEFGHIJ',
+        },
+      });
+      // mock userRepo 返 boss role + 跨校 campusId=null（boss 是 cross-campus）
+      userRepoFindByIdSpy.mockResolvedValueOnce({
+        id: ULID32,
+        name: 'real boss',
+        mobile: '13800138001',
+        role: 'boss',
+        campusId: '',
+        status: '启用',
+        createdAt: '2026-05-16T00:00:00Z',
+        updatedAt: '2026-05-16T00:00:00Z',
+      });
+      const result = await controller.refresh(buildReqWithMeta(), {
+        refreshToken: VALID_RAW,
+      });
+      // 验证 userRepo.findById 被 schema=tenant_<tenantId> + subjectId 调用
+      expect(userRepoFindByIdSpy).toHaveBeenCalledWith(
+        `tenant_${ULID32_T.toLowerCase()}`,
+        ULID32,
+      );
+      // 验证签出的 token 用真实 role
+      const decoded: any = jwt.verify(result.accessToken);
+      expect(decoded.role).toBe('boss');
+      // payload 是 JwtPayload | ParentPayload 联合 — B-user 路径 narrow 到 JwtPayload
+      expect((result.payload as { role?: string }).role).toBe('boss');
+    });
+
+    it('T11-FU-1: B-user 不存在 / 已软删 → 401 UnauthorizedException（不签新 token）', async () => {
+      const oldRow = makeBUserRow();
+      refreshRotateSpy.mockResolvedValueOnce({
+        oldRow,
+        newToken: {
+          refreshToken: 'rt_new_b_token_xxxxxxxxxxxxxxxxxxxxxxx',
+          refreshExpiresIn: 604800,
+          jti: '01HX7Y6P5K9N3M2QABCDEFGHIJ',
+        },
+      });
+      // user 已被软删 / deactivate → findById 返 null
+      userRepoFindByIdSpy.mockResolvedValueOnce(null);
+      await expect(
+        controller.refresh(buildReqWithMeta(), { refreshToken: VALID_RAW }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('T11-FU-1: platform-user (tenantId=null) refresh → 401（T11-FU-3 backlog）', async () => {
+      const oldRow: RefreshTokenRow = {
+        ...makeBUserRow(),
+        tenantId: null,  // platform_admin/finance_admin 跨 tenant
+      };
+      refreshRotateSpy.mockResolvedValueOnce({
+        oldRow,
+        newToken: {
+          refreshToken: 'rt_new_p_token_xxxxxxxxxxxxxxxxxxxxxxx',
+          refreshExpiresIn: 604800,
+          jti: '01HX7Y6P5K9N3M2QABCDEFGHIJ',
+        },
+      });
+      await expect(
+        controller.refresh(buildReqWithMeta(), { refreshToken: VALID_RAW }),
+      ).rejects.toThrow(UnauthorizedException);
+      // userRepo.findById 不应被调（早期 throw）
+      expect(userRepoFindByIdSpy).not.toHaveBeenCalled();
     });
   });
 

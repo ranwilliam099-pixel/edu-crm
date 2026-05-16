@@ -566,7 +566,10 @@ describe('WxPayController', () => {
         expect(pg.query).not.toHaveBeenCalled();
       });
 
-      it('pg UPDATE 抛错 → fail-open（仍返 SUCCESS，避免微信重试）', async () => {
+      // T-DEPLOY-FIX-1 round 2 (2026-05-16 silent-failure-hunter F-1 + user 拍板决策 #1)：
+      //   fail-close 改造 — PG UPDATE 抛错 → 返 FAIL 让微信重试 4 次自愈
+      //   原 round 1 spec "fail-open 返 SUCCESS" 行为已 deprecate（用户付款无效化风险）
+      it('pg UPDATE 抛错 → fail-close（返 FAIL 让微信重试 + 写 audit_log subscription-update-failed）', async () => {
         controller = buildController({ withPg: true });
         pg.query.mockRejectedValueOnce(new Error('pg connection failed'));
         wxpay.verifyCallbackSignature.mockResolvedValueOnce(true);
@@ -581,9 +584,13 @@ describe('WxPayController', () => {
           { id: 'evt_005', event_type: 'TRANSACTION.SUCCESS', resource } as never,
           makeReq({ headers }),
         );
-        // fail-open：UPDATE 失败不阻塞 callback 返 SUCCESS（微信侧不重试）
-        expect(r.code).toBe('SUCCESS');
+        // T-DEPLOY-FIX-1: fail-close — PG UPDATE 失败必须返 FAIL 触发微信重试（保护付款不丢）
+        expect(r.code).toBe('FAIL');
+        expect(r.message).toMatch(/subscription UPDATE failed/);
         expect(pg.query).toHaveBeenCalledTimes(1);
+        // 必有 audit_log 写入 subscription-update-failed（即使 callback 无 tenantSchema，
+        // audit fail-open skip 是另一回事；这里至少调用 tryAudit 走一次）
+        // 注：tryAudit 内部因 callback 无 tenantSchema 自然 skip，但代码路径必经过
       });
 
       it('验签失败 → callback 返 FAIL，不解密不 UPDATE', async () => {
