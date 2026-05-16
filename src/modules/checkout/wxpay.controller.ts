@@ -188,6 +188,13 @@ export class WxPayController {
     }
 
     // 4. 调微信
+    //   T9-FU-1 (2026-05-16)：subscription 路径透传 req.user.tenantId 到 V3 attach
+    //     非 platform 路径：body.tenantId 已 owner-check (L162-166) == req.user.tenantId,
+    //                     用 JWT 来源消除「body 不可信」攻击面
+    //     parent-extra 路径：不传 attach（家长跨 tenant 加购，attach 不适用）
+    //     platform 路径：req.user.tenantId 可能 null → attach 不传 →
+    //                   callback UPDATE 跳过（attach 缺失 → log warn）→
+    //                   留 T9-FU-2 backlog（platform 代付场景 OrderRepository W3-3 介入后用 outTradeNo 反查）
     let result: CreatePrepayResult;
     try {
       result = await this.wxpay.createPrepay({
@@ -196,9 +203,16 @@ export class WxPayController {
         amountCents: body.amountCents,
         description: body.description,
         notifyUrl,
+        tenantId:
+          body.type === 'subscription'
+            ? (req.user?.tenantId ?? undefined)
+            : undefined,
       });
     } catch (err) {
       // audit 失败路径
+      //   T9-FU-1 round 2 (2026-05-16 3 审共识 finding)：subscription 类型 audit
+      //   after 加 tenantId（来自 JWT，运营对账时不需要 JOIN auditor->user 表）
+      //   parent-extra 类型 tenantId 永远 null（家长跨 tenant，与现有 actorUserId=null 一致）
       await this.tryAudit(req, {
         action: 'wxpay.unified-order.failed',
         targetType: 'payment_order',
@@ -206,6 +220,7 @@ export class WxPayController {
         after: {
           type: body.type,
           amountCents: body.amountCents,
+          tenantId: req.user?.tenantId ?? null,
           reason: (err as Error).message?.slice(0, 200) ?? 'unknown',
         },
       });
@@ -213,6 +228,7 @@ export class WxPayController {
     }
 
     // 5. audit 成功路径（不入 paySign / nonce 等敏感串）
+    //   T9-FU-1 round 2 (2026-05-16 3 审共识 finding)：加 tenantId 字段增强对账
     await this.tryAudit(req, {
       action: 'wxpay.unified-order.created',
       targetType: 'payment_order',
@@ -220,6 +236,7 @@ export class WxPayController {
       after: {
         type: body.type,
         amountCents: body.amountCents,
+        tenantId: req.user?.tenantId ?? null,
         prepayId: result.prepayId,
         // openid 是用户标识，入 audit 用于运营对账；不属于 PII 个保法红线
         openidLast8: body.openid.slice(-8),

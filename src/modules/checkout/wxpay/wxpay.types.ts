@@ -40,6 +40,16 @@ export interface CreatePrepayParams {
   description: string;
   /** 回调通知 URL（A04 §3 回调签名校验前置）*/
   notifyUrl: string;
+  /**
+   * 业务侧 tenantId（32-ULID）— 透传到 V3 attach 字段
+   *
+   * T9-FU-1（2026-05-16）：subscription 路径下 controller 传 req.user.tenantId,
+   * 微信回调时 decrypted.attach 反查到 tenantId 推 subscription 解锁
+   * （详见 wxpay.controller.ts:344-373 callback UPDATE 分支）
+   *
+   * parent-extra 路径不传（家长跨 tenant 加购，attach 不适用）
+   */
+  tenantId?: string;
 }
 
 export interface CreatePrepayResult {

@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { WxPayController } from './wxpay.controller';
 import type { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
@@ -46,15 +47,21 @@ describe('WxPayController', () => {
     handleRefundNotify: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
-  let config: { get: jest.Mock };
+  let config: { get: jest.Mock; getOrThrow: jest.Mock };
+  let pg: { query: jest.Mock };
 
-  function buildController(opts: { withAudit?: boolean } = {}): WxPayController {
+  // T9-FU-1 round 2 (2026-05-16 production-validator SPEC GAP)：
+  //   buildController 加 pg 可选参数，使 V3 callback subscription UPDATE
+  //   分支 (wxpay.controller.ts:355-384) 在单测可被覆盖
+  function buildController(opts: { withAudit?: boolean; withPg?: boolean } = {}): WxPayController {
     const withAudit = opts.withAudit ?? true;
+    const withPg = opts.withPg ?? false;
     return new WxPayController(
       wxpay as never,
       callback as never,
       withAudit ? (auditLog as never) : undefined,
       config as never,
+      withPg ? (pg as never) : undefined,
     );
   }
 
@@ -70,12 +77,20 @@ describe('WxPayController', () => {
       handleRefundNotify: jest.fn(),
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
+    pg = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     config = {
       get: jest.fn((k: string) => {
         if (k === 'WXPAY_NOTIFY_URL') {
           return 'https://api.minxin.top/api/checkout/callbacks/wxpay';
         }
         return undefined;
+      }),
+      // T9-FU-1 round 2：decryptV3Resource 用 getOrThrow 拉 WXPAY_API_V3_KEY
+      getOrThrow: jest.fn((k: string) => {
+        if (k === 'WXPAY_API_V3_KEY') {
+          return '01234567890123456789012345678901'; // 32-char 测试密钥
+        }
+        throw new Error(`config.getOrThrow miss key=${k}`);
       }),
     };
 
@@ -118,6 +133,13 @@ describe('WxPayController', () => {
       });
       const r = await controller.unifiedOrder(validSubBody, req);
       expect(r.prepayId).toBe('wx_prepay_001');
+      // T9-FU-1 (2026-05-16)：subscription 路径 createPrepay input 必须含
+      // tenantId（用 req.user.tenantId 来源；body.tenantId 仅做 owner-check 不直接信任）
+      expect(wxpay.createPrepay).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tnnt0000000000000000000000000001',
+        }),
+      );
       expect(auditLog.log).toHaveBeenCalledWith(
         'tenant_tnnt0000000000000000000000000001',
         expect.objectContaining({
@@ -130,6 +152,35 @@ describe('WxPayController', () => {
       const auditCall = auditLog.log.mock.calls[0][1];
       expect(JSON.stringify(auditCall.after)).not.toContain(VALID_OPENID);
       expect(auditCall.after.openidLast8).toBe(VALID_OPENID.slice(-8));
+      // T9-FU-1 round 2 (business+security 共识 finding)：audit after 必含 tenantId
+      // 来源 JWT (req.user.tenantId)，不需要 JOIN auditor->users 表对账
+      expect(auditCall.after.tenantId).toBe('tnnt0000000000000000000000000001');
+    });
+
+    it('T9-FU-1: parent-extra 路径 → createPrepay input 不含 tenantId（家长跨 tenant 加购，attach 不适用）', async () => {
+      wxpay.createPrepay.mockResolvedValueOnce({
+        prepayId: 'wx_prepay_parent',
+        jsApiParams: {
+          timeStamp: '1700000000',
+          nonceStr: 'n',
+          package: 'prepay_id=wx_prepay_parent',
+          signType: 'RSA',
+          paySign: 'sig',
+        },
+      });
+      const body = { ...validSubBody, type: 'parent-extra' as const };
+      const req = makeReq({ body });
+      (req as { parent?: object }).parent = {
+        sub: 'par1',
+        parentId: 'par1',
+        role: 'parent',
+      };
+      await controller.unifiedOrder(body, req);
+      expect(wxpay.createPrepay).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: undefined,
+        }),
+      );
     });
 
     it('subscription 无 JWT → 401', async () => {
@@ -395,6 +446,163 @@ describe('WxPayController', () => {
       await expect(
         controller.wxpayCallback({ kind: 'refund' } as never, makeReq({ headers })),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    // ============================================================
+    // V3 原生协议分支 — T9-FU-1 round 2 (production-validator SPEC GAP)
+    //
+    // 业务闭环验证：attach=tenantId 透传 → callback 解密 → UPDATE public.tenants
+    //   wxpay.controller.ts:355-384 subscription UPDATE 路径之前 0 spec 覆盖
+    //   T9-FU-1 业务价值（subscription_status='trial' → 'active'）必须有测试断言
+    // ============================================================
+    describe('V3 原生协议分支（T9-FU-1 业务闭环）', () => {
+      const APIV3_KEY = '01234567890123456789012345678901'; // 与 config.getOrThrow 一致
+      const TENANT_ID = 'tnnt0000000000000000000000000001';
+
+      /**
+       * 用真实 AES-256-GCM 加密构造 V3 resource，避免 spec 与 controller 解密
+       * 实现走两套（mock 私有 method 会 false-positive）
+       */
+      function encryptV3Resource(
+        payload: Record<string, unknown>,
+        associatedData = 'transaction',
+      ) {
+        const nonce = '012345678901'; // 12-byte for GCM
+        const cipher = crypto.createCipheriv(
+          'aes-256-gcm',
+          Buffer.from(APIV3_KEY, 'utf8'),
+          Buffer.from(nonce, 'utf8'),
+        );
+        cipher.setAAD(Buffer.from(associatedData, 'utf8'));
+        const encrypted = Buffer.concat([
+          cipher.update(JSON.stringify(payload), 'utf8'),
+          cipher.final(),
+        ]);
+        const authTag = cipher.getAuthTag();
+        const ciphertext = Buffer.concat([encrypted, authTag]).toString('base64');
+        return {
+          algorithm: 'AEAD_AES_256_GCM',
+          ciphertext,
+          associated_data: associatedData,
+          nonce,
+        };
+      }
+
+      it('attach=tenantId + trade_state=SUCCESS → pg.query UPDATE subscription_status=active', async () => {
+        controller = buildController({ withPg: true });
+        wxpay.verifyCallbackSignature.mockResolvedValueOnce(true);
+        const resource = encryptV3Resource({
+          out_trade_no: ULID_A,
+          trade_state: 'SUCCESS',
+          attach: TENANT_ID,
+          transaction_id: '4200001234202605160001',
+          amount: { total: 199900 },
+        });
+        const r = await controller.wxpayCallback(
+          { id: 'evt_001', event_type: 'TRANSACTION.SUCCESS', resource } as never,
+          makeReq({ headers }),
+        );
+        expect(r.code).toBe('SUCCESS');
+        // T9-FU-1 业务闭环：attach → callback 解密 → pg UPDATE active
+        expect(pg.query).toHaveBeenCalledTimes(1);
+        const [sql, params] = pg.query.mock.calls[0];
+        expect(sql).toContain("subscription_status='active'");
+        expect(sql).toContain("INTERVAL '365 days'");
+        expect(params).toEqual([TENANT_ID]);
+      });
+
+      it('attach 缺失 + trade_state=SUCCESS → 跳过 UPDATE（log warn 不抛）', async () => {
+        controller = buildController({ withPg: true });
+        wxpay.verifyCallbackSignature.mockResolvedValueOnce(true);
+        const resource = encryptV3Resource({
+          out_trade_no: ULID_A,
+          trade_state: 'SUCCESS',
+          transaction_id: '4200001234202605160002',
+          amount: { total: 199900 },
+          // attach 字段刻意不传（platform_admin / 旧订单回滚场景）
+        });
+        const r = await controller.wxpayCallback(
+          { id: 'evt_002', event_type: 'TRANSACTION.SUCCESS', resource } as never,
+          makeReq({ headers }),
+        );
+        expect(r.code).toBe('SUCCESS');
+        expect(pg.query).not.toHaveBeenCalled(); // attach 缺失 → 跳过 UPDATE
+      });
+
+      it('attach 非 32-ULID（长度不对）+ trade_state=SUCCESS → 跳过 UPDATE', async () => {
+        controller = buildController({ withPg: true });
+        wxpay.verifyCallbackSignature.mockResolvedValueOnce(true);
+        const resource = encryptV3Resource({
+          out_trade_no: ULID_A,
+          trade_state: 'SUCCESS',
+          attach: 'not-a-valid-ulid', // 长度不对，attach 校验 length===32 失败
+          transaction_id: '4200001234202605160003',
+          amount: { total: 199900 },
+        });
+        const r = await controller.wxpayCallback(
+          { id: 'evt_003', event_type: 'TRANSACTION.SUCCESS', resource } as never,
+          makeReq({ headers }),
+        );
+        expect(r.code).toBe('SUCCESS');
+        expect(pg.query).not.toHaveBeenCalled();
+      });
+
+      it('pg 未注入（this.pg=undefined）+ trade_state=SUCCESS → 跳过 UPDATE（fail-open）', async () => {
+        controller = buildController({ withPg: false }); // pg 不注入
+        wxpay.verifyCallbackSignature.mockResolvedValueOnce(true);
+        const resource = encryptV3Resource({
+          out_trade_no: ULID_A,
+          trade_state: 'SUCCESS',
+          attach: TENANT_ID,
+          transaction_id: '4200001234202605160004',
+          amount: { total: 199900 },
+        });
+        const r = await controller.wxpayCallback(
+          { id: 'evt_004', event_type: 'TRANSACTION.SUCCESS', resource } as never,
+          makeReq({ headers }),
+        );
+        // pg.query 不应被调（this.pg=undefined 时 L355 if 短路）
+        expect(r.code).toBe('SUCCESS');
+        expect(pg.query).not.toHaveBeenCalled();
+      });
+
+      it('pg UPDATE 抛错 → fail-open（仍返 SUCCESS，避免微信重试）', async () => {
+        controller = buildController({ withPg: true });
+        pg.query.mockRejectedValueOnce(new Error('pg connection failed'));
+        wxpay.verifyCallbackSignature.mockResolvedValueOnce(true);
+        const resource = encryptV3Resource({
+          out_trade_no: ULID_A,
+          trade_state: 'SUCCESS',
+          attach: TENANT_ID,
+          transaction_id: '4200001234202605160005',
+          amount: { total: 199900 },
+        });
+        const r = await controller.wxpayCallback(
+          { id: 'evt_005', event_type: 'TRANSACTION.SUCCESS', resource } as never,
+          makeReq({ headers }),
+        );
+        // fail-open：UPDATE 失败不阻塞 callback 返 SUCCESS（微信侧不重试）
+        expect(r.code).toBe('SUCCESS');
+        expect(pg.query).toHaveBeenCalledTimes(1);
+      });
+
+      it('验签失败 → callback 返 FAIL，不解密不 UPDATE', async () => {
+        controller = buildController({ withPg: true });
+        wxpay.verifyCallbackSignature.mockResolvedValueOnce(false);
+        const resource = encryptV3Resource({
+          out_trade_no: ULID_A,
+          trade_state: 'SUCCESS',
+          attach: TENANT_ID,
+          transaction_id: '4200001234202605160006',
+          amount: { total: 199900 },
+        });
+        const r = await controller.wxpayCallback(
+          { id: 'evt_006', event_type: 'TRANSACTION.SUCCESS', resource } as never,
+          makeReq({ headers }),
+        );
+        expect(r.code).toBe('FAIL');
+        expect(pg.query).not.toHaveBeenCalled();
+      });
     });
   });
 

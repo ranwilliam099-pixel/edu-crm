@@ -125,7 +125,16 @@ export class RealWxPayClient implements WxPayClient, OnModuleInit {
     const cfg = this.loadConfig();
 
     const urlPath = '/v3/pay/transactions/jsapi';
-    const reqBody = {
+    const reqBody: {
+      appid: string;
+      mchid: string;
+      description: string;
+      out_trade_no: string;
+      notify_url: string;
+      amount: { total: number; currency: string };
+      payer: { openid: string };
+      attach?: string;
+    } = {
       appid: cfg.appId,
       mchid: cfg.mchid,
       description: params.description,
@@ -139,6 +148,12 @@ export class RealWxPayClient implements WxPayClient, OnModuleInit {
         openid: params.openid,
       },
     };
+    // T9-FU-1 (2026-05-16)：tenantId 透传到 V3 attach 字段
+    // 微信 V3 协议 attach 限 128 byte，32-ULID 完全够；不传则不设字段（向后兼容 parent-extra）
+    // callback 端 wxpay.controller.ts:344-373 解密后读 decrypted.attach 推 subscription UPDATE
+    if (params.tenantId) {
+      reqBody.attach = params.tenantId;
+    }
     const reqBodyStr = JSON.stringify(reqBody);
 
     const auth = this.buildAuthorizationHeader('POST', urlPath, reqBodyStr, cfg);

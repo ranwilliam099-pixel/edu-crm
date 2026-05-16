@@ -372,6 +372,52 @@ describe('RealWxPayClient (W2-T1)', () => {
         client.createPrepay({ ...VALID_PREPAY, notifyUrl: 'ftp://x' }),
       ).rejects.toThrow(BadRequestException);
     });
+
+    // ============================================================
+    // T9-FU-1 (2026-05-16)：tenantId 透传到 V3 attach 字段
+    // ============================================================
+
+    it('T9-FU-1: tenantId 传入 → V3 请求 body 含 attach=tenantId', async () => {
+      const origFetch = global.fetch;
+      let capturedBody: string | undefined;
+      global.fetch = jest.fn().mockImplementationOnce((_url, init) => {
+        capturedBody = init.body as string;
+        return Promise.resolve({
+          status: 200,
+          text: async () => JSON.stringify({ prepay_id: 'wx_prepay_attach' }),
+        });
+      }) as unknown as typeof fetch;
+      try {
+        const tenantId = 'tnnt0000000000000000000000000001';
+        await client.createPrepay({ ...VALID_PREPAY, tenantId });
+        expect(capturedBody).toBeDefined();
+        const parsed = JSON.parse(capturedBody!) as { attach?: string };
+        expect(parsed.attach).toBe(tenantId);
+      } finally {
+        global.fetch = origFetch;
+      }
+    });
+
+    it('T9-FU-1: tenantId 未传 → V3 请求 body 不含 attach（向后兼容 parent-extra）', async () => {
+      const origFetch = global.fetch;
+      let capturedBody: string | undefined;
+      global.fetch = jest.fn().mockImplementationOnce((_url, init) => {
+        capturedBody = init.body as string;
+        return Promise.resolve({
+          status: 200,
+          text: async () => JSON.stringify({ prepay_id: 'wx_prepay_no_attach' }),
+        });
+      }) as unknown as typeof fetch;
+      try {
+        // VALID_PREPAY 不含 tenantId
+        await client.createPrepay(VALID_PREPAY);
+        expect(capturedBody).toBeDefined();
+        const parsed = JSON.parse(capturedBody!) as { attach?: string };
+        expect(parsed.attach).toBeUndefined();
+      } finally {
+        global.fetch = origFetch;
+      }
+    });
   });
 
   // ============================================================
