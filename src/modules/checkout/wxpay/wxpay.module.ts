@@ -1,7 +1,8 @@
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MockWxPayClient } from './wxpay-mock.client';
 import { WxPayCallbackService } from './wxpay-callback.service';
+import { WxPayCertMonitorService } from './wxpay-cert-monitor.service';
 import { RealWxPayClient } from './wxpay-real.client';
 import { WxPayPlatformCertService } from './wxpay-platform-cert.service';
 import { WX_PAY_CLIENT } from './wxpay.types';
@@ -27,6 +28,9 @@ import { WX_PAY_CLIENT } from './wxpay.types';
     MockWxPayClient,
     RealWxPayClient,
     WxPayPlatformCertService,
+    // T14 §3：商户证书 60d 告警（@Cron 周一 08:00 Asia/Shanghai）
+    // 不 export — 仅内部 @Cron 触发，外部调用无意义
+    WxPayCertMonitorService,
     {
       provide: WX_PAY_CLIENT,
       inject: [ConfigService, MockWxPayClient, RealWxPayClient],
@@ -36,7 +40,15 @@ import { WX_PAY_CLIENT } from './wxpay.types';
         real: RealWxPayClient,
       ) => {
         const mode = config.get<string>('WXPAY_MODE', 'mock');
-        if (mode === 'real') return real;
+        if (mode === 'real') {
+          // T14 §3：启动日志带 active 信息（便于排查切换）
+          const active = config.get<string>('WXPAY_MCHID_ACTIVE', 'primary');
+          Logger.log(
+            `WXPAY_MODE=real WXPAY_MCHID_ACTIVE=${active}`,
+            'WxPayModule',
+          );
+          return real;
+        }
         // 默认 mock（单测 + 未配凭据场景 + 老接口）
         return mock;
       },

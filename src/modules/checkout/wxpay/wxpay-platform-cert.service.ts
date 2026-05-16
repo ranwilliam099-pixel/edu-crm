@@ -138,8 +138,9 @@ export class WxPayPlatformCertService implements OnModuleInit {
    * @throws Error 如果 ENV 缺失 / 文件不存在 / .pem 格式非法
    */
   private loadLocalPublicKey(): void {
-    const pubKeyId = this.config?.get<string>('WXPAY_PUB_KEY_ID');
-    const pubKeyPath = this.config?.get<string>('WXPAY_PUB_KEY_PATH');
+    // T14 §2.4：active 派生（与 wxpay-real.client.loadConfig 保持一致）
+    const pubKeyId = this.pickByActive('WXPAY_PUB_KEY_ID');
+    const pubKeyPath = this.pickByActive('WXPAY_PUB_KEY_PATH');
 
     if (!pubKeyId || !pubKeyPath) {
       throw new Error(
@@ -397,10 +398,11 @@ export class WxPayPlatformCertService implements OnModuleInit {
     if (!this.config) {
       throw new Error('ConfigService not injected');
     }
-    const mchid = this.config.get<string>('WXPAY_MCHID');
+    // T14 §2.4：active 派生 mchid/serialNo/privateKeyPath（apiV3Key 不分主备）
+    const mchid = this.pickByActive('WXPAY_MCHID');
     const apiV3Key = this.config.get<string>('WXPAY_API_V3_KEY');
-    const serialNo = this.config.get<string>('WXPAY_SERIAL_NO');
-    const privateKeyPath = this.config.get<string>('WXPAY_PRIVATE_KEY_PATH');
+    const serialNo = this.pickByActive('WXPAY_SERIAL_NO');
+    const privateKeyPath = this.pickByActive('WXPAY_PRIVATE_KEY_PATH');
     if (!mchid) throw new Error('WXPAY_MCHID missing');
     if (!apiV3Key) throw new Error('WXPAY_API_V3_KEY missing');
     if (!serialNo) throw new Error('WXPAY_SERIAL_NO missing');
@@ -415,5 +417,21 @@ export class WxPayPlatformCertService implements OnModuleInit {
       );
     }
     return { mchid, apiV3Key, serialNo, privateKeyPem };
+  }
+
+  /**
+   * T14 §2.4：按 WXPAY_MCHID_ACTIVE 派生 ENV
+   *
+   * 优先 `<base>_<ACTIVE>`，缺则 fallback 旧无后缀 `<base>`（向后兼容）。
+   * 与 wxpay-real.client.ts loadConfig 派生策略保持一致。
+   */
+  private pickByActive(base: string): string | undefined {
+    if (!this.config) return undefined;
+    const active = this.config.get<string>('WXPAY_MCHID_ACTIVE', 'primary');
+    const suffix = active.toUpperCase();
+    return (
+      this.config.get<string>(`${base}_${suffix}`) ||
+      this.config.get<string>(base)
+    );
   }
 }

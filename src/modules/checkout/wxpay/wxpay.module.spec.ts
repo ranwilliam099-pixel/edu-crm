@@ -5,6 +5,7 @@ import { MockWxPayClient } from './wxpay-mock.client';
 import { RealWxPayClient } from './wxpay-real.client';
 import { WxPayPlatformCertService } from './wxpay-platform-cert.service';
 import { WxPayCallbackService } from './wxpay-callback.service';
+import { WxPayCertMonitorService } from './wxpay-cert-monitor.service';
 import { WX_PAY_CLIENT, WxPayClient } from './wxpay.types';
 
 /**
@@ -100,6 +101,17 @@ describe('WxPayModule (W2-T1)', () => {
       const module = await buildModule('mock');
       const config = module.get(ConfigService);
       expect(config.get('WXPAY_MODE')).toBe('mock');
+      await module.close();
+    });
+
+    // T14 §3：cert-monitor 注册校验（Runtime Wiring 防 A3 audit B8 死代码教训）
+    it('WxPayCertMonitorService 注册并可注入', async () => {
+      const module = await buildModule('mock');
+      const monitor = module.get(WxPayCertMonitorService);
+      expect(monitor).toBeDefined();
+      expect(typeof monitor.checkMerchantCertExpiry).toBe('function');
+      expect(typeof monitor.readCertExpiry).toBe('function');
+      expect(typeof monitor.handleExpiry).toBe('function');
       await module.close();
     });
   });

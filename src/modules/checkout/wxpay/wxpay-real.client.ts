@@ -458,13 +458,27 @@ export class RealWxPayClient implements WxPayClient, OnModuleInit {
         message: 'ConfigService not injected',
       });
     }
-    const mchid = this.config.get<string>('WXPAY_MCHID');
-    const appId = this.config.get<string>('WXPAY_APP_ID');
-    const serialNo = this.config.get<string>('WXPAY_SERIAL_NO');
-    const apiV3Key = this.config.get<string>('WXPAY_API_V3_KEY');
+    // T14 §2.3：active 派生（pm2 reload --update-env 即生效切换）
+    // active=primary|fallback；其他值 fail-fast 防误配
+    const active = this.config.get<string>('WXPAY_MCHID_ACTIVE', 'primary');
+    if (active !== 'primary' && active !== 'fallback') {
+      throw new InternalServerErrorException({
+        code: 'WXPAY_CONFIG_INVALID',
+        message: `WXPAY_MCHID_ACTIVE must be 'primary' or 'fallback', got '${active}'`,
+      });
+    }
+    const suffix = active.toUpperCase();
+    // 优先读 _<ACTIVE>，缺则 fallback 旧无后缀 ENV（向后兼容）
+    const pick = (base: string): string | undefined =>
+      this.config!.get<string>(`${base}_${suffix}`) ||
+      this.config!.get<string>(base);
+    const mchid = pick('WXPAY_MCHID');
+    const appId = this.config.get<string>('WXPAY_APP_ID'); // appId 不分主备（小程序 appId 单一）
+    const serialNo = pick('WXPAY_SERIAL_NO');
+    const apiV3Key = this.config.get<string>('WXPAY_API_V3_KEY'); // APIv3 密钥不分主备（商户级共享）
     const notifyUrl = this.config.get<string>('WXPAY_NOTIFY_URL');
-    const privateKeyPath = this.config.get<string>('WXPAY_PRIVATE_KEY_PATH');
-    const certPath = this.config.get<string>('WXPAY_CERT_PATH');
+    const privateKeyPath = pick('WXPAY_PRIVATE_KEY_PATH');
+    const certPath = pick('WXPAY_CERT_PATH');
 
     const missing: string[] = [];
     if (!mchid) missing.push('WXPAY_MCHID');

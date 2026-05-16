@@ -88,7 +88,9 @@ describe('RealWxPayClient (W2-T1)', () => {
     ({ privateKey, publicKey, privateKeyPath, cleanup } = genKeyPair());
 
     config = {
-      get: jest.fn((k: string) => {
+      // T14: ConfigService.get(key, defaultValue) 第二个参数兜底
+      // ConfigService 真实行为：缺 key 时返默认值。mock 必须同步否则破坏 T14 active 派生
+      get: jest.fn((k: string, def?: unknown) => {
         const map: Record<string, string> = {
           WXPAY_MODE: 'mock', // 默认 mock 跳过 onModuleInit init
           WXPAY_MCHID: '1745394334',
@@ -99,7 +101,7 @@ describe('RealWxPayClient (W2-T1)', () => {
             'https://api.minxin.top/api/checkout/callbacks/wxpay',
           WXPAY_PRIVATE_KEY_PATH: privateKeyPath,
         };
-        return map[k];
+        return map[k] ?? def;
       }),
     };
 
@@ -129,8 +131,10 @@ describe('RealWxPayClient (W2-T1)', () => {
   // ============================================================
   describe('loadConfig', () => {
     it('缺失 WXPAY_MCHID → 抛 InternalServerError', () => {
-      config.get.mockImplementation((k: string) => {
+      // T14: 必须 honor default value（ConfigService.get 第二参数）— 否则 WXPAY_MCHID_ACTIVE 拿不到 'primary' 默认
+      config.get.mockImplementation((k: string, def?: unknown) => {
         if (k === 'WXPAY_MCHID') return undefined;
+        if (k === 'WXPAY_MCHID_ACTIVE') return def; // honor default 'primary'
         return 'placeholder';
       });
       client.resetConfigCache();
@@ -138,9 +142,10 @@ describe('RealWxPayClient (W2-T1)', () => {
     });
 
     it('WXPAY_API_V3_KEY 长度非 32 → 抛错', () => {
-      config.get.mockImplementation((k: string) => {
+      config.get.mockImplementation((k: string, def?: unknown) => {
         if (k === 'WXPAY_API_V3_KEY') return 'short_key';
         if (k === 'WXPAY_PRIVATE_KEY_PATH') return privateKeyPath;
+        if (k === 'WXPAY_MCHID_ACTIVE') return def; // honor default 'primary'
         return 'placeholder_https://x';
       });
       client.resetConfigCache();
@@ -148,7 +153,7 @@ describe('RealWxPayClient (W2-T1)', () => {
     });
 
     it('WXPAY_PRIVATE_KEY_PATH 文件不存在 → 抛错', () => {
-      config.get.mockImplementation((k: string) => {
+      config.get.mockImplementation((k: string, def?: unknown) => {
         const map: Record<string, string> = {
           WXPAY_MCHID: 'm',
           WXPAY_APP_ID: 'a',
@@ -157,7 +162,7 @@ describe('RealWxPayClient (W2-T1)', () => {
           WXPAY_NOTIFY_URL: 'https://x',
           WXPAY_PRIVATE_KEY_PATH: '/tmp/__nonexistent_wxpay_key__.pem',
         };
-        return map[k];
+        return map[k] ?? def;
       });
       client.resetConfigCache();
       expect(() => client.loadConfig()).toThrow(/PRIVATE_KEY/);
@@ -169,6 +174,103 @@ describe('RealWxPayClient (W2-T1)', () => {
       expect(a).toBe(b); // 同一对象引用 = 命中 cache
       expect(a.mchid).toBe('1745394334');
       expect(a.appId).toBe('wxde9d7818d7420d00');
+    });
+
+    // ============================================================
+    // T14 §2.3：active 派生（主备切换 ENV 双值方案）
+    // ============================================================
+    describe('T14 active 派生', () => {
+      it('WXPAY_MCHID_ACTIVE=primary + _PRIMARY 配齐 → 取 _PRIMARY 值', () => {
+        config.get.mockImplementation((k: string, def?: unknown) => {
+          const map: Record<string, string> = {
+            WXPAY_MCHID_ACTIVE: 'primary',
+            WXPAY_MCHID_PRIMARY: 'M_PRIMARY',
+            WXPAY_MCHID_FALLBACK: 'M_FALLBACK',
+            WXPAY_MCHID: 'M_LEGACY',
+            WXPAY_APP_ID: 'wxapp',
+            WXPAY_SERIAL_NO_PRIMARY: 'S_PRIMARY',
+            WXPAY_SERIAL_NO_FALLBACK: 'S_FALLBACK',
+            WXPAY_API_V3_KEY: TEST_API_V3_KEY,
+            WXPAY_NOTIFY_URL: 'https://x',
+            WXPAY_PRIVATE_KEY_PATH_PRIMARY: privateKeyPath,
+          };
+          return map[k];
+        });
+        client.resetConfigCache();
+        const cfg = client.loadConfig();
+        expect(cfg.mchid).toBe('M_PRIMARY');
+        expect(cfg.serialNo).toBe('S_PRIMARY');
+      });
+
+      it('WXPAY_MCHID_ACTIVE=fallback + _FALLBACK 配齐 → 取 _FALLBACK 值', () => {
+        config.get.mockImplementation((k: string, def?: unknown) => {
+          const map: Record<string, string> = {
+            WXPAY_MCHID_ACTIVE: 'fallback',
+            WXPAY_MCHID_PRIMARY: 'M_PRIMARY',
+            WXPAY_MCHID_FALLBACK: 'M_FALLBACK',
+            WXPAY_APP_ID: 'wxapp',
+            WXPAY_SERIAL_NO_PRIMARY: 'S_PRIMARY',
+            WXPAY_SERIAL_NO_FALLBACK: 'S_FALLBACK',
+            WXPAY_API_V3_KEY: TEST_API_V3_KEY,
+            WXPAY_NOTIFY_URL: 'https://x',
+            WXPAY_PRIVATE_KEY_PATH_FALLBACK: privateKeyPath,
+          };
+          return map[k];
+        });
+        client.resetConfigCache();
+        const cfg = client.loadConfig();
+        expect(cfg.mchid).toBe('M_FALLBACK');
+        expect(cfg.serialNo).toBe('S_FALLBACK');
+      });
+
+      it('未配 _PRIMARY → 回退到旧无后缀 ENV（向后兼容）', () => {
+        config.get.mockImplementation((k: string, def?: unknown) => {
+          const map: Record<string, string> = {
+            WXPAY_MCHID_ACTIVE: 'primary',
+            WXPAY_MCHID: 'LEGACY_MCHID',
+            WXPAY_APP_ID: 'wxapp',
+            WXPAY_SERIAL_NO: 'LEGACY_SERIAL',
+            WXPAY_API_V3_KEY: TEST_API_V3_KEY,
+            WXPAY_NOTIFY_URL: 'https://x',
+            WXPAY_PRIVATE_KEY_PATH: privateKeyPath,
+          };
+          return map[k];
+        });
+        client.resetConfigCache();
+        const cfg = client.loadConfig();
+        expect(cfg.mchid).toBe('LEGACY_MCHID');
+        expect(cfg.serialNo).toBe('LEGACY_SERIAL');
+      });
+
+      it('WXPAY_MCHID_ACTIVE=invalid → 抛 WXPAY_CONFIG_INVALID', () => {
+        config.get.mockImplementation((k: string) => {
+          if (k === 'WXPAY_MCHID_ACTIVE') return 'staging';
+          return 'placeholder';
+        });
+        client.resetConfigCache();
+        expect(() => client.loadConfig()).toThrow(InternalServerErrorException);
+        expect(() => client.loadConfig()).toThrow(/primary.*fallback/);
+      });
+
+      it('active=fallback + _FALLBACK 缺 → 走旧 ENV 回退（不应该报错，向后兼容）', () => {
+        config.get.mockImplementation((k: string, def?: unknown) => {
+          const map: Record<string, string> = {
+            WXPAY_MCHID_ACTIVE: 'fallback',
+            WXPAY_MCHID: 'LEGACY_MCHID',
+            WXPAY_APP_ID: 'wxapp',
+            WXPAY_SERIAL_NO: 'LEGACY_SERIAL',
+            WXPAY_API_V3_KEY: TEST_API_V3_KEY,
+            WXPAY_NOTIFY_URL: 'https://x',
+            WXPAY_PRIVATE_KEY_PATH: privateKeyPath,
+          };
+          return map[k];
+        });
+        client.resetConfigCache();
+        // fallback 时也走 fallback → primary → legacy 回退链：
+        //   _FALLBACK 缺 → 旧无后缀回退
+        const cfg = client.loadConfig();
+        expect(cfg.mchid).toBe('LEGACY_MCHID');
+      });
     });
   });
 
@@ -536,7 +638,7 @@ describe('RealWxPayClient (W2-T1)', () => {
     });
 
     it('WXPAY_MODE=real → 立即 loadConfig（fail-open 异常仅 warn）', () => {
-      config.get.mockImplementation((k: string) => {
+      config.get.mockImplementation((k: string, def?: unknown) => {
         const map: Record<string, string> = {
           WXPAY_MODE: 'real',
           WXPAY_MCHID: '1745394334',
@@ -546,15 +648,16 @@ describe('RealWxPayClient (W2-T1)', () => {
           WXPAY_NOTIFY_URL: 'https://x',
           WXPAY_PRIVATE_KEY_PATH: privateKeyPath,
         };
-        return map[k];
+        return map[k] ?? def;
       });
       client.resetConfigCache();
       expect(() => client.onModuleInit()).not.toThrow();
     });
 
     it('WXPAY_MODE=real + 配置缺失 → fail-open（不抛错）', () => {
-      config.get.mockImplementation((k: string) => {
+      config.get.mockImplementation((k: string, def?: unknown) => {
         if (k === 'WXPAY_MODE') return 'real';
+        if (k === 'WXPAY_MCHID_ACTIVE') return def; // honor default 'primary'
         return undefined; // 其他全部缺失
       });
       client.resetConfigCache();

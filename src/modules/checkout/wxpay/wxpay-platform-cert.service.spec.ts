@@ -103,7 +103,8 @@ describe('WxPayPlatformCertService (W2-T1)', () => {
   beforeEach(async () => {
     ({ privateKeyPath, cleanup } = genTestPrivateKey());
     config = {
-      get: jest.fn((k: string) => {
+      // T14: ConfigService.get(key, def) 第二参数 honor — pickByActive 派生需要
+      get: jest.fn((k: string, def?: unknown) => {
         const map: Record<string, string> = {
           WXPAY_MODE: 'mock', // 默认 mock，避免 onModuleInit 拉取
           WXPAY_MCHID: '1745394334',
@@ -111,7 +112,7 @@ describe('WxPayPlatformCertService (W2-T1)', () => {
           WXPAY_SERIAL_NO: '5297EF1F1145EA6220166AB51FB41E9D2F211439',
           WXPAY_PRIVATE_KEY_PATH: privateKeyPath,
         };
-        return map[k];
+        return map[k] ?? def;
       }),
     };
 
@@ -377,7 +378,7 @@ describe('WxPayPlatformCertService (W2-T1)', () => {
     });
 
     it('WXPAY_MODE=real + fetch 失败 → fail-open（不抛错）', async () => {
-      config.get.mockImplementation((k: string) => {
+      config.get.mockImplementation((k: string, def?: unknown) => {
         const map: Record<string, string> = {
           WXPAY_MODE: 'real',
           WXPAY_MCHID: '1745394334',
@@ -385,7 +386,7 @@ describe('WxPayPlatformCertService (W2-T1)', () => {
           WXPAY_SERIAL_NO: '5297EF1F',
           WXPAY_PRIVATE_KEY_PATH: privateKeyPath,
         };
-        return map[k];
+        return map[k] ?? def;
       });
       const origFetch = global.fetch;
       global.fetch = jest
@@ -393,6 +394,115 @@ describe('WxPayPlatformCertService (W2-T1)', () => {
         .mockRejectedValue(new Error('boot net error')) as unknown as typeof fetch;
       try {
         await expect(service.onModuleInit()).resolves.not.toThrow();
+      } finally {
+        global.fetch = origFetch;
+      }
+    });
+  });
+
+  // ============================================================
+  // T14 §2.4：active 派生（与 wxpay-real.client 同步策略）
+  // ============================================================
+  describe('T14 active 派生', () => {
+    it('refreshCertificates 时 active=primary + _PRIMARY 配齐 → 用 _PRIMARY 值签名', async () => {
+      // 自签私钥写入 _PRIMARY 路径
+      config.get.mockImplementation((k: string, def?: unknown) => {
+        const map: Record<string, string> = {
+          WXPAY_MODE: 'real',
+          WXPAY_MCHID_ACTIVE: 'primary',
+          WXPAY_MCHID_PRIMARY: '1111111111',
+          WXPAY_API_V3_KEY: TEST_API_V3_KEY,
+          WXPAY_SERIAL_NO_PRIMARY: 'PRIMARY_SERIAL',
+          WXPAY_PRIVATE_KEY_PATH_PRIMARY: privateKeyPath,
+        };
+        return map[k];
+      });
+
+      const enc = buildEncryptedFakeCert(
+        TEST_API_V3_KEY,
+        FAKE_PUB_PEM,
+        'NEW_SERIAL_T14',
+      );
+      const fetchSpy = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [enc] }),
+      });
+      const origFetch = global.fetch;
+      global.fetch = fetchSpy as unknown as typeof fetch;
+      try {
+        await service.refreshCertificates();
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        // Authorization header 应含 _PRIMARY 派生的 mchid / serialNo
+        const call = fetchSpy.mock.calls[0]!;
+        const headers = call[1].headers as Record<string, string>;
+        const auth = headers['Authorization'];
+        expect(auth).toContain('mchid="1111111111"');
+        expect(auth).toContain('serial_no="PRIMARY_SERIAL"');
+      } finally {
+        global.fetch = origFetch;
+      }
+    });
+
+    it('active=fallback + _FALLBACK 配齐 → 用 _FALLBACK 值', async () => {
+      config.get.mockImplementation((k: string, def?: unknown) => {
+        const map: Record<string, string> = {
+          WXPAY_MODE: 'real',
+          WXPAY_MCHID_ACTIVE: 'fallback',
+          WXPAY_MCHID_FALLBACK: '2222222222',
+          WXPAY_API_V3_KEY: TEST_API_V3_KEY,
+          WXPAY_SERIAL_NO_FALLBACK: 'FALLBACK_SERIAL',
+          WXPAY_PRIVATE_KEY_PATH_FALLBACK: privateKeyPath,
+        };
+        return map[k];
+      });
+
+      const enc = buildEncryptedFakeCert(
+        TEST_API_V3_KEY,
+        FAKE_PUB_PEM,
+        'NEW_SERIAL_T14B',
+      );
+      const fetchSpy = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [enc] }),
+      });
+      const origFetch = global.fetch;
+      global.fetch = fetchSpy as unknown as typeof fetch;
+      try {
+        await service.refreshCertificates();
+        const call = fetchSpy.mock.calls[0]!;
+        const auth = (call[1].headers as Record<string, string>)['Authorization'];
+        expect(auth).toContain('mchid="2222222222"');
+        expect(auth).toContain('serial_no="FALLBACK_SERIAL"');
+      } finally {
+        global.fetch = origFetch;
+      }
+    });
+
+    it('未配 _PRIMARY → 回退到旧无后缀 ENV（向后兼容）', async () => {
+      // 默认 beforeEach config 已是旧无后缀 ENV（WXPAY_MCHID 直接 1745394334）
+      const enc = buildEncryptedFakeCert(
+        TEST_API_V3_KEY,
+        FAKE_PUB_PEM,
+        'NEW_SERIAL_T14C',
+      );
+      const fetchSpy = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [enc] }),
+      });
+      const origFetch = global.fetch;
+      global.fetch = fetchSpy as unknown as typeof fetch;
+      try {
+        await service.refreshCertificates();
+        const call = fetchSpy.mock.calls[0]!;
+        const auth = (call[1].headers as Record<string, string>)['Authorization'];
+        // 旧 ENV 仍生效
+        expect(auth).toContain('mchid="1745394334"');
+        expect(auth).toContain(
+          'serial_no="5297EF1F1145EA6220166AB51FB41E9D2F211439"',
+        );
       } finally {
         global.fetch = origFetch;
       }
