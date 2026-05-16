@@ -303,7 +303,12 @@ export class AuthController {
         // Backlog T11-FU-1 (Sprint 后续): INT-01 users 表落地后 query 真实 role/campusId
         //   当前 mock 限制：role 写死 'sales'，所有 B 端 user refresh 后 access token role=sales
         //   规避：T11 round 2 三审 security finding P1 — 待 INT-01 修
-        //   规避方案：refresh handler 改 await userRepo.findById(oldRow.subjectId) 取真实 role/campusId
+        //   规避方案（精确 API 引用，已 grep 验证 user.repository.ts:222 签名）:
+        //     1. 注入 UserRepository (constructor 加 private readonly userRepo: UserRepository)
+        //     2. 派 schema: const schema = `tenant_${oldRow.tenantId}` (同 refresh-token.service.ts:227+255 模式)
+        //     3. query: const realUser = await this.userRepo.findById(schema, oldRow.subjectId)
+        //     4. 取值: signPayload.role = realUser?.role ?? 'sales' as TenantRole; campusId = realUser?.campusId ?? null;
+        //   User interface (user.repository.ts:20-26): { id, role: TenantRole, campusId: string, ... }
         role: 'sales' as TenantRole,
         campusId: null,
       };
