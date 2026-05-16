@@ -300,7 +300,10 @@ export class AuthController {
       const signPayload: Pick<JwtPayload, 'sub' | 'tenantId' | 'role' | 'campusId'> = {
         sub: oldRow.subjectId,
         tenantId: oldRow.tenantId,
-        // role/campusId mock 阶段不在 refresh_tokens 表 → 客户端用旧值；后续接 users 表补
+        // Backlog T11-FU-1 (Sprint 后续): INT-01 users 表落地后 query 真实 role/campusId
+        //   当前 mock 限制：role 写死 'sales'，所有 B 端 user refresh 后 access token role=sales
+        //   规避：T11 round 2 三审 security finding P1 — 待 INT-01 修
+        //   规避方案：refresh handler 改 await userRepo.findById(oldRow.subjectId) 取真实 role/campusId
         role: 'sales' as TenantRole,
         campusId: null,
       };

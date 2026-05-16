@@ -141,6 +141,20 @@ export class RefreshTokenService {
    *
    * 返回旧 row（含 subjectType/subjectId/tenantId）+ 新 token，
    * controller 用旧 row 信息签新 access token（audience 切分 + role/campusId 续期）
+   *
+   * 设计决策（T11 round 2，2026-05-16 user 拍板 A，OAuth 2.0 业界标准）：
+   *   rotate 不主动撤销旧 access token jti。旧 access token 在 access TTL（15min）
+   *   自然过期前仍有效。安全增益 vs 实现复杂度权衡接受 15min stolen-token 窗口。
+   *   T11 round 2 security finding A07-P0 → user 拍板 A：接受窗口（业界 OAuth 2.0
+   *   普遍如此，Google/Auth0/Okta 同模式）。spec §4.2 「新 jti 防混淆」语义 = 不复用
+   *   旧 jti（已实施），不是主动撤销（不实施）。需要立即失效 stolen token 走 logout 流程。
+   *
+   * @Cron wiring（防 T11 security finding 3 false positive 复现）：
+   *   refresh-token.service.ts 的 @Cron 装饰器通过 CronModule.NestScheduleModule.forRoot()
+   *   全局 SchedulerOrchestrator 扫描（app.module.ts:81 imports CronModule → cron.module.ts:21
+   *   imports [NestScheduleModule.forRoot(), ...]）。`@Cron` 在任何 module 的 provider
+   *   都能被扫到。grep 验证：app.module.ts 唯一 ScheduleModule import 是业务排课 module，
+   *   但 NestScheduleModule.forRoot() 走 CronModule 间接注册。
    */
   async rotate(
     rawToken: string,
