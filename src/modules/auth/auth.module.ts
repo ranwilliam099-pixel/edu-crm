@@ -6,6 +6,9 @@ import { ParentJwtStrategy } from './parent-jwt.strategy';
 import { TenantMiddleware } from './tenant.middleware';
 import { AuthController } from './auth.controller';
 import { WxCodeSessionService } from './wx-code-session.service';
+// T11 (2026-05-16) refresh token rotation
+import { RefreshTokenRepository } from './refresh-token.repository';
+import { RefreshTokenService } from './refresh-token.service';
 
 /**
  * Auth 模块（W1 BE-W1-3 + V10 BE-V10-3 ParentJwt）
@@ -31,8 +34,25 @@ import { WxCodeSessionService } from './wx-code-session.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [JwtStrategy, ParentJwtStrategy, TenantMiddleware, WxCodeSessionService],
-  exports: [JwtStrategy, ParentJwtStrategy, TenantMiddleware, JwtModule, WxCodeSessionService],
+  providers: [
+    JwtStrategy,
+    ParentJwtStrategy,
+    TenantMiddleware,
+    WxCodeSessionService,
+    // T11 (2026-05-16) RefreshTokenRepository 注入 PgPoolService（DbModule @Global() 自动解析）
+    //   RefreshTokenService 注入 HmacHasher + AuditLogRepository（同 @Global() 路径），
+    //   无需显式 imports: [DbModule]（DbModule 已 @Global，且会引入循环依赖如 audit-log → user）
+    RefreshTokenRepository,
+    RefreshTokenService,
+  ],
+  exports: [
+    JwtStrategy,
+    ParentJwtStrategy,
+    TenantMiddleware,
+    JwtModule,
+    WxCodeSessionService,
+    RefreshTokenService,
+  ],
 })
 export class AuthModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

@@ -18,9 +18,12 @@ import {
   AuthenticatedRequest,
   JwtPayload,
   AUDIENCE_B_APP,
+  AUDIENCE_PARENT_APP,
 } from './jwt-payload.interface';
 import { RedisService } from '../redis/redis.service';
 import { WxCodeSessionService } from './wx-code-session.service';
+// T11 (2026-05-16) refresh token rotation
+import { RefreshTokenService } from './refresh-token.service';
 
 /**
  * AuthController — 联调收尾 Q-FE-2 + 待补 B 端 /auth/login
@@ -42,6 +45,7 @@ export class AuthController {
     private readonly parentJwt: ParentJwtStrategy,
     private readonly redis: RedisService,
     private readonly wxCodeSession: WxCodeSessionService,
+    private readonly refreshTokenService: RefreshTokenService,
   ) {}
 
   /**
@@ -59,7 +63,8 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  login(
+  async login(
+    @Req() req: AuthenticatedRequest,
     @Body()
     body: {
       phone: string;
@@ -137,10 +142,20 @@ export class AuthController {
     const token = this.jwt.sign(signPayload, { jwtid: jti, audience: AUDIENCE_B_APP });
     // 给前端返回完整 payload（含 jti / aud）便于调试 / 前端缓存 logout 用
     const payload: JwtPayload = { ...signPayload, jti, aud: AUDIENCE_B_APP };
+    // T11 (2026-05-16): 签发配套 refresh token（7d B 端）
+    const refresh = await this.refreshTokenService.issue({
+      subjectType: 'b-user',
+      subjectId: body.userId,
+      tenantId: body.tenantId,
+      userAgent: this.getUserAgent(req),
+      ip: this.getIp(req),
+    });
     return {
       token,
+      refreshToken: refresh.refreshToken,
       tokenType: 'Bearer',
       expiresIn: 86400,
+      refreshExpiresIn: refresh.refreshExpiresIn,
       payload,
     };
   }
@@ -158,7 +173,8 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('wechat-login')
   @HttpCode(HttpStatus.OK)
-  wechatLogin(
+  async wechatLogin(
+    @Req() req: AuthenticatedRequest,
     @Body()
     body: {
       parentId: string;
@@ -174,10 +190,20 @@ export class AuthController {
       parentId: body.parentId,
       openid: body.openid,
     });
+    // T11 (2026-05-16): 签发配套 refresh token（30d C 端 parent）
+    const refresh = await this.refreshTokenService.issue({
+      subjectType: 'parent',
+      subjectId: body.parentId,
+      tenantId: null, // C 端 parent 跨租户身份（V10 拍板）
+      userAgent: this.getUserAgent(req),
+      ip: this.getIp(req),
+    });
     return {
       token,
+      refreshToken: refresh.refreshToken,
       tokenType: 'Bearer',
       expiresIn: 30 * 86400,
+      refreshExpiresIn: refresh.refreshExpiresIn,
       payload: { parentId: body.parentId, openid: body.openid, type: 'parent' },
     };
   }
@@ -217,6 +243,130 @@ export class AuthController {
   }
 
   /**
+   * POST /api/public/auth/refresh — T11 (2026-05-16) refresh token rotation
+   *
+   * 入参: { refreshToken } — raw token（非 hash）
+   * 不需 Authorization header（refresh token 本身即凭证）
+   *
+   * 流程（spec §2.2）：
+   *   1. 校验 body 形态（非空 string, length 20-200）→ 否则 400
+   *   2. service.rotate() 内部 hash + 查表 + 三态判定（INVALID/REVOKED/EXPIRED）
+   *      - REVOKED 触发重放检测：撤销 subject 全部 active token + audit replay-detected
+   *   3. 旋转事务：旧 row revoked + 新 row insert
+   *   4. 签新 access token（B 端 b-app / C 端 parent-app，复用旧 row 的 subjectType + tenantId）
+   *   5. 返 { accessToken, refreshToken, tokenType, expiresIn, refreshExpiresIn, payload }
+   *
+   * 失败语义（spec §2.3）：
+   *   - body 形态错 → 400 BadRequest
+   *   - INVALID/REVOKED/EXPIRED → 401 UnauthorizedException
+   *
+   * @Throttle 30/min per IP（spec §9.3 — 比 login 宽松，refresh 是正常生命周期事件）
+   */
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  async refresh(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { refreshToken: string },
+  ): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    tokenType: 'Bearer';
+    expiresIn: number;
+    refreshExpiresIn: number;
+    payload: JwtPayload | { parentId: string; openid?: string; type: 'parent'; aud: string };
+  }> {
+    if (!RefreshTokenService.isWellFormedRawToken(body?.refreshToken)) {
+      throw new BadRequestException(
+        'refreshToken is required (string, length 20-200)',
+      );
+    }
+    const { oldRow, newToken } = await this.refreshTokenService.rotate(
+      body.refreshToken,
+      {
+        userAgent: this.getUserAgent(req),
+        ip: this.getIp(req),
+        requestId: this.getRequestId(req),
+      },
+    );
+
+    if (oldRow.subjectType === 'b-user') {
+      // B 端：用旧 row.subjectId/tenantId 续签 access token（role/campusId 需从用户表查；
+      //   当前 mock 模式：role/campusId 不在 refresh_tokens 表 → 由前端在 login 时缓存，
+      //   refresh 后前端继续使用旧 role/campusId，下次 access token 复用旧 claims）
+      // 注：spec §2.2 step 4 假定 jwt 库可签出含 role/campusId 的 access token；
+      //   mock 阶段仅签 sub/tenantId/jti/aud；真实接 users 表后会从 DB 查出 role/campusId 填上。
+      const accessJti = ulid();
+      const signPayload: Pick<JwtPayload, 'sub' | 'tenantId' | 'role' | 'campusId'> = {
+        sub: oldRow.subjectId,
+        tenantId: oldRow.tenantId,
+        // role/campusId mock 阶段不在 refresh_tokens 表 → 客户端用旧值；后续接 users 表补
+        role: 'sales' as TenantRole,
+        campusId: null,
+      };
+      const accessToken = this.jwt.sign(signPayload, {
+        jwtid: accessJti,
+        audience: AUDIENCE_B_APP,
+      });
+      const payload: JwtPayload = {
+        ...signPayload,
+        jti: accessJti,
+        aud: AUDIENCE_B_APP,
+      };
+      return {
+        accessToken,
+        refreshToken: newToken.refreshToken,
+        tokenType: 'Bearer',
+        expiresIn: 86400,
+        refreshExpiresIn: newToken.refreshExpiresIn,
+        payload,
+      };
+    }
+
+    // C 端 parent
+    const parentAccessToken = this.parentJwt.sign({
+      parentId: oldRow.subjectId,
+      // openid 不在 refresh_tokens 表 → 续期 token 时为 undefined（前端有 openid 缓存）
+    });
+    return {
+      accessToken: parentAccessToken,
+      refreshToken: newToken.refreshToken,
+      tokenType: 'Bearer',
+      expiresIn: 30 * 86400,
+      refreshExpiresIn: newToken.refreshExpiresIn,
+      payload: {
+        parentId: oldRow.subjectId,
+        type: 'parent' as const,
+        aud: AUDIENCE_PARENT_APP,
+      },
+    };
+  }
+
+  /** 取请求 IP（IPv4 / IPv6 兼容） */
+  private getIp(req: AuthenticatedRequest): string | null {
+    const xf = req.headers['x-forwarded-for'];
+    if (typeof xf === 'string' && xf) return xf.split(',')[0].trim();
+    if (Array.isArray(xf) && xf.length > 0) return xf[0].split(',')[0].trim();
+    return req.ip ?? null;
+  }
+
+  /** 取 user-agent */
+  private getUserAgent(req: AuthenticatedRequest): string | null {
+    const ua = req.headers['user-agent'];
+    if (typeof ua === 'string') return ua;
+    if (Array.isArray(ua) && ua.length > 0) return ua[0];
+    return null;
+  }
+
+  /** 取 request id（pino reqId 同源） */
+  private getRequestId(req: AuthenticatedRequest): string | null {
+    const rid = req.headers['x-request-id'];
+    if (typeof rid === 'string') return rid;
+    if (Array.isArray(rid) && rid.length > 0) return rid[0];
+    return null;
+  }
+
+  /**
    * POST /api/public/auth/logout — B 端员工登出（Sprint E.1 JWT 黑名单）
    *
    * Header: Authorization: Bearer <token>
@@ -234,7 +384,10 @@ export class AuthController {
    */
   @Post('logout')
   @HttpCode(HttpStatus.OK)
-  async logout(@Req() req: AuthenticatedRequest): Promise<{ ok: true }> {
+  async logout(
+    @Req() req: AuthenticatedRequest,
+    @Body() body?: { refreshToken?: string },
+  ): Promise<{ ok: true }> {
     const auth = req.headers['authorization'];
     const header = Array.isArray(auth) ? auth[0] : auth;
     if (!header || !header.startsWith('Bearer ')) {
@@ -268,6 +421,17 @@ export class AuthController {
         await this.redis.set(`auth:revoked:${payload.jti}`, '1', ttlSec);
       } catch {
         // Redis fail-open：写黑名单失败不阻塞 logout（客户端清 token 仍生效）
+      }
+    }
+
+    // T11 (2026-05-16 spec §4.3) logout 同时撤销 refresh token
+    //   - body.refreshToken optional：旧客户端不传 refresh，向前兼容
+    //   - revokeByRaw fail-open：raw 不匹配 / 行已 revoked 安静返回（logout 幂等）
+    if (body?.refreshToken && RefreshTokenService.isWellFormedRawToken(body.refreshToken)) {
+      try {
+        await this.refreshTokenService.revokeByRaw(body.refreshToken);
+      } catch {
+        // DB fail-open：refresh 撤销失败不阻塞 logout（access 黑名单已写）
       }
     }
 

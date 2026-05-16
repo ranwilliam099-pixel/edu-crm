@@ -97,6 +97,15 @@ export function isCrossCampusRole(role: string): boolean {
 }
 
 /**
+ * T11 (2026-05-16) refresh token subject 区分（与 refresh_tokens.subject_type CHECK 对齐）
+ *   - 'b-user'  B 端员工 user（含 admin/boss/sales/teacher/academic/...）
+ *   - 'parent'  C 端家长 parent
+ *
+ * 与 TenantRole 区分：role 是 B 端内的角色枚举，subject_type 是 token 主体类型。
+ */
+export type RefreshTokenSubjectType = 'b-user' | 'parent';
+
+/**
  * Express Request 扩展类型 — controller 用 `@Req() req: AuthenticatedRequest`
  * 替代 `req: any`，保留类型安全又不引入硬依赖
  */
