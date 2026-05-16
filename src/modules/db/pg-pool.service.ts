@@ -38,16 +38,17 @@ export class PgPoolService implements OnModuleDestroy {
       user: this.config.get<string>('DB_USER', 'eduapp'),
       password: this.config.get<string>('DB_PASSWORD', ''),
       database: this.config.get<string>('DB_NAME', 'edu'),
-      max: 10,
+      max: parseInt(this.config.get<string>('DB_POOL_MAX', '25'), 10),
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
+      statement_timeout: parseInt(this.config.get<string>('DB_STATEMENT_TIMEOUT_MS', '5000'), 10),
     });
 
     this.pool.on('error', (err) => {
       this.logger.error(`[PgPool] idle client error: ${err.message}`);
     });
 
-    this.logger.log(`[PgPool] initialized → ${this.config.get('DB_HOST')}/${this.config.get('DB_NAME')} max=10`);
+    this.logger.log(`[PgPool] initialized → ${this.config.get('DB_HOST')}/${this.config.get('DB_NAME')} max=${this.config.get<string>('DB_POOL_MAX', '25')}`);
   }
 
   /**
