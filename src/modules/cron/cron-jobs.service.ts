@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { CourseConsumptionService, CourseConsumption } from '../feedback/course-consumption.service';
 import { LessonFeedback, LessonFeedbackService } from '../feedback/lesson-feedback.service';
 import { MonthlyReportService, MonthlyReport } from '../feedback/monthly-report.service';
@@ -13,6 +14,8 @@ import { ReferralRepository } from '../db/referral.repository';
 import { ScheduleRepository } from '../db/schedule.repository';
 import { ParentSubscriptionRepository } from '../db/parent-subscription.repository';
 import { CampusFreeSlotRepository } from '../db/campus-free-slot.repository';
+import { PgPoolService } from '../db/pg-pool.service';
+import { AuditLogRepository } from '../db/audit-log.repository';
 
 /**
  * CronJobsService — 全局定时任务编排（W3-1 收尾）
@@ -48,6 +51,10 @@ export class CronJobsService {
     private readonly scheduleRepo: ScheduleRepository,
     private readonly parentSubRepo: ParentSubscriptionRepository,
     private readonly freeSlotRepo: CampusFreeSlotRepository,
+    // T9-EPIC(2026-05-16) §4：expireOverdueTrials cron 依赖
+    //   @Optional 是为了 spec 兼容（旧测试 fixture 不传不报错）
+    @Optional() private readonly pg?: PgPoolService,
+    @Optional() private readonly auditLogRepo?: AuditLogRepository,
   ) {}
 
   /**
@@ -305,6 +312,69 @@ export class CronJobsService {
       skipped: totalSkipped,
       perTemplate,
     };
+  }
+
+  /**
+   * T9-EPIC(2026-05-16) §4 — trial 14d 到期自动标 expired（数据只读）
+   *
+   * cron: '30 3 * * *'（每天 03:30 UTC，避开 refresh-token cleanup @ 03:00）
+   *
+   * 流程（spec §4）：
+   *   1. UPDATE trial → expired RETURNING id
+   *   2. 逐条写 audit_log 'tenant.subscription.expired'（fail-open 每条独立 try）
+   *   3. 整体 fail-open（PG 失败不抛错，pino + Sentry 兜底监控）
+   *
+   * 与 TenantSubscriptionGuard 关系：
+   *   - 03:30 到期当时 → 数据库 expired
+   *   - 用户下次 POST 请求 → Guard 查 PG 返 expired → 403
+   *   - 03:30 之前到期但还未 cron → Guard 仍放行（漂移 < 3.5h，影响 < 0.1% 用户）
+   */
+  @Cron('30 3 * * *', { name: 'trial-expiry' })
+  async expireOverdueTrials(): Promise<void> {
+    if (!this.pg) {
+      this.logger.warn('[trial-expiry] PgPoolService not available, skip');
+      return;
+    }
+    try {
+      const result = await this.pg.query<{ id: string }>(
+        `UPDATE public.tenants
+           SET subscription_status='expired'
+           WHERE subscription_status='trial'
+             AND trial_ends_at IS NOT NULL
+             AND trial_ends_at < NOW()
+           RETURNING id`,
+      );
+      this.logger.log(`[trial-expiry] expired ${result.length} tenant(s)`);
+
+      // 每条独立 try 写 audit_log；单条失败不中断后续
+      for (const row of result) {
+        if (!this.auditLogRepo) continue;
+        const schema = `tenant_${row.id.toLowerCase()}`;
+        try {
+          await this.auditLogRepo.log(schema, {
+            actorUserId: null,
+            actorRole: 'system',
+            action: 'tenant.subscription.expired',
+            targetType: 'tenant',
+            targetId: row.id,
+            before: { subscription_status: 'trial' },
+            after: { subscription_status: 'expired' },
+            ip: null,
+            userAgent: null,
+            requestId: null,
+          });
+        } catch (e) {
+          this.logger.warn(
+            `[trial-expiry] audit_log skip tenant=${row.id}: ${(e as Error).message}`,
+          );
+        }
+      }
+    } catch (err) {
+      // 整体 fail-open：cron 失败不应导致进程重启（与 refresh-token cleanup 一致）
+      this.logger.error(
+        `[trial-expiry] failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   // 标记反馈已读统计 / 老师工资周期等更复杂的 cron 后续可按此模式扩展

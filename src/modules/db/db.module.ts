@@ -1,4 +1,6 @@
 import { Global, Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 import { PgPoolService } from './pg-pool.service';
 import { TenantProvisionService } from './tenant-provision.service';
 
@@ -80,7 +82,7 @@ import { CourseProductController } from './course-product.controller';
 // ===== 跨版本 =====
 import { StudentImportRepository } from './student-import.repository';
 import { StudentImportController } from './student-import.controller';
-import { OnboardingController } from './onboarding.controller';
+import { OnboardingController, OnboardingDbController } from './onboarding.controller';
 import { UploadController } from './upload.controller';
 
 // ===== V33 审计日志（生产架构 P0 第 1 项）=====
@@ -144,9 +146,24 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
   imports: [
     // F-08 round 2: SecurityModule 改 @Global() 后无需此处显式 imports
     // OnboardingController 注入 SecurityService 由 @Global 自动解析
+    //
+    // T9-EPIC(2026-05-16) §11 NEW：OnboardingController.provisionTenant 响应签 access_token
+    //   admin user 创建后立刻签 JWT 让前端跳 plan-select（需 token 才能调 start-trial）
+    //   JwtModule 不是 @Global → DbModule 显式 registerAsync（与 auth.module.ts 同 secret）
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET') ?? '__CHANGE_ME_IN_PROD__',
+        signOptions: {
+          expiresIn: `${config.get<number>('JWT_TTL_SEC', 86400)}s`,
+        },
+      }),
+    }),
   ],
   controllers: [
     OnboardingController,
+    // T9-EPIC(2026-05-16) §6.2 — POST /api/db/onboarding/start-trial
+    OnboardingDbController,
     TeacherShowcaseController,
     LeaveController,
     RecommendationController,

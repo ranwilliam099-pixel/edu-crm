@@ -152,6 +152,25 @@ describe('WxPayController', () => {
       );
     });
 
+    it('subscription body.tenantId 不匹配 JWT user.tenantId → 403 (T9-EPIC round 2 跨 tenant 支付攻击防御)', async () => {
+      // T9-EPIC round 2 (2026-05-16 security audit P0)：admin from tenant A 不能构造
+      // body.tenantId=TENANT_B 跨 tenant 创建付款单。前端 URL 参数不可信，后端唯一守门。
+      const req = makeReq({
+        user: {
+          sub: 'usr00000000000000000000000000000a',
+          role: 'admin',
+          tenantId: 'tnnt0000000000000000000000000001', // tenant A
+          campusId: null,
+        },
+      });
+      await expect(
+        controller.unifiedOrder(
+          { ...validSubBody, tenantId: 'tnnt0000000000000000000000000099' }, // tenant B
+          req,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
     it('parent-extra 有 ParentJwt → 通过', async () => {
       wxpay.createPrepay.mockResolvedValueOnce({
         prepayId: 'wx_prepay_002',
@@ -217,7 +236,7 @@ describe('WxPayController', () => {
         user: {
           sub: 'u',
           role: 'admin',
-          tenantId: 't',
+          tenantId: 'tnnt0000000000000000000000000001', // T9-EPIC round 2: 匹配 validSubBody.tenantId 防 owner check 先抛
           campusId: null,
         },
       });

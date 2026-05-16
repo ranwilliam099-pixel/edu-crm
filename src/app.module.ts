@@ -33,6 +33,7 @@ import { LearningProfileModule } from './modules/learning-profile/learning-profi
 import { DbModule } from './modules/db/db.module';
 import { SecurityModule } from './modules/security/security.module';
 import { InvoiceModule } from './modules/invoice/invoice.module';
+import { TenantSubscriptionGuard } from './guards/tenant-subscription.guard';
 
 @Module({
   imports: [
@@ -107,6 +108,11 @@ import { InvoiceModule } from './modules/invoice/invoice.module';
         new ThrottlerGuard(options, storage, reflector),
       inject: [getThrottlerOptionsToken(), ThrottlerStorage, Reflector],
     },
+    // T9-EPIC(2026-05-16) §3 拍板 1：global APP_GUARD（不是 class-level）
+    //   - 35 controller / 183 写装饰器，class-level 改 35 文件易漏
+    //   - 早退顺序（method=GET / 白名单 4 前缀 / platform role / 无 tenant）保证零开销
+    //   - expired tenant → 403 'subscription_expired'，前端 utils/api.js 拦截弹 modal
+    { provide: APP_GUARD, useClass: TenantSubscriptionGuard },
   ],
 })
 export class AppModule {}

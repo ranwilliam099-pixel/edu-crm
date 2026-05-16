@@ -9,10 +9,15 @@
  *   - 不返微信内部 errcode（A05 内部 ID 暴露规避）
  */
 import { BadRequestException } from '@nestjs/common';
-import { OnboardingController } from './onboarding.controller';
+import {
+  OnboardingController,
+  OnboardingDbController,
+} from './onboarding.controller';
 import { TenantProvisionService } from './tenant-provision.service';
 import { PgPoolService } from './pg-pool.service';
 import { SecurityService } from '../security/security.service';
+import { AuditLogRepository } from './audit-log.repository';
+import type { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 describe('OnboardingController (Sprint E.x F-08 msgSecCheck)', () => {
   let controller: OnboardingController;
@@ -247,5 +252,95 @@ describe('OnboardingController (Sprint E.x F-08 msgSecCheck)', () => {
       expect(security.serverSideCheckContent).not.toHaveBeenCalled();
       expect(provision.provisionTenant).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ============================================================
+// T9-EPIC(2026-05-16) §6.2：OnboardingDbController.startTrial
+// ============================================================
+describe('OnboardingDbController.startTrial (T9-EPIC §6.2)', () => {
+  const VALID_TENANT_ID = 'tenantT9000000000000000000000001';
+  const VALID_SCHEMA = `tenant_${VALID_TENANT_ID.toLowerCase()}`;
+  const VALID_USER_ID = 'usrT900000000000000000000000ADM1';
+
+  let controller: OnboardingDbController;
+  let audit: { log: jest.Mock };
+
+  function makeReq(): AuthenticatedRequest {
+    return {
+      user: {
+        sub: VALID_USER_ID,
+        role: 'admin',
+        tenantId: VALID_TENANT_ID,
+        campusId: null,
+      },
+      headers: { 'user-agent': 'jest-test', 'x-request-id': 'rid-T9-1' },
+      ip: '1.2.3.4',
+    } as AuthenticatedRequest;
+  }
+
+  beforeEach(() => {
+    audit = { log: jest.fn().mockResolvedValue(undefined) };
+    controller = new OnboardingDbController(
+      audit as unknown as AuditLogRepository,
+    );
+  });
+
+  it('happy path → audit_log 写 trial.started + 返 { ok: true }', async () => {
+    const req = makeReq();
+    const res = await controller.startTrial(req, {
+      tenantId: VALID_TENANT_ID,
+      tenantSchema: VALID_SCHEMA,
+    });
+    expect(res).toEqual({ ok: true });
+    expect(audit.log).toHaveBeenCalledWith(
+      VALID_SCHEMA,
+      expect.objectContaining({
+        actorUserId: VALID_USER_ID,
+        actorRole: 'admin',
+        action: 'tenant.subscription.trial.started',
+        targetType: 'tenant',
+        targetId: VALID_TENANT_ID,
+        before: null,
+        after: { subscription_status: 'trial' },
+        ip: '1.2.3.4',
+        userAgent: 'jest-test',
+        requestId: 'rid-T9-1',
+      }),
+    );
+  });
+
+  it('tenantId 非 32-char → 400', async () => {
+    const req = makeReq();
+    await expect(
+      controller.startTrial(req, {
+        tenantId: 'short',
+        tenantSchema: VALID_SCHEMA,
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it('tenantSchema 不以 tenant_ 开头 → 400', async () => {
+    const req = makeReq();
+    await expect(
+      controller.startTrial(req, {
+        tenantId: VALID_TENANT_ID,
+        tenantSchema: 'public',
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it('audit_log 内部 fail-open（log 抛错被 repository 内部 catch，本 endpoint 不感知）', async () => {
+    // 真实 AuditLogRepository.log 内部 try/catch；spec 模拟 log resolve（即使内部失败）
+    const req = makeReq();
+    await expect(
+      controller.startTrial(req, {
+        tenantId: VALID_TENANT_ID,
+        tenantSchema: VALID_SCHEMA,
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(audit.log).toHaveBeenCalledTimes(1);
   });
 });

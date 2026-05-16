@@ -1,7 +1,14 @@
 import { Injectable, Logger, BadRequestException, ConflictException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import * as fs from 'fs';
 import * as path from 'path';
+import { ulid } from 'ulid';
 import { PgPoolService } from './pg-pool.service';
+import {
+  AUDIENCE_B_APP,
+  JwtPayload,
+  TenantRole,
+} from '../auth/jwt-payload.interface';
 
 /**
  * TenantProvisionService — 租户 schema 自动创建
@@ -54,7 +61,13 @@ export class TenantProvisionService {
   private readonly logger = new Logger(TenantProvisionService.name);
   private readonly migrationsDir: string;
 
-  constructor(private readonly pg: PgPoolService) {
+  constructor(
+    private readonly pg: PgPoolService,
+    // T9-EPIC(2026-05-16) §11 NEW：provision-tenant 响应签 access_token
+    //   plan-select 页需 JWT 调 POST /api/db/onboarding/start-trial
+    //   admin user 已在 createAdminUser 创建 → 直接签 b-app token
+    private readonly jwt: JwtService,
+  ) {
     // dist/src/modules/db/* 反向到 dist 根目录，再到项目根 → migrations
     // 兼容 dev (src/modules/db/*) 和 prod (dist/src/modules/db/*)
     const candidates = [
@@ -104,6 +117,8 @@ export class TenantProvisionService {
     campusIds?: string[];
     adminUserId?: string;
     courseProductIds?: string[];
+    // T9-EPIC(2026-05-16) §11 NEW：plan-select 页跳转所需的 admin JWT
+    accessToken?: string;
   }> {
     if (!input.tenantId || input.tenantId.length !== 32) {
       throw new BadRequestException('tenantId must be 32-char ULID');
@@ -173,10 +188,17 @@ export class TenantProvisionService {
     };
     const version = versionMap[input.sku] || '标准版';
 
-    // INSERT 到 public.tenants（V1 schema：id/name/version/status/...）
+    // INSERT 到 public.tenants（V1 中文 status + V45 订阅状态机双轨）
+    //   - V1 status='试用中'：lifecycle/admin/cron 用（中文 enum）
+    //   - V45 subscription_status='trial' / trial_ends_at=NOW+14d：
+    //     T9-EPIC 拍板 3 — 14d 写死（不 ENV 化），TenantSubscriptionGuard 据此判 expired
+    //   - subscribed_until=NULL：付款回调时 SET 为 NOW+365d
     await this.pg.query(
-      `INSERT INTO public.tenants (id, name, version, status, created_at)
-       VALUES ($1, $2, $3, '试用中', NOW())
+      `INSERT INTO public.tenants
+         (id, name, version, status,
+          subscription_status, trial_ends_at, subscribed_until, created_at)
+       VALUES ($1, $2, $3, '试用中',
+               'trial', NOW() + INTERVAL '14 days', NULL, NOW())
        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, version = EXCLUDED.version`,
       [input.tenantId, input.name, version],
     );
@@ -236,6 +258,23 @@ export class TenantProvisionService {
 
     this.logger.log(`[TenantProvision] ✅ tenant ${input.tenantId} provisioned (${ranMigrations.length} migrations)`);
 
+    // T9-EPIC(2026-05-16) §11 NEW：签 admin access_token 让前端跳 plan-select
+    //   - plan-select 调 POST /api/db/onboarding/start-trial 需 JWT（@UseGuards(TenantScopeGuard)）
+    //   - 与 auth.controller.ts L134-142 同模式：jwtid (jti) + audience 'b-app' + B 端 role
+    //   - campusId 取第一个 campus（admin 本 V10 拍板是跨校组，CROSS_CAMPUS_ROLES 允许 null；
+    //     这里给 campusId 是为了首页业务卡能渲染，TenantScopeGuard 不基于此字段做隔离）
+    const jti = ulid();
+    const signPayload: Omit<JwtPayload, 'jti' | 'aud'> = {
+      sub: adminUserId,
+      tenantId: input.tenantId,
+      role: 'admin' as TenantRole,
+      campusId: campusIds[0] ?? null,
+    };
+    const accessToken = this.jwt.sign(signPayload, {
+      jwtid: jti,
+      audience: AUDIENCE_B_APP,
+    });
+
     return {
       tenantId: input.tenantId,
       tenantSchema,
@@ -243,6 +282,7 @@ export class TenantProvisionService {
       campusIds,
       adminUserId,
       courseProductIds,
+      accessToken,
     };
   }
 

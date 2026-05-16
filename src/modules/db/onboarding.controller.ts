@@ -9,11 +9,16 @@ import {
   HttpCode,
   HttpStatus,
   Logger,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { TenantProvisionService } from './tenant-provision.service';
 import { PgPoolService } from './pg-pool.service';
 import { SecurityService } from '../security/security.service';
+import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
+import { AuditLogRepository, normalizeActorRole } from './audit-log.repository';
+import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 // F-08 round 2 (business validator P1 + security validator P2) 2026-05-13:
 //   campuses 数组长度 + content 字段长度上限 — 防 DoS amplification 攻击微信 access_token QPS
@@ -85,6 +90,8 @@ export class OnboardingController {
     tenantSchema: string;
     ranMigrations: string[];
     campusIds?: string[];
+    // T9-EPIC(2026-05-16) §11 NEW：plan-select 跳转所需的 admin JWT
+    accessToken?: string;
   }> {
     // F-08 round 2 (business + security validator P2) 2026-05-13:
     //   campuses 数组上限 20 — 防恶意请求 N 个 campus 放大微信 API 调用 (1 + N*3 次)
@@ -171,6 +178,69 @@ export class OnboardingController {
   @HttpCode(HttpStatus.OK)
   async deleteTenant(@Param('id') id: string): Promise<{ ok: true }> {
     await this.provision.deleteTenant(id);
+    return { ok: true };
+  }
+}
+
+/**
+ * OnboardingDbController — T9-EPIC(2026-05-16) §6.2
+ *   POST /api/db/onboarding/start-trial
+ *
+ * 来源：用户 5/16 拍板「14d 试用」
+ * 触发：plan-select 页用户点击「14d 免费试用」
+ *
+ * 职责（spec §6.2）：
+ *   - 仅写 audit_log 'tenant.subscription.trial.started'
+ *   - subscription_status 已是 'trial'（provision-tenant 时 INSERT 默认值）
+ *   - 不再 UPDATE subscription_status — 'trial' 状态在 provision-tenant 已落地
+ *
+ * 鉴权：
+ *   - @UseGuards(TenantScopeGuard)：body.tenantId/tenantSchema 必须 === JWT
+ *   - 与 /api/public/onboarding/provision-tenant（无 JWT 公开）切分
+ *
+ * 失败语义：
+ *   - 缺 tenantId/tenantSchema → 400
+ *   - 跨租户 → TenantScopeGuard 403
+ *   - audit_log 写失败 → log 内部 catch fail-open（不阻塞主流程）
+ */
+@Controller('db/onboarding')
+export class OnboardingDbController {
+  constructor(
+    private readonly auditLog: AuditLogRepository,
+  ) {}
+
+  /**
+   * POST /api/db/onboarding/start-trial
+   */
+  @Post('start-trial')
+  @UseGuards(TenantScopeGuard)
+  @HttpCode(HttpStatus.OK)
+  async startTrial(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { tenantId: string; tenantSchema: string },
+  ): Promise<{ ok: true }> {
+    if (!body?.tenantId || body.tenantId.length !== 32) {
+      throw new BadRequestException('tenantId must be 32-char ULID');
+    }
+    if (!body?.tenantSchema || !body.tenantSchema.startsWith('tenant_')) {
+      throw new BadRequestException(
+        'tenantSchema must start with tenant_ prefix',
+      );
+    }
+    const user = req.user!;
+    await this.auditLog.log(body.tenantSchema, {
+      actorUserId: user.sub,
+      actorRole: normalizeActorRole(user.role),
+      action: 'tenant.subscription.trial.started',
+      targetType: 'tenant',
+      targetId: body.tenantId,
+      before: null,
+      after: { subscription_status: 'trial' },
+      ip: req.ip ?? null,
+      userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+      requestId:
+        (req.headers['x-request-id'] as string | undefined) ?? null,
+    });
     return { ok: true };
   }
 }

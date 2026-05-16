@@ -24,6 +24,8 @@ import {
   RecurringSchedule,
   RecurringScheduleService,
 } from '../schedule/recurring-schedule.service';
+import { PgPoolService } from '../db/pg-pool.service';
+import { AuditLogRepository } from '../db/audit-log.repository';
 
 const ULID32_C1 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLCC01';
 const ULID32_S1 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMSU1';
@@ -39,8 +41,13 @@ const ULID32_U1 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMUS1';
 
 describe('CronJobsService - W3-1 收尾全局 cron 编排', () => {
   let service: CronJobsService;
+  // T9-EPIC(2026-05-16) §4：保留 pg/audit 句柄供 expireOverdueTrials 用例操作
+  let pgMock: { query: jest.Mock };
+  let auditMock: { log: jest.Mock };
 
   beforeEach(async () => {
+    pgMock = { query: jest.fn() };
+    auditMock = { log: jest.fn().mockResolvedValue(undefined) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CronJobsService,
@@ -75,6 +82,9 @@ describe('CronJobsService - W3-1 收尾全局 cron 编排', () => {
           provide: CampusFreeSlotRepository,
           useValue: { expirePending: jest.fn().mockResolvedValue(0) },
         },
+        // T9-EPIC(2026-05-16) §4：expireOverdueTrials 依赖（@Optional 但 spec 显式注入）
+        { provide: PgPoolService, useValue: pgMock },
+        { provide: AuditLogRepository, useValue: auditMock },
       ],
     }).compile();
     service = module.get<CronJobsService>(CronJobsService);
@@ -352,6 +362,70 @@ describe('CronJobsService - W3-1 收尾全局 cron 编排', () => {
       );
       expect(r.templates).toBe(0);
       expect(r.inserted).toBe(0);
+    });
+  });
+
+  // ============================================================
+  // T9-EPIC(2026-05-16) §4：expireOverdueTrials @Cron 03:30
+  // ============================================================
+  describe('expireOverdueTrials - 03:30 trial 到期标 expired', () => {
+    it('trial 已过期 → UPDATE expired + 逐条写 audit_log', async () => {
+      // UPDATE RETURNING id 返 2 条
+      pgMock.query.mockResolvedValueOnce([
+        { id: 'T_A0000000000000000000000000000001' },
+        { id: 'T_B0000000000000000000000000000002' },
+      ]);
+
+      await service.expireOverdueTrials();
+
+      // PG UPDATE 调用一次（含 RETURNING id）
+      expect(pgMock.query).toHaveBeenCalledTimes(1);
+      const sql = pgMock.query.mock.calls[0][0] as string;
+      expect(sql).toMatch(/UPDATE public\.tenants/);
+      expect(sql).toMatch(/subscription_status='expired'/);
+      expect(sql).toMatch(/subscription_status='trial'/);
+      expect(sql).toMatch(/RETURNING id/);
+
+      // 2 条 audit_log（每 tenant 一条 tenant.subscription.expired）
+      expect(auditMock.log).toHaveBeenCalledTimes(2);
+      const firstCall = auditMock.log.mock.calls[0];
+      expect(firstCall[0]).toBe('tenant_t_a0000000000000000000000000000001');
+      expect(firstCall[1]).toMatchObject({
+        actorRole: 'system',
+        action: 'tenant.subscription.expired',
+        targetType: 'tenant',
+        targetId: 'T_A0000000000000000000000000000001',
+        before: { subscription_status: 'trial' },
+        after: { subscription_status: 'expired' },
+      });
+    });
+
+    it('无 trial 到期 → audit_log 0 次', async () => {
+      pgMock.query.mockResolvedValueOnce([]);
+      await service.expireOverdueTrials();
+      expect(pgMock.query).toHaveBeenCalledTimes(1);
+      expect(auditMock.log).not.toHaveBeenCalled();
+    });
+
+    it('PG UPDATE 抛错 → fail-open 不抛错', async () => {
+      pgMock.query.mockRejectedValueOnce(new Error('PG down'));
+      await expect(service.expireOverdueTrials()).resolves.toBeUndefined();
+      // audit_log 不应被调用（UPDATE 已挂 catch 早退）
+      expect(auditMock.log).not.toHaveBeenCalled();
+    });
+
+    it('单条 audit_log 失败 → 其他 tenant 继续写（不传染）', async () => {
+      pgMock.query.mockResolvedValueOnce([
+        { id: 'T_A0000000000000000000000000000001' },
+        { id: 'T_B0000000000000000000000000000002' },
+      ]);
+      // 第一条 audit_log 抛错；第二条正常
+      auditMock.log
+        .mockRejectedValueOnce(new Error('audit insert failed'))
+        .mockResolvedValueOnce(undefined);
+
+      await expect(service.expireOverdueTrials()).resolves.toBeUndefined();
+      expect(auditMock.log).toHaveBeenCalledTimes(2);
     });
   });
 });

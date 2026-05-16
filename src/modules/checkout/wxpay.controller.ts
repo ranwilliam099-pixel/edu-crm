@@ -27,6 +27,7 @@ import {
   ActorRole,
   normalizeActorRole,
 } from '../db/audit-log.repository';
+import { PgPoolService } from '../db/pg-pool.service';
 import {
   AuthenticatedRequest,
   isPlatformRole,
@@ -96,6 +97,9 @@ export class WxPayController {
     private readonly callback: WxPayCallbackService,
     @Optional() private readonly auditLog?: AuditLogRepository,
     @Optional() private readonly config?: ConfigService,
+    // T9-EPIC(2026-05-16) §6.3：付款成功 → UPDATE public.tenants 解锁订阅
+    //   @Optional 兼容 spec / 单测可 new 不传（与 auditLog 同 fail-open 哲学）
+    @Optional() private readonly pg?: PgPoolService,
   ) {}
 
   // ============================================================
@@ -148,6 +152,16 @@ export class WxPayController {
       if (!isPlatformRole(role) && role !== 'admin' && role !== 'boss') {
         throw new ForbiddenException(
           'subscription unified-order: only admin/boss/platform can trigger',
+        );
+      }
+      // T9-EPIC round 2 (2026-05-16 security audit P0): 跨 tenant 支付构造攻击防御
+      //   前端 URL 参数 body.tenantId 不可信，攻击者 admin from tenant A 可
+      //   body.tenantId=TENANT_B_ID 构造 prepay 单跨 tenant 创建付款单
+      //   TenantScopeGuard 只校验 schema 前缀，不校验 tenantId — 后端唯一守门
+      //   platform role 豁免（运维场景需为多 tenant 创建付款）
+      if (!isPlatformRole(role) && body.tenantId && req.user.tenantId !== body.tenantId) {
+        throw new ForbiddenException(
+          'subscription unified-order: body.tenantId must match JWT user.tenantId',
         );
       }
     } else if (body.type === 'parent-extra') {
@@ -322,8 +336,44 @@ export class WxPayController {
           `[wxpay V3 callback] SUCCESS out_trade_no=${outTradeNo} trade_state=${tradeState} amount=${amount?.total} txn=${transactionId}`,
         );
 
-        // 4. 沙箱期间不真实更新 PG (OrderRepository 待 W3-3 实施)
-        // 微信侧重试机制：返 code: SUCCESS 即停止重试
+        // 4. T9-EPIC(2026-05-16) §6.3：trade_state=SUCCESS → subscription_status='active'
+        //   tenantId 来源（按优先级，遵循 spec §6.3 SQL 用 $1=tenantId）：
+        //     a) decrypted.attach (V3 协议允许业务侧 携带, prepay 时设置)
+        //     b) attach 缺失 → 跳过 UPDATE（OrderRepository W3-3 落地后由 outTradeNo 反查）
+        //   fail-open：UPDATE 失败不返 FAIL（微信侧不应重试已确认收到的回调）
+        if (tradeState === 'SUCCESS' && this.pg) {
+          const attach = (decrypted as Record<string, unknown>).attach as string | undefined;
+          const tenantId =
+            typeof attach === 'string' && attach.length === 32 ? attach : null;
+          if (tenantId) {
+            try {
+              await this.pg.query(
+                `UPDATE public.tenants
+                    SET subscription_status='active',
+                        subscribed_until=GREATEST(COALESCE(subscribed_until, NOW()), NOW())
+                                          + INTERVAL '365 days'
+                  WHERE id = $1`,
+                [tenantId],
+              );
+              this.logger.log(
+                `[wxpay V3 callback] tenant ${tenantId} subscription -> active (365d)`,
+              );
+            } catch (e) {
+              // fail-open：UPDATE 失败不阻塞回调返 SUCCESS（避免微信侧无限重试）
+              //   监控由 audit_log + pino + Sentry 兜底
+              this.logger.warn(
+                `[wxpay V3 callback] subscription UPDATE failed tenant=${tenantId}: ${(e as Error).message}`,
+              );
+            }
+          } else {
+            this.logger.warn(
+              `[wxpay V3 callback] attach missing / not 32-ULID, skip subscription UPDATE out_trade_no=${outTradeNo}`,
+            );
+          }
+        }
+
+        // 5. 沙箱期间 OrderRepository 真持久化 W3-3 落地
+        //    微信侧重试机制：返 code: SUCCESS 即停止重试
         return { code: 'SUCCESS', message: '成功' };
       } catch (err) {
         const msg = (err as Error).message || 'V3 callback error';
