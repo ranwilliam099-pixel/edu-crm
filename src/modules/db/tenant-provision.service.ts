@@ -379,12 +379,19 @@ export class TenantProvisionService {
     const passwordHash = input.password
       ? await this.passwordHasher.hash(input.password)
       : '';
+    // Sprint X.2 round 3 (2026-05-17 生产实战 P0 BUG-FIX):
+    //   原版本 `CASE WHEN $5 = '' THEN NULL ELSE NOW() END` 让 pg 推断 $5 类型时
+    //   既要匹配 password_hash (text) 又要在 CASE 中与 '' 比较（unknown），
+    //   触发 `error: inconsistent types deduced for parameter $5`，wizard 5xx 全失败。
+    //   修：拆成 $5 (password_hash) + $6 (password_updated_at) 两个独立参数，
+    //   应用层直接算 timestamp，pg 无歧义。
+    const passwordUpdatedAt = passwordHash === '' ? null : new Date();
     await this.pg.withClient(async (client) => {
       await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
       await client.query(
         `INSERT INTO users
            (id, name, mobile, role, campus_id, status, password_hash, password_updated_at, created_by, updated_by)
-         VALUES ($1, $2, $3, 'admin', $4, '启用', $5, CASE WHEN $5 = '' THEN NULL ELSE NOW() END, $1, $1)
+         VALUES ($1, $2, $3, 'admin', $4, '启用', $5, $6, $1, $1)
          ON CONFLICT (id) DO UPDATE
            SET name = EXCLUDED.name,
                mobile = EXCLUDED.mobile,
@@ -395,7 +402,7 @@ export class TenantProvisionService {
                password_updated_at = EXCLUDED.password_updated_at,
                updated_at = NOW(),
                updated_by = EXCLUDED.updated_by`,
-        [input.id, input.name, input.phone, input.campusId, passwordHash],
+        [input.id, input.name, input.phone, input.campusId, passwordHash, passwordUpdatedAt],
       );
     });
     return input.id;
