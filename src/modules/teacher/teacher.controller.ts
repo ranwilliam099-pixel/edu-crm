@@ -21,7 +21,7 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 // Sprint B.5 (2026-05-11): audit_log 业务写
 //   - createTeacher / createTeacherInDb / archive 写 audit_log
 //   - phone 走 mask 入 audit（避免明文 PII 落 audit_log）
-import { ActorRole, AuditLogRepository } from '../db/audit-log.repository';
+import { ActorRole, AuditLogRepository, normalizeActorRole } from '../db/audit-log.repository';
 
 /**
  * TeacherController — V7 教师独立档案 HTTP 暴露 BE-V7-1
@@ -69,7 +69,9 @@ export class TeacherController {
     requestId: string | null;
   } {
     return {
-      actorRole: ((req?.user?.role as ActorRole) ?? 'admin') as ActorRole,
+      // T-DEADCODE-CLEANUP W1 (2026-05-17 business-rules validator pre-existing finding):
+      //   与 H4 同性质合规修 — fallback 'admin' → 'system' (audit-log Sprint E #3 round 5 拍板)
+      actorRole: normalizeActorRole(req?.user?.role),
       ip: req?.ip ?? null,
       userAgent: (req?.headers?.['user-agent'] as string | undefined) ?? null,
       requestId: (req?.headers?.['x-request-id'] as string | undefined) ?? null,

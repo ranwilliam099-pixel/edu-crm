@@ -38,7 +38,7 @@ import { TeacherRepository } from './teacher.repository';
 // Sprint B.5 (2026-05-11): audit_log 业务写 + 拒绝路径
 //   - create 写 audit_log（金额详情入 audit 用于变更溯源 — 不脱敏，财务/审计场景必需）
 //   - canAccessContract 失败前 audit 'contract.access-denied'
-import { ActorRole, AuditLogRepository } from './audit-log.repository';
+import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.repository';
 
 /**
  * ContractController — V25 签约管理 HTTP 暴露（业绩数据源头）
@@ -77,7 +77,8 @@ export class ContractController {
     requestId: string | null;
   } {
     return {
-      actorRole: ((req.user?.role as ActorRole) ?? 'admin') as ActorRole,
+      // T-DEADCODE-CLEANUP H4 (2026-05-17): normalizeActorRole 替换 unsafe cast
+      actorRole: normalizeActorRole(req.user?.role),
       ip: req.ip ?? null,
       userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
       requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,

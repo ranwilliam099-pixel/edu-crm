@@ -151,11 +151,9 @@ export class ScheduleController {
         currentUser,
         req.user?.campusId ?? null,
       );
-      studentResponsibleSalesMap = await this.deriveStudentResponsibleSalesMap(
-        body.tenantSchema,
-        callerRole,
-        inputDeserialized.studentIds,
-      );
+      // T-DEADCODE-CLEANUP P1-3 (2026-05-17): Wave 11 后 deriveStudentResponsibleSalesMap
+      //   永远 return new Map()，inline 替换避免无意义 await（dual-verify G2#2 I-4 + G2#3 L4）
+      studentResponsibleSalesMap = new Map<string, string>();
     } catch (err) {
       await this.tryAuditDenied(
         req,
@@ -374,11 +372,9 @@ export class ScheduleController {
         currentUser,
         req.user?.campusId ?? null,
       );
-      studentResponsibleSalesMap = await this.deriveStudentResponsibleSalesMap(
-        body.tenantSchema,
-        callerRole,
-        inputDeserialized.studentIds,
-      );
+      // T-DEADCODE-CLEANUP P1-3 (2026-05-17): Wave 11 后 deriveStudentResponsibleSalesMap
+      //   永远 return new Map()，inline 替换避免无意义 await（dual-verify G2#2 I-4 + G2#3 L4）
+      studentResponsibleSalesMap = new Map<string, string>();
     } catch (err) {
       await this.tryAuditDenied(
         req,
@@ -623,23 +619,10 @@ export class ScheduleController {
     return sameCampus.map((t) => ({ id: t.id, userId: t.userId }));
   }
 
-  /**
-   * 派生 studentResponsibleSalesMap — Wave 11 拍板后已不需要
-   *
-   * 教务 ✅ 创建拍板矩阵 L201 无任何 ownership 限定（不像 sales「自己客户/孩子」）
-   * 保留空实现避免 service 层签名变动（service 参数也 deprecated，传空 Map）
-   *
-   * future: 若 Sprint X 决定加「学生本校」校验，应在此处 join customers.campus_id
-   *   过滤 wrongStudents（students 表本身无 campus_id，需 students.customer_id →
-   *   customers.campus_id）
-   */
-  private async deriveStudentResponsibleSalesMap(
-    _tenantSchema: string,
-    _callerRole: SchedulerRole,
-    _studentIds: ReadonlyArray<string>,
-  ): Promise<Map<string, string>> {
-    return new Map();
-  }
+  // T-DEADCODE-CLEANUP P1-3 (2026-05-17): 删 deriveStudentResponsibleSalesMap dead helper
+  //   原 method body `return new Map()`（Wave 11 拍板后教务无 ownership 校验），3 个 _underscored
+  //   param 已暗示 dead。调用方 createSchedule / updateSchedule 改 inline `new Map<string, string>()`。
+  //   future: 若 Sprint X 加「学生本校」校验，重新引入并实现 students→customers join 逻辑。
 
   // -- helpers: JSON Date 反序列化 + 强制覆盖 callerRole/currentUser --
 

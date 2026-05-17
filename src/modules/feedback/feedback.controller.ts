@@ -38,7 +38,7 @@ import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
-import { ActorRole, AuditLogRepository } from '../db/audit-log.repository';
+import { ActorRole, AuditLogRepository, normalizeActorRole } from '../db/audit-log.repository';
 import { TeacherRepository } from '../db/teacher.repository';
 
 /**
@@ -789,7 +789,8 @@ export class FeedbackController {
       operatorUserId: req.user?.sub ?? '',
       // V33 actorRole 枚举已含 teacher / academic / academic_admin / admin / boss / parent
       // 取 JWT 实际 role 透传；fallback 'admin'（极少出现：内部 cron 兼容）
-      actorRole: ((req.user?.role as ActorRole) ?? 'admin') as ActorRole,
+      // T-DEADCODE-CLEANUP H4 (2026-05-17): normalizeActorRole 替换 unsafe cast
+      actorRole: normalizeActorRole(req.user?.role),
       ip: req.ip ?? null,
       userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
       requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,

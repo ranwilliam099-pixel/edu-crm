@@ -1,19 +1,20 @@
 import { Module } from '@nestjs/common';
-import { TenantService } from './tenant.service';
-import { CapacityService } from './capacity.service';
 import { TenantLifecycleService } from './tenant-lifecycle.service';
 
 /**
- * Tenant 模块（W1 BE-W1-2 + BE-W1-5）
+ * Tenant 模块（W3-1 Phase 2.1 BE-W3-2）
  *
- * - TenantService：schema-per-tenant 初始化（BE-W1-2），由 checkout 模块（W2-T3 微信支付回调）注入
- * - CapacityService：A07 账号上限 + A08 校区上限守护（BE-W1-5），由 onboarding/admin 注入
+ * - TenantLifecycleService：A10 状态机（trial / active / suspended / archived 4 状态 + transition 校验）
+ *   被 AdminTenantService 注入（admin-tenant.service.ts:86）
  *
- * 不暴露 HTTP 路由 — 内部服务，由业务编排触发。
+ * T-DEADCODE-CLEANUP (2026-05-17): 删除 TenantService + CapacityService（3-agent 共识）
+ *   - TenantService：0 production callers（注释说"checkout W2-T3 注入"但 checkout 0 注入）
+ *   - CapacityService：0 production callers（注释说"onboarding/admin 注入"但实际 0 注入）
+ *
+ * 不暴露 HTTP 路由 — 内部服务，由 AdminTenantService 编排触发。
  */
 @Module({
-  // PM-AUTH-7(2026-04-30): TenantLifecycleService W3-1 Phase 2.1 — A10 状态机（条目 14 BE-W3-2）
-  providers: [TenantService, CapacityService, TenantLifecycleService],
-  exports: [TenantService, CapacityService, TenantLifecycleService],
+  providers: [TenantLifecycleService],
+  exports: [TenantLifecycleService],
 })
 export class TenantModule {}

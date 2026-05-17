@@ -4,7 +4,7 @@ import {
   CreateOrderDto,
   SkuName,
 } from './checkout.service';
-import { InvoiceService, InvoiceRequestInput } from './invoice.service';
+import { CheckoutInvoiceService, InvoiceRequestInput } from './invoice.service';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 
 /**
@@ -28,7 +28,7 @@ import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 export class CheckoutController {
   constructor(
     private readonly service: CheckoutService,
-    private readonly invoice: InvoiceService,
+    private readonly invoice: CheckoutInvoiceService,
   ) {}
 
   /**

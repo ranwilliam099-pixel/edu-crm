@@ -1,9 +1,6 @@
 import { Module } from '@nestjs/common';
 import { WxPayModule } from './wxpay/wxpay.module';
-import { PaymentOrderStateService } from './payment-order-state.service';
-import { RefundService } from './refund.service';
-import { InvoiceService } from './invoice.service';
-import { PlatformReviewService } from './platform-review.service';
+import { CheckoutInvoiceService } from './invoice.service';
 import { CheckoutService } from './checkout.service';
 import { CheckoutController } from './checkout.controller';
 import { WxPayController } from './wxpay.controller';
@@ -12,33 +9,26 @@ import { WxPayController } from './wxpay.controller';
  * Checkout 模块（W2 主链路骨架）
  *
  * 当前注册：
- *   - WxPayModule（W2-T1，导出 WX_PAY_CLIENT for DI）
- *   - PaymentOrderStateService（W2-T2，状态机守护）
+ *   - WxPayModule（W2-T1，导出 WX_PAY_CLIENT for DI；微信支付 V3 生产 live 2026-05-14）
+ *   - CheckoutService / CheckoutInvoiceService（C 端自助开票 5-state FSM）
+ *   - CheckoutController（4 SKU 价格表 + 订单 HTTP 暴露）
+ *   - WxPayController（unified-order / callback / close-order / refund，4 endpoint）
  *
- * 待 W2 后续 commit 落地：
- *   - W2-T3 PrepayController（创建预支付订单 → 调 WxPayClient.createPrepay）
- *   - W2-T3 WxPayCallbackController（回调签名校验 + payment_orders 状态机推进）
- *   - W2-T4 RefundController + RefundService（退款申请，A04 §3）
- *   - W2-T5 InvoiceController + InvoiceService（发票申请，A04 §4）
- *   - W2-T6 PlatformReviewController（平台超管手工审批退款/发票，A11）
+ * T-DEADCODE-CLEANUP (2026-05-17): 删除 3 个 dead service（3-agent triple-verify 共识）
+ *   - PaymentOrderStateService：唯一调用者 LifecycleScheduler 整模块已删
+ *   - RefundService：唯一调用者 PlatformReviewService 已删（传递性死）
+ *   - PlatformReviewService：0 controller 暴露，admin 模块已用 AdminTenantService 替代
+ *   详见 6 agent audit verdict + G1 三方共识矩阵
  *
- * §0 不猜测严守：以上 controller / service 待产品 + 项目经理对 W2 业务流程
- * 完整规约后再补；当前仅暴露状态机与 wxpay client，避免业务路径假设错配。
+ * Backlog（不本次做）：
+ *   - W2-T4 RefundController（A04 §3 退款流程，admin 模块已实现部分）
+ *   - W2-T5 InvoiceController（A04 §4，invoice/ B 端模块已实现 finance 域）
+ *   - W2-T6 PlatformReviewController（A11 平台超管，admin 模块已实现部分）
  */
 @Module({
   imports: [WxPayModule],
-  // PM-AUTH-6(2026-04-30): CheckoutController W3-1 Phase 1.3 — 4 SKU 价格表 / 订单 HTTP 暴露
-  // W2-T1(2026-05-14): WxPayController 4 endpoint（unified-order / callback / close-order / refund）
   controllers: [CheckoutController, WxPayController],
-  // PM-AUTH-6(2026-04-30): CheckoutService W3-1 Phase 1.3 — 4 SKU 价格表 + 订单生成（条目 14 BE-W3-3）
-  providers: [PaymentOrderStateService, RefundService, InvoiceService, PlatformReviewService, CheckoutService],
-  exports: [
-    PaymentOrderStateService,
-    RefundService,
-    InvoiceService,
-    PlatformReviewService,
-    CheckoutService,
-    WxPayModule,
-  ],
+  providers: [CheckoutInvoiceService, CheckoutService],
+  exports: [CheckoutInvoiceService, CheckoutService, WxPayModule],
 })
 export class CheckoutModule {}

@@ -33,7 +33,7 @@ import { Injectable, BadRequestException, ConflictException, ForbiddenException 
  * 项目隔离（追加 #8）：本类不引用企业管理系统主项目任何发票逻辑
  */
 @Injectable()
-export class InvoiceService {
+export class CheckoutInvoiceService {
   static readonly INVOICE_STATES = ['待审核', '已批准', '已开具', '已拒绝', '红冲处理中'] as const;
 
   static readonly INVOICE_TRANSITIONS: Readonly<Record<InvoiceState, readonly InvoiceState[]>> = {
@@ -84,13 +84,13 @@ export class InvoiceService {
    * @throws ConflictException 不合法转换
    */
   assertTransition(from: InvoiceState, to: InvoiceState): void {
-    if (!InvoiceService.INVOICE_STATES.includes(from)) {
+    if (!CheckoutInvoiceService.INVOICE_STATES.includes(from)) {
       throw new BadRequestException(`Unknown source invoice state: ${from}`);
     }
-    if (!InvoiceService.INVOICE_STATES.includes(to)) {
+    if (!CheckoutInvoiceService.INVOICE_STATES.includes(to)) {
       throw new BadRequestException(`Unknown target invoice state: ${to}`);
     }
-    const allowed = InvoiceService.INVOICE_TRANSITIONS[from];
+    const allowed = CheckoutInvoiceService.INVOICE_TRANSITIONS[from];
     if (!allowed.includes(to)) {
       throw new ConflictException(
         `Illegal invoice state transition: ${from} → ${to} (allowed: [${allowed.join(', ') || 'TERMINAL'}])`,
@@ -103,15 +103,15 @@ export class InvoiceService {
    * @throws ForbiddenException
    */
   assertReviewerRole(role: string): void {
-    if (!(InvoiceService.REVIEW_ROLES as readonly string[]).includes(role)) {
+    if (!(CheckoutInvoiceService.REVIEW_ROLES as readonly string[]).includes(role)) {
       throw new ForbiddenException(
-        `Invoice review requires role in [${InvoiceService.REVIEW_ROLES.join(', ')}], got: ${role}`,
+        `Invoice review requires role in [${CheckoutInvoiceService.REVIEW_ROLES.join(', ')}], got: ${role}`,
       );
     }
   }
 
   isTerminal(state: InvoiceState): boolean {
-    return InvoiceService.INVOICE_TRANSITIONS[state].length === 0;
+    return CheckoutInvoiceService.INVOICE_TRANSITIONS[state].length === 0;
   }
 }
 

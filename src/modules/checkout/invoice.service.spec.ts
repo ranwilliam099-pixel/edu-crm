@@ -1,17 +1,17 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
-import { InvoiceService } from './invoice.service';
+import { CheckoutInvoiceService } from './invoice.service';
 
 const ULID_32 = '01HRX5Y3K2NQVWGT7ABCDEFGHJKMNP00';
 
-describe('InvoiceService (W2-T5 A04 §4 + A11)', () => {
-  let service: InvoiceService;
+describe('CheckoutInvoiceService (W2-T5 A04 §4 + A11)', () => {
+  let service: CheckoutInvoiceService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [InvoiceService],
+      providers: [CheckoutInvoiceService],
     }).compile();
-    service = module.get<InvoiceService>(InvoiceService);
+    service = module.get<CheckoutInvoiceService>(CheckoutInvoiceService);
   });
 
   describe('validateInvoiceRequest', () => {

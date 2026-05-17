@@ -12,10 +12,12 @@
  *   把 init 副作用隔离到这个模块，main.ts 只 import 一行干净
  */
 
+import { Logger } from '@nestjs/common';
 import { initSentry, shouldInitSentry } from './sentry.config';
 
 if (shouldInitSentry()) {
   initSentry();
-  // eslint-disable-next-line no-console
-  console.log(`[Sentry] initialized (env=${process.env.NODE_ENV})`);
+  // T-DEADCODE-CLEANUP P1-4 (2026-05-17): console.log → NestJS Logger（HARD_RULES §3 0 console.log）
+  // Logger 在 NestApplication.bootstrap 前可用（@nestjs/common 静态实例 OK）
+  new Logger('SentryInstrument').log(`[Sentry] initialized (env=${process.env.NODE_ENV})`);
 }

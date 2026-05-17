@@ -32,7 +32,7 @@ import { ContractRepository, Contract, OrderType } from './contract.repository';
 // Sprint B.5 (2026-05-11): audit_log 业务写
 //   - create / transferSales / transferTeacher / createContract 写 audit_log
 //   - student 表无 phone/PII（仅 studentName 等 brief 字段），snapshot 直接入
-import { ActorRole, AuditLogRepository } from './audit-log.repository';
+import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.repository';
 
 /**
  * StudentController — V28 学生归属转移 HTTP 暴露
@@ -74,7 +74,8 @@ export class StudentController {
     requestId: string | null;
   } {
     return {
-      actorRole: ((req.user?.role as ActorRole) ?? 'admin') as ActorRole,
+      // T-DEADCODE-CLEANUP H4 (2026-05-17): normalizeActorRole 替换 unsafe cast
+      actorRole: normalizeActorRole(req.user?.role),
       ip: req.ip ?? null,
       userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
       requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,

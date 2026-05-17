@@ -30,7 +30,7 @@ import { maskCustomer, canAccessCustomer, actorGroupOf } from '../../common/role
 //   - createSelfBuilt / claim / release / markLost 写 audit_log
 //   - canAccessCustomer 失败前写 'customer.access-denied' 留证据
 //   - 复用 C.2 / V36 / B.3 修复 (cross-tenant-denied, teacher.self-check-failed) 模式
-import { ActorRole, AuditLogRepository } from './audit-log.repository';
+import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.repository';
 
 /**
  * CustomerController — V25 销售客户管理 HTTP 暴露
@@ -90,7 +90,9 @@ export class CustomerController {
     requestId: string | null;
   } {
     return {
-      actorRole: ((req.user?.role as ActorRole) ?? 'admin') as ActorRole,
+      // T-DEADCODE-CLEANUP H4 (2026-05-17): 用 normalizeActorRole 替换 unsafe cast
+      //   原 fallback 'admin' 违反 Sprint E #3 round 5 拍板（未知 role → 'system'）
+      actorRole: normalizeActorRole(req.user?.role),
       ip: req.ip ?? null,
       userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
       requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
