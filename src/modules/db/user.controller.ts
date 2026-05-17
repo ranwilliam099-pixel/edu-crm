@@ -134,11 +134,8 @@ export class UserController {
         `role must be one of ${validSubRoles.join('/')} (admin 不可再创建, SSOT §12.4)`,
       );
     }
-    // Sprint X.2 round 12-13 (2026-05-18 用户拍板): admin / boss 校区守门
-    //   SSOT §12.4 修订:
-    //     - boss: 必须本校区 + 不可创建 boss/admin (每校区唯一)
-    //     - admin 有 campusId: 强制本校区 (不可跨校)
-    //     - admin 无 campusId (跨校 admin): 允许指定任意 campusId
+    // Sprint X.2 round 14 (2026-05-18 用户拍板修订):
+    //   SSOT §12.4: admin 全部校区可选 (机构主跨校), boss 仅本校区 (校长每校区唯一)
     const operatorRoleForBoss = req.user?.role;
     if (operatorRoleForBoss === 'boss') {
       if (body.role === 'boss' || body.role === 'admin') {
@@ -155,15 +152,8 @@ export class UserController {
           `boss 只能创建本校区员工 (本校区=${bossCampusId.slice(0, 8)}...)`,
         );
       }
-    } else if (operatorRoleForBoss === 'admin') {
-      const adminCampusId = req.user?.campusId;
-      // admin 有 campusId → 强制本校区; 无 campusId (跨校 admin) → 允许任意 campusId
-      if (adminCampusId && body.campusId && body.campusId !== adminCampusId) {
-        throw new BadRequestException(
-          `admin 已绑定校区, 不能创建跨校区员工 (本校区=${adminCampusId.slice(0, 8)}...)`,
-        );
-      }
     }
+    // admin: 不限校区 (机构主, SSOT §12.4 round 14 拍板)
     if (body.campusId !== undefined && body.campusId !== null) {
       if (body.campusId.length !== 32) {
         throw new BadRequestException('campusId must be 32-char ULID');
