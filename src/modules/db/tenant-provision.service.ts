@@ -76,6 +76,9 @@ const TENANT_MIGRATIONS = [
   //   新 tenant provision 必须包含 V46（admin 创建 user 时 V46 列已存在）
   //   V47 不在此列（public schema 单次执行, 不逐 tenant）
   'V46__add_password_to_users.sql',
+  // Sprint X.2 round 5 (2026-05-17) — V48 users.role CHECK 加 teacher/academic/academic_admin
+  //   原 V2 CHECK 8 role 缺新 3 角色，admin 创建 teacher/academic 员工时 23514 违反 CHECK
+  'V48__add_teacher_academic_roles_to_users_check.sql',
 ];
 
 @Injectable()
