@@ -385,7 +385,7 @@ export class UserController {
    */
   @Post(':userId/reset-password')
   @UseGuards(RbacGuard)
-  @Roles('admin')
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async resetPassword(
     @Param('userId') userId: string,
@@ -398,9 +398,28 @@ export class UserController {
     if (!operatorUserId || !operatorRole) {
       throw new BadRequestException('user sub/role required');
     }
-    // 防 admin 自己重置自己 (会导致自己被踢出登录)
+    // 防自己重置自己 (会导致自己被踢出登录)
     if (operatorUserId === userId) {
       throw new BadRequestException('不能重置自己的密码, 请用「修改密码」流程');
+    }
+    // Sprint X.2 round 15 (2026-05-18 用户拍板): boss 也可重置密码但有限制
+    //   - boss 不能重置 admin / 另一个 boss
+    //   - boss 只能重置本校区员工 (target.campusId === boss.campusId)
+    //   - admin 不限 (机构主跨校重置)
+    if (operatorRole === 'boss') {
+      const target = await this.repo.findById(body.tenantSchema, userId);
+      if (!target) {
+        throw new BadRequestException('USER_NOT_FOUND: 员工不存在或已删除');
+      }
+      if (target.role === 'admin' || target.role === 'boss') {
+        throw new BadRequestException('boss 不可重置 admin / 另一个 boss 的密码');
+      }
+      const bossCampusId = req.user?.campusId;
+      if (!bossCampusId || target.campusId !== bossCampusId) {
+        throw new BadRequestException(
+          `boss 只能重置本校区员工的密码 (本校区=${(bossCampusId || '').slice(0, 8)}...)`,
+        );
+      }
     }
     const defaultPassword = '00000000';
     const passwordHash = await this.passwordHasher.hash(defaultPassword);
