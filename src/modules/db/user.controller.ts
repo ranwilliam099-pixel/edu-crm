@@ -350,6 +350,83 @@ export class UserController {
   }
 
   /**
+   * Sprint X.2 round 11 (2026-05-18) — admin 重置员工密码
+   *
+   * 用户拍板: 员工管理页加「重置密码」按钮, 默认密码 '00000000'
+   *
+   * 行为:
+   *   - bcrypt(default password) → UPDATE password_hash
+   *   - Redis user-revoked-at 写时间戳 (同 deactivate, 让员工旧 token 立失效)
+   *   - refresh_tokens revoke (员工必须用新密码重登)
+   *   - audit_log V33 'user.password-reset-by-admin'
+   *   - 返 { user, initialPassword: '00000000' } (前端 modal 显示一次, 同创建员工 D2 模式)
+   */
+  @Post(':userId/reset-password')
+  @UseGuards(RbacGuard)
+  @Roles('admin')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(
+    @Param('userId') userId: string,
+    @Body() body: { tenantId: string; tenantSchema: string },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ user: User; initialPassword: string }> {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    const operatorUserId = req.user?.sub;
+    const operatorRole = req.user?.role;
+    if (!operatorUserId || !operatorRole) {
+      throw new BadRequestException('user sub/role required');
+    }
+    // 防 admin 自己重置自己 (会导致自己被踢出登录)
+    if (operatorUserId === userId) {
+      throw new BadRequestException('不能重置自己的密码, 请用「修改密码」流程');
+    }
+    const defaultPassword = '00000000';
+    const passwordHash = await this.passwordHasher.hash(defaultPassword);
+    const user = await this.repo.resetPassword(body.tenantSchema, userId, passwordHash);
+    if (!user) {
+      throw new BadRequestException('USER_NOT_FOUND: 员工不存在或已删除');
+    }
+
+    // JWT 黑名单联动 (同 deactivate, SSOT §12.6 失效逻辑)
+    const revokedAt = Date.now();
+    const jwtTtlSec = parseInt(process.env.JWT_TTL_SEC || '86400', 10);
+    const redisTtlSec = Math.max(jwtTtlSec + 60, 900);
+    try {
+      await this.redis.set(`auth:user-revoked-at:${userId}`, String(revokedAt), redisTtlSec);
+    } catch (err) {
+      this.logger.warn(
+        `[user.reset-password.redis-fail-open] userId=${userId} err=${(err as Error).message}`,
+      );
+    }
+    try {
+      await this.refreshTokenService.revokeAllBySubject('b-user', userId);
+    } catch (err) {
+      this.logger.warn(
+        `[user.reset-password.refresh-fail-open] userId=${userId} err=${(err as Error).message}`,
+      );
+    }
+
+    // audit_log V33 — 重置密码留痕
+    await this.auditLog.log(body.tenantSchema, {
+      actorUserId: operatorUserId,
+      actorRole: normalizeActorRole(operatorRole),
+      action: 'user.password-reset-by-admin',
+      targetType: 'user',
+      targetId: userId,
+      before: null,
+      after: {
+        passwordUpdatedAt: new Date(revokedAt).toISOString(),
+        revokedAt: new Date(revokedAt).toISOString(),
+      },
+      ip: req.ip ?? null,
+      userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+      requestId: (req.headers['x-request-id'] as string | undefined) ?? null,
+    });
+
+    return { user, initialPassword: defaultPassword };
+  }
+
+  /**
    * 校长二次手动转交：把 fromUser 名下数据包转给 toUser
    *
    * 用户拍板 2026-05-07：

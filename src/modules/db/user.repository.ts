@@ -322,6 +322,38 @@ export class UserRepository {
   }
 
   /**
+   * Sprint X.2 round 11 (2026-05-18) — 重置员工密码
+   *   admin 在员工管理页点「重置密码」→ 把 password_hash 设为 bcrypt(默认密码)
+   *   触发 JWT 黑名单让员工旧 token 立即失效
+   *   返回 user 行让 controller audit_log
+   */
+  async resetPassword(
+    tenantSchema: string,
+    userId: string,
+    passwordHash: string,
+  ): Promise<User | null> {
+    if (!userId || userId.length !== 32) {
+      throw new BadRequestException('userId must be 32-char ULID');
+    }
+    if (!passwordHash || passwordHash.length !== 60) {
+      throw new BadRequestException(
+        'passwordHash must be 60-char bcrypt hash ($2b$12$...)',
+      );
+    }
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `UPDATE users
+       SET password_hash = $1,
+           password_updated_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $2 AND deleted_at IS NULL
+       RETURNING *`,
+      [passwordHash, userId],
+    );
+    return rows[0] ? UserRepository.mapRow(rows[0]) : null;
+  }
+
+  /**
    * 校长视角：返回所有「停用」状态但 opportunities/contracts 中仍有 owner 是他们的用户。
    * 即「待交接」清单（自动转交后理论上 owner 已经不是他们了，所以这里应为空；
    * 但若兜底无人接 → owner=NULL，此查询用于校验是否有「孤儿数据」需要校长再分配）。
