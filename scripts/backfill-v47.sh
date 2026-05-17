@@ -80,11 +80,14 @@ if [ "$APPLY" = false ]; then
 fi
 
 # 真执行
-if sudo -u "$PG_USER_OS" psql -d "$PG_DB" -v ON_ERROR_STOP=1 -f "$MIGRATION_FILE" >/dev/null 2>&1; then
+# 2026-05-17 fix: postgres OS 用户无法读 /home/ubuntu/...（owner 0700 dir），
+#   改用 stdin pipe (cat | psql) 让 ubuntu shell 处理 IO，postgres 只读 stdin
+#   (5/13 leader 学习「cat sql | sudo -u postgres psql 比 -f file 更通用」)
+if cat "$MIGRATION_FILE" | sudo -u "$PG_USER_OS" psql -d "$PG_DB" -v ON_ERROR_STOP=1 >/dev/null 2>&1; then
   ok "V47 applied to public.parents"
 else
   fail "V47 failed"
-  sudo -u "$PG_USER_OS" psql -d "$PG_DB" -v ON_ERROR_STOP=1 -f "$MIGRATION_FILE" 2>&1 | tail -10
+  cat "$MIGRATION_FILE" | sudo -u "$PG_USER_OS" psql -d "$PG_DB" -v ON_ERROR_STOP=1 2>&1 | tail -10
   exit 1
 fi
 

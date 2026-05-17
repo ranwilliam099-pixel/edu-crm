@@ -34,16 +34,22 @@
 
 BEGIN;
 
--- 1. 先 backfill (旧 row 'active'/'suspended'/'deleted' → 中文)
---    UPDATE 顺序无所谓 (CHECK 删除前任意写入都合法，旧 enum 仍允许)
-UPDATE public.parents SET status = '启用' WHERE status = 'active';
-UPDATE public.parents SET status = '停用' WHERE status IN ('suspended', 'deleted');
+-- ⚠️ 顺序必须 DROP → UPDATE → ADD（CHECK 不能在 UPDATE 前还存在，否则旧 enum 写新中文违反）
+--    2026-05-17 生产实战 P0 修复：原版本注释「CHECK 删除前任意写入都合法」是错的，
+--    PG CHECK 是立即评估的（per-row），UPDATE 'active'→'启用' 会立即违反 V10
+--    CHECK (status IN ('active','suspended','deleted'))，事务 ROLLBACK 全部 UPDATE 不生效。
 
--- 2. 删旧 CHECK (按 V10 命名)
+-- 1. 先删旧 CHECK (按 V10 命名)
 --    旧约束名 = 'parents_status_check' (PG 默认 <table>_<col>_check 命名)
 ALTER TABLE public.parents DROP CONSTRAINT IF EXISTS parents_status_check;
 
+-- 2. backfill (旧 row 'active'/'suspended'/'deleted' → 中文)
+--    此时无 CHECK，任意 status 值都可写入
+UPDATE public.parents SET status = '启用' WHERE status = 'active';
+UPDATE public.parents SET status = '停用' WHERE status IN ('suspended', 'deleted');
+
 -- 3. 加新 CHECK (中文双态)
+--    backfill 之后所有 row 都是 '启用'/'停用'，CHECK 通过
 ALTER TABLE public.parents
   ADD CONSTRAINT parents_status_check CHECK (status IN ('启用', '停用'));
 
