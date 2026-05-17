@@ -131,10 +131,12 @@ export class TenantProvisionService {
       phone: string;
       email?: string;
     };
-    // Sprint X.2 (D8 2026-05-17) — adminPhone + adminPassword 同 Sprint 加
+    // Sprint X.2 (D8 2026-05-17) — admin 资料 wizard 顶层发 (round 5 e2e 实战修)
     //   SSOT §12.4 admin 是机构注册者 + 唯一创建 B 端子账户权
-    //   未传则 fallback input.admin.phone (向前兼容历史调用方)
+    //   未传则 fallback input.admin.* (向前兼容历史调用方)
+    adminName?: string;
     adminPhone?: string;
+    adminEmail?: string;
     adminPassword?: string;
     products?: Array<{
       name: string;
@@ -306,11 +308,12 @@ export class TenantProvisionService {
     }
     this.logger.log(`[TenantProvision] ✅ ${campusIds.length} campuses created for ${input.tenantId}`);
 
-    // Sprint X.2 (D8) — adminPhone 优先 (新参), fallback admin.phone (向前兼容)
+    // Sprint X.2 (D8) — wizard 顶层 adminName/adminPhone/adminPassword 优先, fallback admin.* (向前兼容)
     //   adminPassword 未传则 password_hash='' (V46 DEFAULT), 首次 login 401 兜底走重置
+    //   round 5 (2026-05-17 e2e 实战): name 必须用 wizard 发的 adminName，不能硬编码「老板」
     const adminUserId = await this.createAdminUser(tenantSchema, {
       id: input.admin?.id || this.simpleUlid(),
-      name: input.admin?.name || '老板',
+      name: input.adminName || input.admin?.name || '老板',
       phone: input.adminPhone || input.admin?.phone || '13800001111',
       campusId: campusIds[0],
       password: input.adminPassword,
