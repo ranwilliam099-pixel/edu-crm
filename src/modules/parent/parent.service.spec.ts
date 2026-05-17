@@ -38,7 +38,8 @@ describe('ParentService - V10 BE-V10-1 PD §5 + 用户拍板条目 31/32', () =>
         name: '王女士',
       });
       expect(parent.id).toBe(ULID32_P1);
-      expect(parent.status).toBe('active');
+      // V47 (Sprint X.2 2026-05-17) — parents.status 中文双态 ('active'→'启用')
+      expect(parent.status).toBe('启用');
     });
 
     it('id 长度非 32 → BadRequestException', () => {

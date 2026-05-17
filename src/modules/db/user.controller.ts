@@ -5,12 +5,15 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Param,
   Post,
   Query,
   Req,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { ulid } from 'ulid';
 import {
   UserRepository,
   DeactivateResult,
@@ -22,6 +25,13 @@ import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
+// Sprint X.2 (2026-05-17) — admin 创建 B 端子账户 + JWT 黑名单联动 (D2 / D6)
+import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
+import { PhoneLookupService } from '../auth/phone-lookup.service';
+import { PasswordHasher } from '../../common/crypto/password-hasher';
+import { RedisService } from '../redis/redis.service';
+import { RefreshTokenService } from '../auth/refresh-token.service';
+import { AuditLogRepository, normalizeActorRole } from './audit-log.repository';
 
 /**
  * UserController — V27 员工离职 + 数据交接 HTTP 暴露
@@ -40,7 +50,148 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 @Controller('db/users')
 @UseGuards(TenantScopeGuard)
 export class UserController {
-  constructor(private readonly repo: UserRepository) {}
+  private readonly logger = new Logger(UserController.name);
+
+  constructor(
+    private readonly repo: UserRepository,
+    // Sprint X.2 (2026-05-17) — D2 admin 创建子账户 + D6 JWT 黑名单联动
+    private readonly phoneLookup: PhoneLookupService,
+    private readonly passwordHasher: PasswordHasher,
+    private readonly redis: RedisService,
+    private readonly refreshTokenService: RefreshTokenService,
+    private readonly auditLog: AuditLogRepository,
+  ) {}
+
+  /**
+   * POST /api/db/users — Sprint X.2 admin 创建 B 端子账户
+   *
+   * 来源：
+   *   - SSOT §12.4 admin 唯一创建 B 端子账户权（boss 也不能）
+   *   - 用户拍板 D2 admin 手动设密码 + modal 显示一次 + 复制告知员工 + bcrypt 8 位
+   *
+   * Body: { tenantId, tenantSchema, phone, role, name, campusId?, email? }
+   * Response: { user: User, initialPassword: string }  ← initialPassword 仅返一次
+   *
+   * RBAC: @Roles('admin') 唯一（boss 也不能, SSOT §12.4）
+   *
+   * 跨表 phone 唯一性 pre-check:
+   *   - 跨所有 tenant.users + public.parents 反查
+   *   - 命中 → 409 PHONE_ALREADY_REGISTERED (互斥红线 SSOT §12.1)
+   *
+   * 业务校验:
+   *   - role ∈ 10 B 端角色 (sales / sales_manager / marketing / finance /
+   *     boss / hr / teacher / academic / academic_admin); 不允许再创 admin
+   *     (SSOT §12.4 admin 唯一, 不能再创 admin)
+   *   - campusId 单校 role 必填, 跨校 role (hr) 可空但需 fallback 主校区
+   */
+  @Post()
+  @UseGuards(RbacGuard)
+  @UseInterceptors(IdempotencyInterceptor)
+  @Roles('admin')
+  @HttpCode(HttpStatus.CREATED)
+  async createUser(
+    @Body()
+    body: {
+      tenantId: string;
+      tenantSchema: string;
+      phone: string;
+      role: string;
+      name: string;
+      campusId?: string | null;
+      email?: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ user: User; initialPassword: string }> {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!body.tenantId || body.tenantId.length !== 32) {
+      throw new BadRequestException('tenantId must be 32-char ULID');
+    }
+    if (!body.phone || !/^1[3-9]\d{9}$/.test(body.phone)) {
+      throw new BadRequestException('phone must be valid 11-digit Chinese mobile');
+    }
+    if (!body.name || body.name.trim().length === 0) {
+      throw new BadRequestException('name required');
+    }
+    if (body.name.length > 32) {
+      throw new BadRequestException('name too long (max 32 chars)');
+    }
+    // D2 + SSOT §12.4 — 不允许再创建 admin (admin 唯一, 是机构注册者)
+    const validSubRoles = [
+      'sales',
+      'sales_manager',
+      'marketing',
+      'finance',
+      'boss',
+      'hr',
+      'teacher',
+      'academic',
+      'academic_admin',
+    ];
+    if (!validSubRoles.includes(body.role)) {
+      throw new BadRequestException(
+        `role must be one of ${validSubRoles.join('/')} (admin 不可再创建, SSOT §12.4)`,
+      );
+    }
+    if (body.campusId !== undefined && body.campusId !== null) {
+      if (body.campusId.length !== 32) {
+        throw new BadRequestException('campusId must be 32-char ULID');
+      }
+    }
+    const operatorUserId = req.user?.sub;
+    if (!operatorUserId) throw new BadRequestException('user sub required');
+
+    // 跨表 phone 唯一性 pre-check (D2 + SSOT §12.1 互斥红线)
+    const lookup = await this.phoneLookup.lookupByPhone(body.phone);
+    const activeBUsers = lookup.bUsers.filter(
+      (u) => u.status === '启用' && u.deletedAt === null,
+    );
+    const activeParent =
+      lookup.parent && lookup.parent.status === '启用' ? lookup.parent : null;
+    if (activeBUsers.length > 0 || activeParent) {
+      throw new BadRequestException(
+        'PHONE_ALREADY_REGISTERED: 该手机号已注册 (B 端员工或 C 端家长)',
+      );
+    }
+
+    // D2 — 生成 8 位随机密码 + bcrypt cost=12 → password_hash 60 char
+    const initialPassword = this.passwordHasher.generateRandomPassword(8);
+    const passwordHash = await this.passwordHasher.hash(initialPassword);
+
+    // campusId 兜底 (跨校 role hr 仍要写一个 campusId 满足 V2 schema NOT NULL)
+    //   admin (req.user.campusId) 可能为 null (admin 跨校), controller 兜底要求传入
+    const finalCampusId = body.campusId ?? req.user?.campusId ?? null;
+    if (!finalCampusId) {
+      throw new BadRequestException(
+        'campusId required (跨校 role 仍需指定一个 campusId 满足 schema NOT NULL)',
+      );
+    }
+    const userId = ulid().padEnd(32, '0').slice(0, 32);
+    const created = await this.repo.createUser(body.tenantSchema, {
+      id: userId,
+      name: body.name.trim(),
+      mobile: body.phone,
+      role: body.role,
+      campusId: finalCampusId,
+      passwordHash,
+      createdBy: operatorUserId,
+    });
+
+    // audit_log V33 (D2 admin 创建必留痕)
+    await this.auditLog.log(body.tenantSchema, {
+      actorUserId: operatorUserId,
+      actorRole: normalizeActorRole(req.user?.role),
+      action: 'user.created-by-admin',
+      targetType: 'user',
+      targetId: created.id,
+      before: null,
+      after: { name: created.name, role: created.role, campusId: created.campusId },
+      ip: req.ip ?? null,
+      userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+      requestId: (req.headers['x-request-id'] as string | undefined) ?? null,
+    });
+
+    return { user: created, initialPassword };
+  }
 
   @Get('inactive-with-pending')
   @UseGuards(RbacGuard)
@@ -135,12 +286,67 @@ export class UserController {
     if (operatorUserId === userId) {
       throw new BadRequestException('不能自己离职自己');
     }
-    return this.repo.deactivate(body.tenantSchema, userId, {
+    const result = await this.repo.deactivate(body.tenantSchema, userId, {
       userId: operatorUserId,
       label: body.operatorLabel || `操作员 ${operatorUserId.slice(0, 6)}`,
       role: operatorRole,
       campusId: req.user?.campusId ?? null,
     });
+
+    // Sprint X.2 Endpoint 9 (D6 2026-05-17) — JWT 黑名单联动
+    //   SSOT §12.6「失效逻辑统一: 全部账户不可登录」
+    //
+    //   1. Redis auth:user-revoked-at:{userId} 写时间戳 (TTL 15min = access token TTL 上限)
+    //      jwt.strategy.ts parse 时校验 token.iat * 1000 < userRevokedAt → 401
+    //      15min 后该 user 所有旧 access token 自然过期, key 也过期 - 防内存泄漏
+    //   2. refresh_tokens 全部撤销 (rotate 后旧 row revoke + 新 row insert 模式失效)
+    //   3. audit_log user.deactivated.jwt-revoked
+    //
+    //   fail-open 哲学: Redis / refresh 撤销失败不阻塞主业务 (停用已写 DB)
+    //   旧 token 自然过期窗口 ≤ 15min, 业务可接受
+    const revokedAt = Date.now();
+    // Sprint X.2 round 2 (2026-05-17 security A07-W1): Redis TTL 与 JWT access token TTL 对齐
+    //   原 900s (15min) 让停用后 JWT TTL > 900s 窗口期内旧 token 仍生效 (默认 JWT 86400s = 23h45min 窗口)
+    //   改用 process.env.JWT_TTL_SEC + 60s buffer (auth.module.ts:43 default 86400) 自然过期覆盖
+    const jwtTtlSec = parseInt(process.env.JWT_TTL_SEC || '86400', 10);
+    const redisTtlSec = Math.max(jwtTtlSec + 60, 900); // 至少 900s 兜底
+    try {
+      await this.redis.set(
+        `auth:user-revoked-at:${userId}`,
+        String(revokedAt),
+        redisTtlSec,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[user.deactivate.redis-fail-open] userId=${userId} err=${(err as Error).message}`,
+      );
+    }
+    try {
+      await this.refreshTokenService.revokeAllBySubject('b-user', userId);
+    } catch (err) {
+      this.logger.warn(
+        `[user.deactivate.refresh-fail-open] userId=${userId} err=${(err as Error).message}`,
+      );
+    }
+    // audit_log V33 — 离职瞬间 JWT/refresh 失效留痕
+    await this.auditLog.log(body.tenantSchema, {
+      actorUserId: operatorUserId,
+      actorRole: normalizeActorRole(operatorRole),
+      action: 'user.deactivated.jwt-revoked',
+      targetType: 'user',
+      targetId: userId,
+      before: { status: '启用' },
+      after: {
+        status: '停用',
+        revokedAt: new Date(revokedAt).toISOString(),
+        transferToUserId: result.transferToUserId,
+      },
+      ip: req.ip ?? null,
+      userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+      requestId: (req.headers['x-request-id'] as string | undefined) ?? null,
+    });
+
+    return result;
   }
 
   /**

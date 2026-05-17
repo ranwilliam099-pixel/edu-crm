@@ -139,6 +139,24 @@ export class ParentRepository {
     return rows.map((r) => this.mapBindingRow(r));
   }
 
+  /**
+   * Sprint X.2 (2026-05-17) — 按 binding id 反查 (PATCH unbind 用)
+   *
+   * 来源: Endpoint 8 PATCH /db/parent-bindings/:id (需要校验 tenant_id 防跨 tenant)
+   * 返 null 表示 binding 不存在 (controller 层抛 404)
+   */
+  async findBindingById(bindingId: string): Promise<ParentStudentBinding | null> {
+    const rows = await this.pg.query<any>(
+      `SELECT id, parent_id, student_id, tenant_id, is_primary, relationship,
+              binding_status, bound_at, unbound_at
+         FROM public.parent_student_bindings
+        WHERE id = $1
+        LIMIT 1`,
+      [bindingId],
+    );
+    return rows.length === 0 ? null : this.mapBindingRow(rows[0]);
+  }
+
   async findChildrenByParent(parentId: string): Promise<ParentStudentBinding[]> {
     const rows = await this.pg.query<any>(
       `SELECT id, parent_id, student_id, tenant_id, is_primary, relationship,

@@ -223,7 +223,7 @@ describe('JwtStrategy (W1 BE-W1-3 real + Sprint E.1 async + jti blacklist)', () 
   // SPRINT-E.1(2026-05-13) JWT 黑名单 — Redis auth:revoked:{jti} 查询
   // ============================================================
   describe('parse() — jti blacklist (Sprint E.1)', () => {
-    it('accepts token with no jti claim (legacy token, skip blacklist)', async () => {
+    it('accepts token with no jti claim (legacy token, skip jti blacklist)', async () => {
       const token = jwt.sign({
         sub: ULID_32,
         tenantId: ULID_32_B,
@@ -232,8 +232,13 @@ describe('JwtStrategy (W1 BE-W1-3 real + Sprint E.1 async + jti blacklist)', () 
       });
       const result = await strategy.parse(token);
       expect(result.sub).toBe(ULID_32);
-      // 旧 token 无 jti → 不查 Redis
-      expect(redisGetSpy).not.toHaveBeenCalled();
+      // 旧 token 无 jti → 不查 auth:revoked:{jti} 黑名单
+      //   注: Sprint X.2 (D6 2026-05-17) 新增 user-level 黑名单查询 auth:user-revoked-at:{sub}
+      //   是独立 key, 与 jti 无关 — 任何 token (含 legacy) 都会查
+      const jtiBlacklistCalls = redisGetSpy.mock.calls.filter((args) =>
+        String(args[0]).startsWith('auth:revoked:'),
+      );
+      expect(jtiBlacklistCalls).toHaveLength(0);
     });
 
     it('accepts token with jti when Redis says NOT revoked', async () => {

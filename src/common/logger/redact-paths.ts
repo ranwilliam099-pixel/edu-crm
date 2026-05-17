@@ -62,6 +62,10 @@ export const REDACT_PATHS: string[] = [
   '*.wechat',
   '*.we_chat',
   '*.password',
+  // Sprint X.2 round 2 (2026-05-17 security A02-W1): bcrypt hash / initialPassword 不能 leak
+  '*.password_hash',
+  '*.passwordHash',
+  '*.initialPassword',
   '*.token',
   '*.access_token',
   '*.refresh_token',

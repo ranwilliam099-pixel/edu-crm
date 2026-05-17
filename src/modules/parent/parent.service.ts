@@ -18,7 +18,11 @@ import { ParentRepository } from '../db/parent.repository';
  *
  * USER-AUTH(2026-05-02): 家长 C 端跨租户身份；单孩最多 3 家长；退订后保留绑定（条目 32 #10）
  */
-export type ParentStatus = 'active' | 'suspended' | 'deleted';
+// Sprint X.2 (V47 2026-05-17) — public.parents.status 中文双态 (active/suspended/deleted → 启用/停用)
+//   旧 enum 'active' / 'suspended' / 'deleted' 已 backfill 至 '启用' / '停用' (V47 migration)
+//   保留旧值兼容期 (mapParentRow 解 DB 行；V47 deploy 前过渡期 backfill 进行中) 不影响生产
+//   TS 类型仅含新枚举, 旧值通过 unknown 转换或类型断言绕过 (parent.service.ts:87 register 兼容期保留 'active')
+export type ParentStatus = '启用' | '停用';
 export type Relationship =
   | 'father'
   | 'mother'
@@ -84,7 +88,8 @@ export class ParentService {
       wechatUnionid: input.wechatUnionid,
       name: input.name,
       avatarUrl: input.avatarUrl,
-      status: 'active',
+      // V47 (Sprint X.2 2026-05-17) — 中文 status 默认 '启用'
+      status: '启用',
     };
   }
 

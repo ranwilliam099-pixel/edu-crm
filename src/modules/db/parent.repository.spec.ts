@@ -79,7 +79,8 @@ describe('ParentRepository (V40 phone hash+encrypted 双列加密)', () => {
         phone: MOCK_PHONE,
         wechatOpenid: 'oWxOpenid001',
         name: '张爸爸',
-        status: 'active',
+        // V47 (Sprint X.2 2026-05-17) — parents.status 中文双态
+        status: '启用',
       };
       const out = await repo.insertParent(parent);
 
@@ -110,7 +111,8 @@ describe('ParentRepository (V40 phone hash+encrypted 双列加密)', () => {
       const parent: Parent = {
         id: PARENT_ID,
         phone: MOCK_PHONE,
-        status: 'active',
+        // V47 (Sprint X.2 2026-05-17) — parents.status 中文双态
+        status: '启用',
       };
       await repo.insertParent(parent);
       const sql = pg.query.mock.calls[0][0];

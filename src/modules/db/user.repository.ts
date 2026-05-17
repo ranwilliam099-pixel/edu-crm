@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PgPoolService, PgRow } from './pg-pool.service';
 
 /**
@@ -226,6 +231,94 @@ export class UserRepository {
       [id],
     );
     return rows.length === 0 ? null : UserRepository.mapRow(rows[0]);
+  }
+
+  /**
+   * 按 mobile 反查 user (Sprint X.2 — 同 tenant 内 phone 唯一性 pre-check)
+   * V44: deleted_at IS NULL 排除已软删
+   * V2 schema users.mobile UNIQUE → 最多 1 row
+   */
+  async findByMobile(tenantSchema: string, mobile: string): Promise<User | null> {
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT * FROM users WHERE mobile = $1 AND deleted_at IS NULL`,
+      [mobile],
+    );
+    return rows.length === 0 ? null : UserRepository.mapRow(rows[0]);
+  }
+
+  /**
+   * Sprint X.2 (2026-05-17) — admin 创建 B 端子账户
+   *
+   * 来源：
+   *   - SSOT §12.4 admin 唯一创建权 + bcrypt cost=12 初始密码
+   *   - 用户拍板 D2 admin 手动设密码 + modal 显示一次
+   *
+   * 入参 passwordHash 已由 controller 层 PasswordHasher.hash 算好（cost=12）
+   *   service 层不算 hash，因 hash 计算 ~250ms 会延迟事务提交
+   *
+   * 校验：
+   *   - 应用层 mobile UNIQUE pre-check 由 controller 跨表反查 (PhoneLookupService)
+   *   - DB 层 mobile UNIQUE (V2 schema) 兜底; 命中 → throw ConflictException
+   *
+   * audit_log 在 controller 层写 (本 repo 仅返 INSERT 结果)
+   */
+  async createUser(
+    tenantSchema: string,
+    input: {
+      id: string;
+      name: string;
+      mobile: string;
+      // Sprint X.2: role 接受 10-enum B 端 role (jwt-payload.interface.ts TenantRole)
+      //   本 repo 局部 TenantRole 是 7-enum (deactivate cohort), 拓宽为 string + DB CHECK 兜底
+      role: string;
+      campusId: string | null;
+      passwordHash: string;
+      createdBy: string;
+    },
+  ): Promise<User> {
+    if (!input.id || input.id.length !== 32) {
+      throw new BadRequestException('user id must be 32-char ULID');
+    }
+    if (!input.passwordHash || input.passwordHash.length !== 60) {
+      throw new BadRequestException(
+        'passwordHash must be 60-char bcrypt hash ($2b$12$...)',
+      );
+    }
+    // V2 schema users.campus_id NOT NULL → 跨校 role 也必须填一个 campusId
+    //   admin 创建 B-user 时, controller 兜底 (跨校 admin 用主校区 campusId)
+    if (!input.campusId || input.campusId.length !== 32) {
+      throw new BadRequestException('campusId must be 32-char ULID');
+    }
+    try {
+      const rows = await this.pg.tenantQuery<PgRow>(
+        tenantSchema,
+        `INSERT INTO users
+           (id, name, mobile, role, campus_id, status,
+            password_hash, password_updated_at, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, $5, '启用', $6, NOW(), $7, $7)
+         RETURNING *`,
+        [
+          input.id,
+          input.name,
+          input.mobile,
+          input.role,
+          input.campusId,
+          input.passwordHash,
+          input.createdBy,
+        ],
+      );
+      return UserRepository.mapRow(rows[0]);
+    } catch (err) {
+      // V2 schema users.mobile UNIQUE 兜底 (PG duplicate_key error 23505)
+      const e = err as { code?: string; constraint?: string };
+      if (e.code === '23505') {
+        throw new ConflictException(
+          `USER_MOBILE_DUPLICATE: 该手机号已在本机构注册`,
+        );
+      }
+      throw err;
+    }
   }
 
   /**

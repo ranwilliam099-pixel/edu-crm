@@ -85,6 +85,11 @@ import { StudentImportController } from './student-import.controller';
 import { OnboardingController, OnboardingDbController } from './onboarding.controller';
 import { UploadController } from './upload.controller';
 
+// ===== Sprint X.2 (2026-05-17) — staff 端家长账户管理（SSOT §12.5）=====
+//   POST /api/db/parents + PATCH /api/db/parent-bindings/:id
+//   AuthModule 已 @Global，PhoneLookupService 自动可注入
+import { ParentBindingController } from './parent-binding.controller';
+
 // ===== V33 审计日志（生产架构 P0 第 1 项）=====
 import { AuditLogRepository } from './audit-log.repository';
 
@@ -180,6 +185,8 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     UserController,
     StudentController,
     CourseProductController,
+    // Sprint X.2 (2026-05-17) — staff 端家长账户管理 controller
+    ParentBindingController,
   ],
   providers: [
     // 基础设施

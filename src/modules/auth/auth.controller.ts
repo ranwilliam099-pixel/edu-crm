@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Logger,
   Post,
   HttpCode,
   HttpStatus,
@@ -28,22 +29,36 @@ import { RefreshTokenService } from './refresh-token.service';
 //   T11-FU-1 完整实施 — refresh endpoint 查 users 表取真实 role/campusId
 //   原 mock 'sales' 硬编码会让 admin/boss/academic refresh 后掉权限
 import { UserRepository } from '../db/user.repository';
+// Sprint X.2 (2026-05-17) — SSOT §12 注册登录分流
+//   check-phone / login bcrypt 改造 / login-confirm 多 tenant 候选
+import { PhoneLookupService, BUserMatch } from './phone-lookup.service';
+import { PasswordHasher } from '../../common/crypto/password-hasher';
+// Sprint X.2 round 2 (2026-05-17 3 审共识 A09 BLOCKER)：
+//   注入 AuditLogRepository → login / login-confirm / check-phone 写 audit_log V33
+//   SSOT §12.9 + §9 「check-phone / login / parents.create / user.deactivate 全 endpoint 必接 audit_log V33」
+import { AuditLogRepository, normalizeActorRole } from '../db/audit-log.repository';
 
 /**
- * AuthController — 联调收尾 Q-FE-2 + 待补 B 端 /auth/login
+ * AuthController — Sprint X.2 (2026-05-17) 登录分流 + B 端密码登录改造
  *
  * 路由前缀：/api/public（公开，TenantMiddleware 已豁免）
  *
  * 来源：
- *   - 派单条目 33 §5 待答清单 Q-FE-2
- *   - 用户 2026-05-02「立即补，马上做完」
+ *   - SSOT §12.1 / §12.3 B/C 登录页统一 + check-phone 路由分支
+ *   - SSOT §12.4 admin 唯一创建 B 端子账户 + bcrypt cost=12
+ *   - SSOT §12.6 失效逻辑统一 status='停用'
+ *   - 用户拍板 D1（跨 tenant 应用层串行）/ D3（C 端推 X+1）/ D4（无 session）/ D5（互斥违反 401）
  *
- * 当前实现：mock 鉴权（INT-01 docker PG 起来后接真用户表 + bcrypt）
- *   - 凡是手机号末尾 4 位非空，即视为合法登录
- *   - 真实场景：查 users 表 + bcrypt 比对密码
+ * 改造摘要（Sprint X.2 vs Sprint X.1 mock）：
+ *   - check-phone 新增：phone blur 路由分支（返 accountType + exists）
+ *   - login 改造：删 role/tenantId/userId body 自报 → 跨表 phone + bcrypt 比对 → 0/1/2+ 分支
+ *   - login-confirm 新增：多 tenant 候选选择器后二次确认（无 session, D4 重发 phone+password）
+ *   - wechat-login 保留（C 端 wx-jscode2session 走旧路径, D3 推 X+1 加密码登录）
  */
 @Controller('public/auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly jwt: JwtService,
     private readonly parentJwt: ParentJwtStrategy,
@@ -52,18 +67,126 @@ export class AuthController {
     private readonly refreshTokenService: RefreshTokenService,
     // T-DEPLOY-FIX-1 round 2：T11-FU-1 INT-01 用 users 表查真实 role/campusId
     private readonly userRepo: UserRepository,
+    // Sprint X.2 (2026-05-17) — 跨表 phone 反查 + bcrypt 校验
+    private readonly phoneLookup: PhoneLookupService,
+    private readonly passwordHasher: PasswordHasher,
+    // Sprint X.2 round 2 (2026-05-17 3 审共识)：audit_log V33 接入（SSOT §12.9 + §9）
+    private readonly auditLog: AuditLogRepository,
   ) {}
 
   /**
-   * POST /api/public/auth/login — B 端员工登录
+   * Sprint X.2 round 2 helper — audit_log 失败/成功路径
    *
-   * Body: { phone, password, tenantId, role, campusId, userId }
-   *   真实场景：phone + password → 查 users 表 → bcrypt → 取 user.role
-   *   当前 mock：直接采信传入的 role / tenantId / userId（前端登录页输入即可）
+   * 调用 auditLog.log 时 tenantSchema 取值：
+   *   - 1-row 命中 → tenant_{matchedTenantId}
+   *   - 0-row / 互斥 / parent-redirect → '' (无 tenant 上下文，audit 兜底 fail-open 入 platform-level)
+   * 走 try-catch 兜底，绝不阻断登录主流程
+   */
+  private async tryAuditLogin(
+    tenantSchema: string,
+    action: 'auth.login.success' | 'auth.login.failed' | 'auth.check-phone.queried',
+    actorUserId: string | null,
+    actorRoleRaw: string,
+    targetId: string,
+    after: Record<string, unknown>,
+    req?: AuthenticatedRequest,
+  ): Promise<void> {
+    try {
+      // normalizeActorRole 在 audit-log.repository.ts 内部 V33 CHECK 白名单
+      await this.auditLog.log(tenantSchema, {
+        actorUserId,
+        actorRole: normalizeActorRole(actorRoleRaw),
+        action,
+        targetType: 'user',
+        targetId,
+        before: null,
+        after,
+        // req? optional → 未传时 ip/ua/reqId 全 null（无 HTTP 上下文场景如 cron / 内部调用）
+        ip: req ? this.getIp(req) : null,
+        userAgent: req ? this.getUserAgent(req) : null,
+        requestId: req ? this.getRequestId(req) : null,
+      });
+    } catch (err) {
+      this.logger.warn(`[audit.${action}.fail-open] ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * POST /api/public/auth/check-phone — Sprint X.2 phone 路由分支（SSOT §12.1）
+   *
+   * Body: { phone }
+   * Response: { exists: boolean, accountType: 'b' | 'c' | null }
+   *
+   * 行为：
+   *   - 跨表反查 phone：parents 表 + N 个 tenant.users 表
+   *   - accountType='b' = B 端命中（可能多 tenant，但不透传细节防枚举）
+   *   - accountType='c' = C 端 parent 命中（互斥）
+   *   - exists=false = 未注册 → 引导注册（前端「自助开通新机构」按钮）
+   *
+   * 安全（D5 互斥违反）：
+   *   - B/C 同 phone 命中 → 仍返 accountType=null + exists=false（不透传细节）
+   *   - pino warn 提示 ops 人工介入（数据库违反业务红线）
+   *
+   * 安全（防枚举）：
+   *   - throttle 5/min/IP（spec D1 收紧）
+   *   - parents 不存在时 dummy bcrypt.compare（spec timing attack 防御）
+   *     注：本 endpoint 不做 bcrypt 比对（login 才做），timing 防御转嫁到 login endpoint
+   */
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('check-phone')
+  @HttpCode(HttpStatus.OK)
+  async checkPhone(
+    @Body() body: { phone: string },
+  ): Promise<{ exists: boolean; accountType: 'b' | 'c' | null }> {
+    if (!body?.phone || !/^1[3-9]\d{9}$/.test(body.phone)) {
+      throw new BadRequestException('phone must be valid 11-digit Chinese mobile');
+    }
+    const result = await this.phoneLookup.lookupByPhone(body.phone);
+
+    // 过滤 B-user: 仅 '启用' AND deleted_at IS NULL 算 active 命中
+    const activeBUsers = result.bUsers.filter(
+      (u) => u.status === '启用' && u.deletedAt === null,
+    );
+    const activeParent =
+      result.parent && result.parent.status === '启用' ? result.parent : null;
+
+    // D5 互斥违反：B + C 同时命中 → 返 null + pino warn ops
+    if (activeBUsers.length > 0 && activeParent) {
+      this.logger.warn(
+        `[auth.check-phone.mutex-violation] phone=***${body.phone.slice(-4)} bUsers=${activeBUsers.length} parent=1 — manual ops review required`,
+      );
+      return { exists: false, accountType: null };
+    }
+
+    if (activeBUsers.length > 0) {
+      return { exists: true, accountType: 'b' };
+    }
+    if (activeParent) {
+      return { exists: true, accountType: 'c' };
+    }
+    return { exists: false, accountType: null };
+  }
+
+  /**
+   * POST /api/public/auth/login — B/C 端登录（SSOT §12.3）
+   *
+   * Body: { phone, password }
+   *   - 删除 role/tenantId/userId/campusId 自报字段（旧 mock 已下线）
+   *   - 跨表反查 + bcrypt 比对 + status='启用' AND deleted_at IS NULL
+   *
+   * 响应（B 端，accountType='b'）：
+   *   - 0 row 命中 → 401 INVALID_CREDENTIALS（不透传是 phone 错还是 password 错，防枚举）
+   *   - 1 row 命中 → 直接签 JWT + refresh（同 Sprint X.1 模式）
+   *   - 2+ row 命中 → { needTenantSelection: true, candidates: [...] }（D4 无 session，
+   *     前端弹选择器后调 /login-confirm 重发 phone+password+tenantId）
+   *
+   * 响应（C 端 parent，accountType='c'）：
+   *   - D3 推 Sprint X+1：本 Sprint 不实施密码登录，返 401 PARENT_USE_WECHAT
+   *   - msg「请使用微信家长小程序登录」(走 wx-jscode2session)
+   *
+   * 互斥违反（D5）：401 + pino warn ops
    *
    * 5/15 A-2：role 白名单删 'sales_director'（应用层取消大区经理岗位）
-   *
-   * @returns { token, tokenType: 'Bearer', expiresIn, payload }
    */
   // SPRINT-E.1(2026-05-13) 限流：登录 10 次/分钟（防暴力破解 / 撞库）
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -71,32 +194,217 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async login(
     @Req() req: AuthenticatedRequest,
-    @Body()
-    body: {
-      phone: string;
-      password?: string; // mock 不校验
-      tenantId: string;
-      role: string;
-      campusId?: string | null; // 跨校 role 可空
-      userId: string;
-    },
-  ) {
-    if (!body.phone || !/^1[3-9]\d{9}$/.test(body.phone)) {
+    @Body() body: { phone: string; password: string },
+  ): Promise<
+    | {
+        token: string;
+        refreshToken: string;
+        tokenType: 'Bearer';
+        expiresIn: number;
+        refreshExpiresIn: number;
+        payload: JwtPayload;
+      }
+    | {
+        needTenantSelection: true;
+        candidates: Array<{
+          tenantId: string;
+          tenantName: string;
+          campusName: string;
+          role: string;
+        }>;
+      }
+  > {
+    if (!body?.phone || !/^1[3-9]\d{9}$/.test(body.phone)) {
       throw new BadRequestException('phone must be valid 11-digit Chinese mobile');
     }
-    if (!body.userId || body.userId.length !== 32) {
-      throw new BadRequestException('userId must be 32-char ULID');
+    if (typeof body.password !== 'string' || body.password.length === 0) {
+      throw new BadRequestException('password is required');
+    }
+    if (body.password.length > 128) {
+      throw new BadRequestException('password too long (max 128 chars)');
+    }
+    const result = await this.phoneLookup.lookupByPhone(body.phone);
+    const activeBUsers = result.bUsers.filter(
+      (u) => u.status === '启用' && u.deletedAt === null,
+    );
+    const activeParent =
+      result.parent && result.parent.status === '启用' ? result.parent : null;
+
+    const phoneMask = `***${body.phone.slice(-4)}`;
+
+    // D5 互斥违反：B + C 同时命中 → 401 + pino warn ops + audit_log V33
+    if (activeBUsers.length > 0 && activeParent) {
+      this.logger.warn(
+        `[auth.login.mutex-violation] phone=${phoneMask} bUsers=${activeBUsers.length} parent=1 — manual ops review required`,
+      );
+      await this.tryAuditLogin('', 'auth.login.failed', null, 'system', phoneMask, {
+        reason: 'MUTEX_VIOLATION',
+        bUsers: activeBUsers.length,
+        parent: 1,
+      }, req);
+      throw new UnauthorizedException('INVALID_CREDENTIALS');
+    }
+
+    // D3 C 端 parent 推 Sprint X+1 密码登录, 本 Sprint 提示走微信
+    if (activeBUsers.length === 0 && activeParent) {
+      // Sprint X.2 round 2 (security A04-P1-TIMING)：dummy bcrypt 防 C-parent phone 枚举 timing oracle
+      await this.passwordHasher.verify(body.password, '');
+      await this.tryAuditLogin('', 'auth.login.failed', null, 'system', phoneMask, {
+        reason: 'PARENT_USE_WECHAT',
+      }, req);
+      throw new UnauthorizedException({
+        code: 'PARENT_USE_WECHAT',
+        message: '请使用微信家长小程序登录',
+      });
+    }
+
+    // B 端无命中（含 phone 未注册 + 全部停用 / 软删情形）→ 401
+    if (activeBUsers.length === 0) {
+      // timing attack 防御：dummy bcrypt.compare 消耗等量时间
+      await this.passwordHasher.verify(body.password, '');
+      await this.tryAuditLogin('', 'auth.login.failed', null, 'system', phoneMask, {
+        reason: 'PHONE_NOT_FOUND',
+      }, req);
+      throw new UnauthorizedException('INVALID_CREDENTIALS');
+    }
+
+    // 1 row → 直接 bcrypt 比对 + 签 token
+    if (activeBUsers.length === 1) {
+      const match = activeBUsers[0];
+      const ok = await this.passwordHasher.verify(body.password, match.passwordHash);
+      if (!ok) {
+        await this.tryAuditLogin(
+          `tenant_${match.tenantId.toLowerCase()}`,
+          'auth.login.failed', match.userId, match.role, phoneMask,
+          { reason: 'BCRYPT_MISMATCH', tenantId: match.tenantId }, req,
+        );
+        throw new UnauthorizedException('INVALID_CREDENTIALS');
+      }
+      // Sprint X.2 round 2: audit_log success（tryAuditLogin tenantSchema 取 match.tenantId）
+      await this.tryAuditLogin(
+        `tenant_${match.tenantId.toLowerCase()}`,
+        'auth.login.success', match.userId, match.role, match.userId,
+        { tenantId: match.tenantId, role: match.role, campusId: match.campusId, phoneLast4: body.phone.slice(-4) },
+        req,
+      );
+      return this.signBUserToken(req, match);
+    }
+
+    // 2+ rows → 返候选 list（前端弹选择器 → 调 /login-confirm，D4 无 session 重发）
+    // 注意：candidates 不含 userId/sub/email/passwordHash（防细粒度枚举攻击）
+    await this.tryAuditLogin('', 'auth.login.success', null, 'system', phoneMask, {
+      reason: 'MULTI_TENANT_PROMPT',
+      candidatesCount: activeBUsers.length,
+    }, req);
+    return {
+      needTenantSelection: true,
+      candidates: activeBUsers.map((u) => ({
+        tenantId: u.tenantId,
+        tenantName: u.tenantName,
+        campusName: u.campusName,
+        role: u.role,
+      })),
+    };
+  }
+
+  /**
+   * POST /api/public/auth/login-confirm — Sprint X.2 多 tenant 候选确认（SSOT §12.3）
+   *
+   * Body: { phone, password, tenantId }
+   *
+   * 行为（D4 无 session）：
+   *   - 不信前端 candidates list；重新跨 tenant phone 反查 + bcrypt 比对该 tenant
+   *   - tenantId 不在反查结果中 → 401（防伪造 tenantId）
+   *   - 成功 → 签 B 端 JWT + refresh
+   *
+   * 安全：
+   *   - 同 login 完整路径（throttle / bcrypt / phone format）
+   *   - tenantId 必填 + 32-char ULID 校验
+   */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('login-confirm')
+  @HttpCode(HttpStatus.OK)
+  async loginConfirm(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { phone: string; password: string; tenantId: string },
+  ): Promise<{
+    token: string;
+    refreshToken: string;
+    tokenType: 'Bearer';
+    expiresIn: number;
+    refreshExpiresIn: number;
+    payload: JwtPayload;
+  }> {
+    if (!body?.phone || !/^1[3-9]\d{9}$/.test(body.phone)) {
+      throw new BadRequestException('phone must be valid 11-digit Chinese mobile');
+    }
+    if (typeof body.password !== 'string' || body.password.length === 0) {
+      throw new BadRequestException('password is required');
+    }
+    if (body.password.length > 128) {
+      throw new BadRequestException('password too long (max 128 chars)');
     }
     if (!body.tenantId || body.tenantId.length !== 32) {
       throw new BadRequestException('tenantId must be 32-char ULID');
     }
-    // Sprint B (2026-05-11): TenantRole 加 teacher / academic / academic_admin
-    //   - teacher / academic / academic_admin 均为单校 role，campusId 必填
-    //   - 校验逻辑通过下方 isCrossCampusRole 分支自动覆盖（fall-through 到 single-campus 分支）
-    //
-    // 5/15 A-2 拍板：删 'sales_director'（不在拍板权威 9 角色清单 fields-by-role.md L6-17）
-    //   - 应用层不再接受 sales_director 登录，jwt 也不会签发 sales_director claim
-    //   - 历史 schema CHECK 仍允许，但应用层拒绝创建（与 user.service validRoles 一致）
+    const result = await this.phoneLookup.lookupByPhone(body.phone);
+    const activeBUsers = result.bUsers.filter(
+      (u) => u.status === '启用' && u.deletedAt === null,
+    );
+
+    const phoneMask = `***${body.phone.slice(-4)}`;
+
+    // 选定 tenant 必须在反查结果中（D4 不信前端，重新校验）
+    const selected = activeBUsers.find((u) => u.tenantId === body.tenantId);
+    if (!selected) {
+      // timing 防御：dummy verify
+      await this.passwordHasher.verify(body.password, '');
+      await this.tryAuditLogin('', 'auth.login.failed', null, 'system', phoneMask, {
+        reason: 'TENANT_ID_NOT_IN_CANDIDATES',
+        attemptedTenantId: body.tenantId,
+      }, req);
+      throw new UnauthorizedException('INVALID_CREDENTIALS');
+    }
+
+    const ok = await this.passwordHasher.verify(body.password, selected.passwordHash);
+    if (!ok) {
+      await this.tryAuditLogin(
+        `tenant_${selected.tenantId.toLowerCase()}`,
+        'auth.login.failed', selected.userId, selected.role, phoneMask,
+        { reason: 'BCRYPT_MISMATCH', tenantId: selected.tenantId, endpoint: 'login-confirm' }, req,
+      );
+      throw new UnauthorizedException('INVALID_CREDENTIALS');
+    }
+    // Sprint X.2 round 2: audit success
+    await this.tryAuditLogin(
+      `tenant_${selected.tenantId.toLowerCase()}`,
+      'auth.login.success', selected.userId, selected.role, selected.userId,
+      { tenantId: selected.tenantId, role: selected.role, campusId: selected.campusId, endpoint: 'login-confirm', phoneLast4: body.phone.slice(-4) },
+      req,
+    );
+    return this.signBUserToken(req, selected);
+  }
+
+  /**
+   * 签 B-user token + refresh（login / login-confirm 共享）
+   *
+   * 5/15 A-2 拍板：删 'sales_director'（不在拍板权威 9 角色清单 fields-by-role.md L6-17）
+   *   - 应用层校验：DB 历史 row 如有 sales_director → 401（不发新 JWT）
+   *
+   * V10 拍板：跨校组 (admin/hr) campusId 可空；单校组必须 32 字符 ULID
+   *   - 应用层信任 DB schema CHECK（不再二次校验，DB 已强约束）
+   */
+  private async signBUserToken(
+    req: AuthenticatedRequest,
+    match: BUserMatch,
+  ): Promise<{
+    token: string;
+    refreshToken: string;
+    tokenType: 'Bearer';
+    expiresIn: number;
+    refreshExpiresIn: number;
+    payload: JwtPayload;
+  }> {
     const validRoles = [
       'sales',
       'sales_manager',
@@ -109,50 +417,44 @@ export class AuthController {
       'academic',
       'academic_admin',
     ];
-    if (!validRoles.includes(body.role)) {
-      throw new BadRequestException(`role must be one of ${validRoles.join('/')}`);
+    if (!validRoles.includes(match.role)) {
+      this.logger.warn(
+        `[auth.login.role-rejected] userId=${match.userId} role=${match.role} not in validRoles (5/15 A-2 删 sales_director)`,
+      );
+      throw new UnauthorizedException('INVALID_CREDENTIALS');
     }
-
-    // V10 拍板（+ 5/15 A-2 删 sales_director）：跨校组（admin/hr）campusId 可空；
-    // 单校组（boss/sales/sales_manager/marketing/finance/teacher/academic/academic_admin）必须 32 字符 ULID
+    // V10 + 5/15 A-2: 跨校组 campusId 可 null, 单校组必须 32-char
+    //   DB 已强约束 (V2 schema CHECK campus_id NOT NULL except cross-campus)
+    //   应用层兜底防数据漂移
     let campusId: string | null;
-    if (isCrossCampusRole(body.role)) {
-      if (body.campusId && body.campusId.length !== 32) {
-        throw new BadRequestException(
-          'cross-campus role campusId must be null/omitted or 32-char ULID',
-        );
-      }
-      campusId = body.campusId || null;
+    if (isCrossCampusRole(match.role)) {
+      campusId = match.campusId && match.campusId.length === 32 ? match.campusId : null;
     } else {
-      if (!body.campusId || body.campusId.length !== 32) {
-        throw new BadRequestException(
-          `single-campus role (${body.role}) must have 32-char campusId`,
+      if (!match.campusId || match.campusId.length !== 32) {
+        this.logger.warn(
+          `[auth.login.campus-invalid] userId=${match.userId} role=${match.role} campusId=${match.campusId} — DB integrity violation`,
         );
+        throw new UnauthorizedException('INVALID_CREDENTIALS');
       }
-      campusId = body.campusId;
+      campusId = match.campusId;
     }
 
-    // SPRINT-E.1(2026-05-13) 给每个 token 分配唯一 jti（JWT ID, 26-char ULID）
-    //   - logout 时 jti 入 Redis 黑名单（auth:revoked:{jti}），TTL = token 剩余有效期
-    //   - jwt.strategy.parse() 校验 jti 不在黑名单
-    //   - jsonwebtoken 限制：jti 不能同时在 payload + options.jwtid，所以只放 options
-    //     最终 sign 出的 token 仍然有标准 JWT `jti` 字段，verify 后 decoded.jti 可读
+    // SPRINT-E.1(2026-05-13) jti for logout blacklist
     const jti = ulid();
     const signPayload: Omit<JwtPayload, 'jti' | 'aud'> = {
-      sub: body.userId,
-      tenantId: body.tenantId,
-      role: body.role as TenantRole,
+      sub: match.userId,
+      tenantId: match.tenantId,
+      role: match.role as TenantRole,
       campusId,
     };
-    // T6a audit A1-r2 P0-NEW-3: B 端 token 标 audience='b-app'，与 C 端 'parent-app' 切分
+    // T6a B 端 token aud='b-app'
     const token = this.jwt.sign(signPayload, { jwtid: jti, audience: AUDIENCE_B_APP });
-    // 给前端返回完整 payload（含 jti / aud）便于调试 / 前端缓存 logout 用
     const payload: JwtPayload = { ...signPayload, jti, aud: AUDIENCE_B_APP };
-    // T11 (2026-05-16): 签发配套 refresh token（7d B 端）
+    // T11 refresh token (7d B 端)
     const refresh = await this.refreshTokenService.issue({
       subjectType: 'b-user',
-      subjectId: body.userId,
-      tenantId: body.tenantId,
+      subjectId: match.userId,
+      tenantId: match.tenantId,
       userAgent: this.getUserAgent(req),
       ip: this.getIp(req),
     });

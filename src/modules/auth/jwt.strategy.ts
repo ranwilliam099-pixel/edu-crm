@@ -56,6 +56,7 @@ export class JwtStrategy {
     const decoded = this.verify(token);
     this.validateClaims(decoded);
     await this.assertNotRevoked(decoded);
+    await this.assertUserNotDeactivated(decoded);
     return decoded;
   }
 
@@ -76,6 +77,42 @@ export class JwtStrategy {
     } catch (e) {
       if (e instanceof UnauthorizedException) throw e;
       // Redis 不可用 → fail-open，避免一行 Redis 故障 → 全站登录瘫痪
+    }
+  }
+
+  /**
+   * Sprint X.2 (D6 2026-05-17) — user-level 黑名单（停用瞬间所有 access token 失效）
+   *
+   * 来源：
+   *   - SSOT §12.6「失效逻辑统一: 全部账户不可登录」
+   *   - 用户拍板 D6 Redis auth:user-revoked-at:{userId} 时间戳 (15min TTL)
+   *
+   * 行为：
+   *   - 查 Redis auth:user-revoked-at:{sub}
+   *   - 命中 → 该 user 停用瞬间时间戳 revokedAt(ms)
+   *   - 若 payload.iat * 1000 < revokedAt → token 签发于停用前 → 401 USER_DEACTIVATED
+   *   - 15min TTL 后该 key 自动过期 = access token 自然过期 (24h 默认 - 15min 还需走)
+   *
+   * 边界：
+   *   - iat 缺失 → 跳过 (旧 token 兼容; 极端情况 fail-open)
+   *   - Redis 异常 → fail-open (一致性 < 可用性)
+   *   - 单测 / RedisModule 未注入 → 跳过
+   */
+  private async assertUserNotDeactivated(payload: JwtPayload): Promise<void> {
+    if (!this.redis) return;
+    if (!payload.iat || !payload.sub) return;
+    try {
+      const raw = await this.redis.get(`auth:user-revoked-at:${payload.sub}`);
+      if (!raw) return;
+      const revokedAtMs = parseInt(raw, 10);
+      if (isNaN(revokedAtMs)) return; // 防 Redis 数据损坏 → fail-open
+      const iatMs = payload.iat * 1000;
+      if (iatMs < revokedAtMs) {
+        throw new UnauthorizedException('USER_DEACTIVATED');
+      }
+    } catch (e) {
+      if (e instanceof UnauthorizedException) throw e;
+      // Redis 不可用 → fail-open
     }
   }
 

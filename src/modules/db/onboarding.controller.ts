@@ -84,6 +84,11 @@ export class OnboardingController {
         address?: string;
         courseLines?: string;
       }>;
+      // Sprint X.2 (D8 2026-05-17) — admin 注册密码 SSOT §12.4
+      //   provision-tenant 同 Sprint 加这两个字段, 用户拍板 D8 写明
+      //   未传则 fallback 老 mock phone + password_hash='' (兼容期)
+      adminPhone?: string;
+      adminPassword?: string;
     },
   ): Promise<{
     tenantId: string;

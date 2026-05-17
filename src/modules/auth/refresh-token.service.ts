@@ -211,6 +211,24 @@ export class RefreshTokenService {
   }
 
   /**
+   * Sprint X.2 (D6 2026-05-17) — 撤销 subject 所有 active refresh token
+   *
+   * 来源：用户拍板 D6 user.deactivate JWT 黑名单联动
+   *      SSOT §12.6 失效逻辑「全部账户不可登录」
+   *
+   * 与 handleReplay（spec §3.3 重放检测）共享底层 repo 方法，
+   * 此处提供 service 层公开 API 给 UserController.deactivate 调用。
+   *
+   * @returns 撤销的 row 数（fail-open 调用方接受 0/N 任意值）
+   */
+  async revokeAllBySubject(
+    subjectType: 'b-user' | 'parent',
+    subjectId: string,
+  ): Promise<number> {
+    return this.repo.revokeAllBySubject(subjectType, subjectId);
+  }
+
+  /**
    * 重放检测处理（spec §3.3）
    * 旧 token 已 revoked 但被再次使用 → 撤销该 subject 全部 active refresh_tokens
    * + audit_log auth.refresh.replay-detected (severity high)

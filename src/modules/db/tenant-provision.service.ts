@@ -9,6 +9,12 @@ import {
   JwtPayload,
   TenantRole,
 } from '../auth/jwt-payload.interface';
+// Sprint X.2 (D8 2026-05-17) — provision-tenant 同 Sprint 加 adminPhone + adminPassword
+//   PasswordHasher bcrypt cost=12 写入 users.password_hash (V46 列)
+import { PasswordHasher } from '../../common/crypto/password-hasher';
+// Sprint X.2 (D8) — provision 前先跨表 phone 唯一性校验, 防 B/C 互斥违反
+//   PhoneLookupService 是 @Global AuthModule export (auth.module.ts:48)
+import { PhoneLookupService } from '../auth/phone-lookup.service';
 
 /**
  * TenantProvisionService — 租户 schema 自动创建
@@ -66,6 +72,10 @@ const TENANT_MIGRATIONS = [
   'V39__rename_hourly_rate_to_hourly_price.sql',
   'V42__invoices_in_tenant_schema.sql',
   'V44__add_deleted_at_to_students_teachers_users.sql',
+  // Sprint X.2 (2026-05-17) — V46 password_hash + password_updated_at
+  //   新 tenant provision 必须包含 V46（admin 创建 user 时 V46 列已存在）
+  //   V47 不在此列（public schema 单次执行, 不逐 tenant）
+  'V46__add_password_to_users.sql',
 ];
 
 @Injectable()
@@ -79,6 +89,10 @@ export class TenantProvisionService {
     //   plan-select 页需 JWT 调 POST /api/db/onboarding/start-trial
     //   admin user 已在 createAdminUser 创建 → 直接签 b-app token
     private readonly jwt: JwtService,
+    // Sprint X.2 (D8 2026-05-17) — adminPassword bcrypt 写 password_hash
+    private readonly passwordHasher: PasswordHasher,
+    // Sprint X.2 (D8) — provision 前跨表 phone 唯一性校验 (互斥红线 SSOT §12.1)
+    private readonly phoneLookup: PhoneLookupService,
   ) {
     // dist/src/modules/db/* 反向到 dist 根目录，再到项目根 → migrations
     // 兼容 dev (src/modules/db/*) 和 prod (dist/src/modules/db/*)
@@ -114,6 +128,11 @@ export class TenantProvisionService {
       phone: string;
       email?: string;
     };
+    // Sprint X.2 (D8 2026-05-17) — adminPhone + adminPassword 同 Sprint 加
+    //   SSOT §12.4 admin 是机构注册者 + 唯一创建 B 端子账户权
+    //   未传则 fallback input.admin.phone (向前兼容历史调用方)
+    adminPhone?: string;
+    adminPassword?: string;
     products?: Array<{
       name: string;
       classes?: Array<{
@@ -149,6 +168,38 @@ export class TenantProvisionService {
     );
     if (existing.length > 0) {
       throw new ConflictException(`tenant ${input.tenantId} already exists`);
+    }
+
+    // Sprint X.2 (D8 2026-05-17) — 跨表 phone 唯一性校验 (SSOT §12.1 B/C 互斥红线)
+    //   仅在显式传 input.adminPhone (新参) 时校验；旧调用方未传 → 跳过
+    //   (向前兼容 onboarding 旧路径 / 既有单测 / wizard mock 路径)
+    //   - 若 phone 已在 parents 表 / 任意 tenant.users 表存在 → 409 拒绝注册
+    //   - phone 格式失败 → 400
+    if (input.adminPhone) {
+      if (!/^1[3-9]\d{9}$/.test(input.adminPhone)) {
+        throw new BadRequestException('adminPhone must be valid 11-digit Chinese mobile');
+      }
+      const lookup = await this.phoneLookup.lookupByPhone(input.adminPhone);
+      const activeBUsers = lookup.bUsers.filter(
+        (u) => u.status === '启用' && u.deletedAt === null,
+      );
+      const activeParent =
+        lookup.parent && lookup.parent.status === '启用' ? lookup.parent : null;
+      if (activeBUsers.length > 0 || activeParent) {
+        throw new ConflictException(
+          'PHONE_ALREADY_REGISTERED: 该手机号已注册 (B 端员工或 C 端家长)',
+        );
+      }
+    }
+    // adminPassword (D8) 必须存在才能 bcrypt 写 password_hash；
+    //   未传 → V46 password_hash='' 兜底, 首次 login 必须走密码重置流程 (backlog)
+    if (input.adminPassword !== undefined) {
+      if (typeof input.adminPassword !== 'string' || input.adminPassword.length < 8) {
+        throw new BadRequestException('adminPassword must be string, min 8 chars');
+      }
+      if (input.adminPassword.length > 128) {
+        throw new BadRequestException('adminPassword too long (max 128 chars)');
+      }
     }
 
     const tenantSchema = `tenant_${input.tenantId.toLowerCase()}`;
@@ -252,11 +303,14 @@ export class TenantProvisionService {
     }
     this.logger.log(`[TenantProvision] ✅ ${campusIds.length} campuses created for ${input.tenantId}`);
 
+    // Sprint X.2 (D8) — adminPhone 优先 (新参), fallback admin.phone (向前兼容)
+    //   adminPassword 未传则 password_hash='' (V46 DEFAULT), 首次 login 401 兜底走重置
     const adminUserId = await this.createAdminUser(tenantSchema, {
       id: input.admin?.id || this.simpleUlid(),
       name: input.admin?.name || '老板',
-      phone: input.admin?.phone || '13800001111',
+      phone: input.adminPhone || input.admin?.phone || '13800001111',
       campusId: campusIds[0],
+      password: input.adminPassword,
     });
     const courseProductIds = await this.createCourseProducts(
       tenantSchema,
@@ -308,26 +362,40 @@ export class TenantProvisionService {
 
   private async createAdminUser(
     tenantSchema: string,
-    input: { id: string; name: string; phone: string; campusId: string },
+    input: {
+      id: string;
+      name: string;
+      phone: string;
+      campusId: string;
+      // Sprint X.2 (D8 2026-05-17) — admin 首次密码 bcrypt hash
+      //   未传则 password_hash='' (V46 DEFAULT), 首次 login 401 兜底
+      password?: string;
+    },
   ): Promise<string> {
     if (!input.id || input.id.length !== 32) {
       throw new BadRequestException('admin id must be 32-char ULID');
     }
+    // Sprint X.2 (D8) — 计算 bcrypt hash (若传 password); 未传走 DB DEFAULT ''
+    const passwordHash = input.password
+      ? await this.passwordHasher.hash(input.password)
+      : '';
     await this.pg.withClient(async (client) => {
       await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
       await client.query(
         `INSERT INTO users
-           (id, name, mobile, role, campus_id, status, created_by, updated_by)
-         VALUES ($1, $2, $3, 'admin', $4, '启用', $1, $1)
+           (id, name, mobile, role, campus_id, status, password_hash, password_updated_at, created_by, updated_by)
+         VALUES ($1, $2, $3, 'admin', $4, '启用', $5, CASE WHEN $5 = '' THEN NULL ELSE NOW() END, $1, $1)
          ON CONFLICT (id) DO UPDATE
            SET name = EXCLUDED.name,
                mobile = EXCLUDED.mobile,
                role = 'admin',
                campus_id = EXCLUDED.campus_id,
                status = '启用',
+               password_hash = EXCLUDED.password_hash,
+               password_updated_at = EXCLUDED.password_updated_at,
                updated_at = NOW(),
                updated_by = EXCLUDED.updated_by`,
-        [input.id, input.name, input.phone, input.campusId],
+        [input.id, input.name, input.phone, input.campusId, passwordHash],
       );
     });
     return input.id;
