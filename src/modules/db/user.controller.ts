@@ -84,10 +84,12 @@ export class UserController {
    *     (SSOT §12.4 admin 唯一, 不能再创 admin)
    *   - campusId 单校 role 必填, 跨校 role (hr) 可空但需 fallback 主校区
    */
+  // Sprint X.2 round 12 (2026-05-18 用户拍板): boss 可创建本校区员工
+  //   SSOT §12.4 修订: admin (跨校) + boss (本校区, 不可创建另一个 boss/admin)
   @Post()
   @UseGuards(RbacGuard)
   @UseInterceptors(IdempotencyInterceptor)
-  @Roles('admin')
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.CREATED)
   async createUser(
     @Body()
@@ -131,6 +133,36 @@ export class UserController {
       throw new BadRequestException(
         `role must be one of ${validSubRoles.join('/')} (admin 不可再创建, SSOT §12.4)`,
       );
+    }
+    // Sprint X.2 round 12-13 (2026-05-18 用户拍板): admin / boss 校区守门
+    //   SSOT §12.4 修订:
+    //     - boss: 必须本校区 + 不可创建 boss/admin (每校区唯一)
+    //     - admin 有 campusId: 强制本校区 (不可跨校)
+    //     - admin 无 campusId (跨校 admin): 允许指定任意 campusId
+    const operatorRoleForBoss = req.user?.role;
+    if (operatorRoleForBoss === 'boss') {
+      if (body.role === 'boss' || body.role === 'admin') {
+        throw new BadRequestException(
+          'boss 不可创建 admin 或另一个 boss (SSOT §12.4 boss 每校区唯一)',
+        );
+      }
+      const bossCampusId = req.user?.campusId;
+      if (!bossCampusId) {
+        throw new BadRequestException('boss 缺 campusId, 无法创建员工');
+      }
+      if (body.campusId && body.campusId !== bossCampusId) {
+        throw new BadRequestException(
+          `boss 只能创建本校区员工 (本校区=${bossCampusId.slice(0, 8)}...)`,
+        );
+      }
+    } else if (operatorRoleForBoss === 'admin') {
+      const adminCampusId = req.user?.campusId;
+      // admin 有 campusId → 强制本校区; 无 campusId (跨校 admin) → 允许任意 campusId
+      if (adminCampusId && body.campusId && body.campusId !== adminCampusId) {
+        throw new BadRequestException(
+          `admin 已绑定校区, 不能创建跨校区员工 (本校区=${adminCampusId.slice(0, 8)}...)`,
+        );
+      }
     }
     if (body.campusId !== undefined && body.campusId !== null) {
       if (body.campusId.length !== 32) {
