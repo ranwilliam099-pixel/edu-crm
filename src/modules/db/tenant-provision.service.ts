@@ -79,6 +79,11 @@ const TENANT_MIGRATIONS = [
   // Sprint X.2 round 5 (2026-05-17) — V48 users.role CHECK 加 teacher/academic/academic_admin
   //   原 V2 CHECK 8 role 缺新 3 角色，admin 创建 teacher/academic 员工时 23514 违反 CHECK
   'V48__add_teacher_academic_roles_to_users_check.sql',
+  // Sprint X.2 round 17 (2026-05-18 e2e Phase 19 抓到 P0 #12): V41 customers PII 列必须随 provision 跑
+  //   原注释「V41 customers 单独 backfill」错 — V41 有 __TENANT_SCHEMA__ 占位符是 tenant-private 列
+  //   不跑 V41 新 wizard 注册的 tenant customers 表缺 primary_mobile_hash + primary_mobile_encrypted →
+  //   POST /db/customers INSERT 时 23502 column does not exist 500
+  'V41__customers_primary_mobile_hash_and_encrypted.sql',
 ];
 
 @Injectable()
