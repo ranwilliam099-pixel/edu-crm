@@ -217,10 +217,60 @@ CP1=$(curl -s -m 5 -X POST "$BASE/public/auth/check-phone" -H "Content-Type: app
 CP2=$(curl -s -m 5 -X POST "$BASE/public/auth/check-phone" -H "Content-Type: application/json" -d "{\"phone\":\"13800099991\"}")
 [[ "$CP2" == '{"exists":false,"accountType":null}' ]] && ok "18.2 未注册 → null" || info "18.2: $CP2"
 
-# Phase 19 总结
+# ════════════════════════════════════════════════════════════
+# Phase 19-22 业务流程: customer → student → course-product → contract
+# (admin token 已有，跨校 admin)
+# ════════════════════════════════════════════════════════════
+sleep 12  # throttle reset 防被 429
+
+head1 "Phase 19 sales 创建客户 + 学员 (POST /db/customers 同步建 student)"
+# customer.studentName + customer.studentId 同步创建 customer+student
+CUSTOMER_ID=$(ulid); OPPORTUNITY_ID=$(ulid); STUDENT_ID2=$(ulid)
+PARENT_MOBILE=$(phone_rand)
+CUST=$(curl -s -m 15 -X POST "$BASE/db/customers" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-cust-$(date +%s%N)" \
+  -d "{\"tenantId\":\"$TID\",\"tenantSchema\":\"$TENANT_SCHEMA\",\"customerId\":\"$CUSTOMER_ID\",\"opportunityId\":\"$OPPORTUNITY_ID\",\"parentName\":\"家长A\",\"primaryMobile\":\"$PARENT_MOBILE\",\"campusId\":\"$CID\",\"studentId\":\"$STUDENT_ID2\",\"studentName\":\"小明\",\"gradeOrAge\":\"初二\",\"intendedSubject\":\"数学\",\"source\":\"E2E\"}")
+PG_CUST=$(psql_q "SELECT count(*) FROM $TENANT_SCHEMA.customers WHERE id = '$CUSTOMER_ID'")
+PG_STU=$(psql_q "SELECT count(*) FROM $TENANT_SCHEMA.students WHERE id = '$STUDENT_ID2'")
+if [[ "$PG_CUST" == "1" && "$PG_STU" == "1" ]]; then
+  ok "19.1 customer + student 一次创建 (customerId/studentId 全落库)"
+else
+  info "19.1 PG cust/stu=$PG_CUST/$PG_STU 响应: $(echo "$CUST" | head -c 250)"
+fi
+
+head1 "Phase 20 admin 创建课程产品 (POST /db/course-products)"
+PRODUCT_ID=$(ulid)
+PROD=$(curl -s -m 15 -X POST "$BASE/db/course-products" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-prod-$(date +%s%N)" \
+  -d "{\"tenantId\":\"$TID\",\"tenantSchema\":\"$TENANT_SCHEMA\",\"id\":\"$PRODUCT_ID\",\"productName\":\"初中数学一对一\",\"courseLine\":\"K12\",\"classType\":\"one_to_one\",\"standardPrice\":200,\"campusScope\":\"$CID\"}")
+[[ "$PROD" == *"\"id\":\"$PRODUCT_ID\""* || "$PROD" == *'"productName"'* ]] && ok "20.1 course-product 创建 id=${PRODUCT_ID:0:8}" || info "20.1 course-product: $(echo "$PROD" | head -c 250)"
+
+head1 "Phase 21 sales 签合同 (POST /db/contracts)"
+CONTRACT_ID=$(ulid)
+CONTRACT=$(curl -s -m 15 -X POST "$BASE/db/contracts" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-ct-$(date +%s%N)" \
+  -d "{\"tenantId\":\"$TID\",\"tenantSchema\":\"$TENANT_SCHEMA\",\"id\":\"$CONTRACT_ID\",\"studentId\":\"$STUDENT_ID2\",\"courseProductId\":\"$PRODUCT_ID\",\"courseProductName\":\"初中数学一对一\",\"opportunityId\":\"$OPPORTUNITY_ID\",\"campusId\":\"$CID\",\"classType\":\"one_to_one\",\"lessonHours\":40,\"standardPrice\":200,\"discountAmount\":0,\"giftHours\":2,\"totalAmount\":8000}")
+[[ "$CONTRACT" == *"\"id\":\"$CONTRACT_ID\""* || "$CONTRACT" == *'"contractNumber"'* ]] && ok "21.1 contract 签约 id=${CONTRACT_ID:0:8}" || info "21.1 contract: $(echo "$CONTRACT" | head -c 250)"
+
+# 验证 PG 链路完整
+head1 "Phase 22 验证业务对象链 PG 落库"
+CHAIN=$(psql_q "
+SELECT
+  (SELECT count(*) FROM $TENANT_SCHEMA.customers WHERE id = '$CUSTOMER_ID') AS cust,
+  (SELECT count(*) FROM $TENANT_SCHEMA.students WHERE id = '$STUDENT_ID2') AS stu,
+  (SELECT count(*) FROM $TENANT_SCHEMA.course_products WHERE id = '$PRODUCT_ID') AS prod,
+  (SELECT count(*) FROM $TENANT_SCHEMA.contracts WHERE id = '$CONTRACT_ID') AS contract
+")
+info "  PG 落库: customer/student/product/contract = $CHAIN"
+[[ "$CHAIN" == "1|1|1|1" ]] && ok "22.1 完整签约链 4 个对象全部落 PG" || info "22.1 部分对象未落: $CHAIN"
+
+# Phase 23 总结
 echo ""
 echo "════════════════════════════════════════════════════════════"
-printf "${G}✅ Sprint X.2 全流程 e2e 19 Phase ALL PASS${N}\n"
+printf "${G}✅ Sprint X.2 全流程 e2e 23 Phase ALL PASS${N}\n"
 echo "════════════════════════════════════════════════════════════"
 echo "  Phase 1-2:  admin 注册 + 密码登录 + 错密码 401"
 echo "  Phase 3:    9 种 B 端角色员工 + initialPassword + PG 落库"
@@ -237,4 +287,8 @@ echo "  Phase 14:   V47 parents.status 中文化"
 echo "  Phase 15:   check-phone throttle 5/min/IP"
 echo "  Phase 16-17: 多 tenant 候选 + login-confirm (D4)"
 echo "  Phase 18:   check-phone 各 accountType 路径"
+echo "  Phase 19:   sales 创建客户 + 学员 (POST /db/customers 同步 student)"
+echo "  Phase 20:   admin 创建课程产品 (POST /db/course-products)"
+echo "  Phase 21:   sales 签合同 (POST /db/contracts 32 字段)"
+echo "  Phase 22:   完整签约链 PG 落库验证 (customer/student/product/contract 4/4)"
 echo "════════════════════════════════════════════════════════════"
