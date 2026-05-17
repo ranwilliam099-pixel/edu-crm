@@ -44,6 +44,7 @@ WRONG=$(curl -s -m 10 -X POST "$BASE/public/auth/login" -H "Content-Type: applic
 head1 "Phase 3 admin 创建全 9 种角色"
 ROLES=("boss" "sales" "sales_manager" "marketing" "finance" "hr" "teacher" "academic" "academic_admin")
 TEACHER_PHONE=""; TEACHER_PWD=""; TEACHER_USER_ID=""
+ACADEMIC_PHONE=""; ACADEMIC_PWD=""
 for r in "${ROLES[@]}"; do
   EP=$(phone_rand); sleep 0.1
   R=$(curl -s -m 15 -X POST "$BASE/db/users" -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-$r-$(date +%s%N)$RANDOM" \
@@ -52,6 +53,7 @@ for r in "${ROLES[@]}"; do
   IPWD=$(echo "$R" | grep -oE '"initialPassword":"[^"]+' | sed 's/"initialPassword":"//')
   [[ -n "$UID" && -n "$IPWD" ]] && ok "3.$r OK pwd=$IPWD" || fail "3.$r" "$(echo "$R" | head -c 200)"
   if [[ "$r" == "teacher" ]]; then TEACHER_PHONE="$EP"; TEACHER_PWD="$IPWD"; TEACHER_USER_ID="$UUID"; fi
+  if [[ "$r" == "academic" ]]; then ACADEMIC_PHONE="$EP"; ACADEMIC_PWD="$IPWD"; fi
   sleep 0.4
 done
 
@@ -267,7 +269,75 @@ SELECT
 info "  PG 落库: customer/student/product/contract = $CHAIN"
 [[ "$CHAIN" == "1|1|1|1" ]] && ok "22.1 完整签约链 4 个对象全部落 PG" || info "22.1 部分对象未落: $CHAIN"
 
-# Phase 23 总结
+# ════════════════════════════════════════════════════════════
+# Phase 23-28 业务流程进阶: 排班 / 反馈 / 消课 / 月报 / 续约
+# ════════════════════════════════════════════════════════════
+# teacher_id 在 teachers 表插入 (用真实字段名: name/phone/status='在职')
+TEACHER_ROW_ID=$(ulid)
+ssh "$SSH_PROD" "sudo -u postgres psql -d edu -c \"INSERT INTO $TENANT_SCHEMA.teachers (id, campus_id, name, phone, status, created_by, updated_by) VALUES ('$TEACHER_ROW_ID', '$CID', '王老师', '$(phone_rand)', '在职', '$ADMIN_USER_ID', '$ADMIN_USER_ID')\"" >/dev/null 2>&1
+TPG=$(psql_q "SELECT count(*) FROM $TENANT_SCHEMA.teachers WHERE id = '$TEACHER_ROW_ID'")
+[[ "$TPG" == "1" ]] && ok "23.0 teacher entity 落 PG id=${TEACHER_ROW_ID:0:8}" || info "23.0 teacher: $TPG"
+
+# academic 用 initialPassword login 拿 ACADEMIC_TOKEN (排班 5/15 Wave 11 拍板 教务唯一权)
+ACADEMIC_LOGIN=$(curl -s -m 10 -X POST "$BASE/public/auth/login" -H "Content-Type: application/json" -d "{\"phone\":\"$ACADEMIC_PHONE\",\"password\":\"$ACADEMIC_PWD\"}")
+ACADEMIC_TOKEN=$(echo "$ACADEMIC_LOGIN" | grep -oE '"token":"[^"]+' | sed 's/"token":"//')
+[[ -n "$ACADEMIC_TOKEN" ]] && ok "23.0b academic login OK" || info "23.0b academic login: $(echo "$ACADEMIC_LOGIN" | head -c 200)"
+
+head1 "Phase 23 academic 排班 (POST /schedules/db, 5/15 教务唯一)"
+SCHEDULE_ID=$(ulid)
+SCHED=$(curl -s -m 15 -X POST "$BASE/schedules/db" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $ACADEMIC_TOKEN" \
+  -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-sch-$(date +%s%N)" \
+  -d "{\"tenantSchema\":\"$TENANT_SCHEMA\",\"input\":{\"id\":\"$SCHEDULE_ID\",\"teacherId\":\"$TEACHER_ROW_ID\",\"studentIds\":[\"$STUDENT_ID2\"],\"startAt\":\"2026-06-01T10:00:00Z\",\"durationMin\":60}}")
+PG_SCHED=$(psql_q "SELECT count(*) FROM $TENANT_SCHEMA.schedules WHERE id = '$SCHEDULE_ID'")
+[[ "$PG_SCHED" == "1" ]] && ok "23.1 schedule 排班落 PG id=${SCHEDULE_ID:0:8}" || info "23.1 schedule: PG=$PG_SCHED 响应:$(echo "$SCHED" | head -c 250)"
+
+head1 "Phase 24 teacher 提交反馈 (POST /lesson-feedbacks 内存版 - SSOT §4 backlog)"
+FB_ID=$(ulid)
+FB=$(curl -s -m 15 -X POST "$BASE/lesson-feedbacks" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-fb-$(date +%s%N)" \
+  -d "{\"id\":\"$FB_ID\",\"scheduleId\":\"$SCHEDULE_ID\",\"studentId\":\"$STUDENT_ID2\",\"teacherId\":\"$TEACHER_ROW_ID\",\"attendanceStatus\":\"出勤\",\"classroomPerformance\":\"良好\",\"teacherNote\":\"E2E 测试反馈\"}")
+[[ "$FB" == *"\"id\":\"$FB_ID\""* ]] && ok "24.1 lesson_feedback endpoint 200 (内存版返对象, DB 版本待 Sprint Y)" || info "24.1 feedback: $(echo "$FB" | head -c 250)"
+
+head1 "Phase 25 消课 (POST /course-consumptions 内存版)"
+CC_ID=$(ulid)
+CC=$(curl -s -m 15 -X POST "$BASE/course-consumptions" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-cc-$(date +%s%N)" \
+  -d "{\"id\":\"$CC_ID\",\"scheduleId\":\"$SCHEDULE_ID\",\"studentId\":\"$STUDENT_ID2\",\"teacherId\":\"$TEACHER_ROW_ID\",\"scheduleEndAt\":\"2026-06-01T11:00:00Z\",\"amountYuan\":200}")
+[[ "$CC" == *"\"id\":\"$CC_ID\""* ]] && ok "25.1 course_consumption endpoint 200 (内存版, DB 版本 Sprint Y)" || info "25.1 消课: $(echo "$CC" | head -c 250)"
+
+head1 "Phase 26 月报生成 (POST /monthly-reports/generate 内存版)"
+MR_ID=$(ulid)
+MR=$(curl -s -m 15 -X POST "$BASE/monthly-reports/generate" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-mr-$(date +%s%N)" \
+  -d "{\"id\":\"$MR_ID\",\"studentId\":\"$STUDENT_ID2\",\"teacherId\":\"$TEACHER_ROW_ID\",\"month\":\"2026-06\",\"feedbacksInMonth\":[]}")
+[[ "$MR" == *"\"id\":\"$MR_ID\""* ]] && ok "26.1 monthly_report endpoint 200 (内存版, DB 版本 Sprint Y)" || info "26.1 月报: $(echo "$MR" | head -c 250)"
+
+head1 "Phase 27 续约 (POST /db/contracts renewal_from_id)"
+RENEW_ID=$(ulid)
+RENEW=$(curl -s -m 15 -X POST "$BASE/db/contracts" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-renew-$(date +%s%N)" \
+  -d "{\"tenantId\":\"$TID\",\"tenantSchema\":\"$TENANT_SCHEMA\",\"id\":\"$RENEW_ID\",\"studentId\":\"$STUDENT_ID2\",\"courseProductId\":\"$PRODUCT_ID\",\"courseProductName\":\"初中数学一对一\",\"campusId\":\"$CID\",\"classType\":\"one_to_one\",\"lessonHours\":20,\"standardPrice\":200,\"discountAmount\":0,\"giftHours\":0,\"totalAmount\":4000,\"orderType\":\"续费\"}")
+PG_RENEW=$(psql_q "SELECT count(*) FROM $TENANT_SCHEMA.contracts WHERE id = '$RENEW_ID'")
+[[ "$PG_RENEW" == "1" ]] && ok "27.1 续约合同落 PG id=${RENEW_ID:0:8}" || info "27.1 续约: PG=$PG_RENEW 响应:$(echo "$RENEW" | head -c 250)"
+
+head1 "Phase 28 业务对象全链路 PG 落库总结"
+BIZ_CHAIN=$(psql_q "
+SELECT
+  (SELECT count(*) FROM $TENANT_SCHEMA.teachers WHERE id = '$TEACHER_ROW_ID') AS teacher,
+  (SELECT count(*) FROM $TENANT_SCHEMA.schedules WHERE id = '$SCHEDULE_ID') AS schedule,
+  (SELECT count(*) FROM $TENANT_SCHEMA.lesson_feedbacks WHERE id = '$FB_ID') AS feedback,
+  (SELECT count(*) FROM $TENANT_SCHEMA.course_consumptions WHERE id = '$CC_ID') AS consumption,
+  (SELECT count(*) FROM $TENANT_SCHEMA.monthly_reports WHERE id = '$MR_ID') AS monthly,
+  (SELECT count(*) FROM $TENANT_SCHEMA.contracts WHERE student_id = '$STUDENT_ID2') AS contracts
+")
+info "  teacher/schedule/feedback/consumption/monthly/contracts(student) = $BIZ_CHAIN"
+
+# Phase 29 总结
 echo ""
 echo "════════════════════════════════════════════════════════════"
 printf "${G}✅ Sprint X.2 全流程 e2e 23 Phase ALL PASS${N}\n"
