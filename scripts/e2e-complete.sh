@@ -292,29 +292,33 @@ SCHED=$(curl -s -m 15 -X POST "$BASE/schedules/db" \
 PG_SCHED=$(psql_q "SELECT count(*) FROM $TENANT_SCHEMA.schedules WHERE id = '$SCHEDULE_ID'")
 [[ "$PG_SCHED" == "1" ]] && ok "23.1 schedule 排班落 PG id=${SCHEDULE_ID:0:8}" || info "23.1 schedule: PG=$PG_SCHED 响应:$(echo "$SCHED" | head -c 250)"
 
-head1 "Phase 24 teacher 提交反馈 (POST /lesson-feedbacks 内存版 - SSOT §4 backlog)"
+head1 "Phase 24 teacher 提交反馈 (POST /db/lesson-feedbacks DB 版)"
 FB_ID=$(ulid)
-FB=$(curl -s -m 15 -X POST "$BASE/lesson-feedbacks" \
+FB=$(curl -s -m 15 -X POST "$BASE/db/lesson-feedbacks" \
   -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-fb-$(date +%s%N)" \
-  -d "{\"id\":\"$FB_ID\",\"scheduleId\":\"$SCHEDULE_ID\",\"studentId\":\"$STUDENT_ID2\",\"teacherId\":\"$TEACHER_ROW_ID\",\"attendanceStatus\":\"出勤\",\"classroomPerformance\":\"良好\",\"teacherNote\":\"E2E 测试反馈\"}")
-[[ "$FB" == *"\"id\":\"$FB_ID\""* ]] && ok "24.1 lesson_feedback endpoint 200 (内存版返对象, DB 版本待 Sprint Y)" || info "24.1 feedback: $(echo "$FB" | head -c 250)"
+  -d "{\"tenantId\":\"$TID\",\"tenantSchema\":\"$TENANT_SCHEMA\",\"id\":\"$FB_ID\",\"scheduleId\":\"$SCHEDULE_ID\",\"studentId\":\"$STUDENT_ID2\",\"teacherId\":\"$TEACHER_ROW_ID\",\"attendanceStatus\":\"出勤\",\"classroomPerformance\":\"良好\",\"teacherNote\":\"E2E 测试反馈\"}")
+PG_FB=$(psql_q "SELECT count(*) FROM $TENANT_SCHEMA.lesson_feedbacks WHERE id = '$FB_ID'")
+[[ "$PG_FB" == "1" ]] && ok "24.1 lesson_feedback 落 PG id=${FB_ID:0:8}" || info "24.1 feedback: PG=$PG_FB 响应:$(echo "$FB" | head -c 250)"
 
-head1 "Phase 25 消课 (POST /course-consumptions 内存版)"
+head1 "Phase 25 消课 (POST /db/course-consumptions DB 版)"
 CC_ID=$(ulid)
-CC=$(curl -s -m 15 -X POST "$BASE/course-consumptions" \
+CC=$(curl -s -m 15 -X POST "$BASE/db/course-consumptions" \
   -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-cc-$(date +%s%N)" \
-  -d "{\"id\":\"$CC_ID\",\"scheduleId\":\"$SCHEDULE_ID\",\"studentId\":\"$STUDENT_ID2\",\"teacherId\":\"$TEACHER_ROW_ID\",\"scheduleEndAt\":\"2026-06-01T11:00:00Z\",\"amountYuan\":200}")
-[[ "$CC" == *"\"id\":\"$CC_ID\""* ]] && ok "25.1 course_consumption endpoint 200 (内存版, DB 版本 Sprint Y)" || info "25.1 消课: $(echo "$CC" | head -c 250)"
+  -d "{\"tenantId\":\"$TID\",\"tenantSchema\":\"$TENANT_SCHEMA\",\"id\":\"$CC_ID\",\"scheduleId\":\"$SCHEDULE_ID\",\"studentId\":\"$STUDENT_ID2\",\"teacherId\":\"$TEACHER_ROW_ID\",\"scheduleEndAtMs\":1780138800000,\"amountYuan\":200}")
+PG_CC=$(psql_q "SELECT count(*) FROM $TENANT_SCHEMA.course_consumptions WHERE id = '$CC_ID'")
+[[ "$PG_CC" == "1" ]] && ok "25.1 course_consumption 落 PG id=${CC_ID:0:8}" || info "25.1 消课: PG=$PG_CC 响应:$(echo "$CC" | head -c 250)"
 
-head1 "Phase 26 月报生成 (POST /monthly-reports/generate 内存版)"
+# 月报 DB 版本可能 endpoint 不同 — Sprint Y backlog
+head1 "Phase 26 月报生成 (POST /db/monthly-reports/generate DB 版)"
 MR_ID=$(ulid)
-MR=$(curl -s -m 15 -X POST "$BASE/monthly-reports/generate" \
+MR=$(curl -s -m 15 -X POST "$BASE/db/monthly-reports/generate" \
   -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -H "X-Tenant-Schema: $TENANT_SCHEMA" -H "Idempotency-Key: e2e-mr-$(date +%s%N)" \
-  -d "{\"id\":\"$MR_ID\",\"studentId\":\"$STUDENT_ID2\",\"teacherId\":\"$TEACHER_ROW_ID\",\"month\":\"2026-06\",\"feedbacksInMonth\":[]}")
-[[ "$MR" == *"\"id\":\"$MR_ID\""* ]] && ok "26.1 monthly_report endpoint 200 (内存版, DB 版本 Sprint Y)" || info "26.1 月报: $(echo "$MR" | head -c 250)"
+  -d "{\"tenantId\":\"$TID\",\"tenantSchema\":\"$TENANT_SCHEMA\",\"id\":\"$MR_ID\",\"studentId\":\"$STUDENT_ID2\",\"teacherId\":\"$TEACHER_ROW_ID\",\"monthMs\":1780012800000}")
+PG_MR=$(psql_q "SELECT count(*) FROM $TENANT_SCHEMA.monthly_reports WHERE id = '$MR_ID'")
+[[ "$PG_MR" == "1" ]] && ok "26.1 monthly_report 落 PG id=${MR_ID:0:8}" || info "26.1 月报: PG=$PG_MR 响应:$(echo "$MR" | head -c 250)"
 
 head1 "Phase 27 续约 (POST /db/contracts renewal_from_id)"
 RENEW_ID=$(ulid)
