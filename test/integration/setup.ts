@@ -121,6 +121,7 @@ export const TENANT_MIGRATIONS = [
   'V41__customers_primary_mobile_hash_and_encrypted.sql',
   'V50__drop_teachers_hourly_price.sql',
   'V51__audit_log_id_uuid_to_varchar.sql',
+  'V52__schedules_add_campus_id.sql',
 ];
 
 // ----------------------------------------------------------------

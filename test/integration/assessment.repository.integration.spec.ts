@@ -105,7 +105,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
       subject: '数学',
       assessmentType: '期中',
       totalScore: 100,
-      draftAt: new Date('2026-05-25T09:00:00Z'),
+      scheduledAt: new Date('2026-05-25T09:00:00Z'),
       status: 'draft',
       createdAt: new Date(),
     } as any);
@@ -130,7 +130,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
       subject: '语文',
       assessmentType: '期末',
       totalScore: 100,
-      draftAt: new Date('2026-12-01T00:00:00Z'),
+      scheduledAt: new Date('2026-12-01T00:00:00Z'),
       status: 'draft',
       createdAt: new Date('2026-05-01T00:00:00Z'),
     } as any);
@@ -141,7 +141,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
       subject: '语文',
       assessmentType: '单元测',
       totalScore: 30,
-      draftAt: null,
+      scheduledAt: null,
       status: 'draft',
       createdAt: new Date(),
     } as any);
@@ -178,7 +178,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
       subject: '数学',
       assessmentType: '单元测',
       totalScore: 100,
-      draftAt: new Date(),
+      scheduledAt: new Date(),
       status: 'draft',
       createdAt: new Date(),
     } as any);
@@ -216,7 +216,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
       subject: '数学',
       assessmentType: '单元测',
       totalScore: 100,
-      draftAt: new Date(),
+      scheduledAt: new Date(),
       status: 'closed',
       createdAt: new Date(),
     } as any);
@@ -341,7 +341,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
         subject: '数学',
         assessmentType: '单元测',
         totalScore: 100,
-        draftAt: new Date(),
+        scheduledAt: new Date(),
         status: 'draft',
         createdAt: new Date(),
       } as any);

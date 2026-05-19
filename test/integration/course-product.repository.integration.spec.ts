@@ -266,10 +266,9 @@ describe('CourseProductRepository [integration, real PG, V2 + 5/15 stats]', () =
   // ----------------------------------------------------------------
   // Case 7: findStats campus scope (callerCampusId)
   // ----------------------------------------------------------------
-  // 5/20 L2 抓到真生产 bug：course-product.repository.ts:340 引用不存在的 sc.campus_id
-  // （schedules 表只有 teacher_id，campus_id 需 JOIN teachers.campus_id 或 course_products.campus_id 取）
-  // 修：Sprint Y backlog（需 leader 拍板 fix 策略）
-  it.skip('findStats — campus scope 仅返 contract.campus_id = $X 的 students', async () => {
+  // 5/20 L2 抓到真生产 bug，方案 C 修复：V52 加 schedules.campus_id + backfill teachers.campus_id
+  // course-product.repository.ts:340 sc.campus_id 现在真实存在 → un-skip
+  it('findStats — campus scope 仅返 contract.campus_id = $X 的 students', async () => {
     const pid = testUlid();
     await repo.create(schema, {
       id: pid,

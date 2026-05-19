@@ -96,8 +96,9 @@ describe('LessonFeedbackRepository [integration, real PG, V9 §4.1 + V18]', () =
     await runInSchema(schema, async (client) => {
       await client.query(
         `INSERT INTO ${schema}.schedules
-           (id, teacher_id, start_at, duration_min, end_at, status, created_by_user_id, created_by_role)
-         VALUES ($1, $2, NOW(), 60, NOW() + interval '1 hour', '已完成', $3, 'admin')`,
+           (id, teacher_id, start_at, duration_min, end_at, status, created_by_user_id, created_by_role, campus_id)
+         VALUES ($1, $2::varchar, NOW(), 60, NOW() + interval '1 hour', '已完成', $3, 'admin',
+                 (SELECT campus_id FROM ${schema}.teachers WHERE id = $2::varchar))`,
         [scheduleId, teacherId, admin.id],
       );
     });
@@ -357,8 +358,9 @@ describe('LessonFeedbackRepository [integration, real PG, V9 §4.1 + V18]', () =
       await runInSchema(driftSchema, async (c) => {
         await c.query(
           `INSERT INTO ${driftSchema}.schedules
-           (id, teacher_id, start_at, duration_min, end_at, status, created_by_user_id, created_by_role)
-         VALUES ($1, $2, NOW(), 60, NOW() + interval '1 hour', '已完成', $3, 'admin')`,
+           (id, teacher_id, start_at, duration_min, end_at, status, created_by_user_id, created_by_role, campus_id)
+         VALUES ($1, $2::varchar, NOW(), 60, NOW() + interval '1 hour', '已完成', $3, 'admin',
+                 (SELECT campus_id FROM ${driftSchema}.teachers WHERE id = $2::varchar))`,
           [sched2, tch2, admin2.id],
         );
 

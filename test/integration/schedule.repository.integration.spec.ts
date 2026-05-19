@@ -192,7 +192,8 @@ describe('ScheduleRepository [integration, real PG, X1 schedule+consumption 联�
           ],
         );
       }),
-    ).rejects.toThrow(/schedules_status_check|status|check constraint|23514/i);
+    // V52 后：subquery 先求 campus_id，若 teacher_id 不存在 → NOT NULL violation；存在 → CHECK violation
+    ).rejects.toThrow(/schedules_status_check|status|check constraint|23514|null value|not.?null|23502/i);
   });
 
   // ----------------------------------------------------------------
@@ -425,6 +426,7 @@ describe('ScheduleRepository [integration, real PG, X1 schedule+consumption 联�
         } as any,
         [studentId],
       ),
-    ).rejects.toThrow(/teacher_id|foreign key|23503/);
+    // V52 后：teacher_id 不存在 → subquery 返 NULL → campus_id NOT NULL violation (23502) 先于 FK (23503)
+    ).rejects.toThrow(/teacher_id|foreign key|23503|null value|not.?null|23502|campus_id/i);
   });
 });

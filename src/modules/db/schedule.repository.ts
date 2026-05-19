@@ -50,10 +50,14 @@ export class ScheduleRepository {
           const scheduleId = idGenerator(i);
 
           const r = await client.query(
+            // V52 campus_id ← teachers.campus_id 子查询（同事务，主校区源头）
+            // 显式 cast $3::varchar 防 PG 多处引用相同 placeholder 推断 inconsistent types
             `INSERT INTO schedules (
                id, course_product_id, teacher_id, start_at, duration_min, end_at,
-               status, source, recurring_schedule_id, created_by_user_id, created_by_role
-             ) VALUES ($1, $2, $3, $4, $5, $6, '已排课', 'recurring_expansion', $7, $8, $9)
+               status, source, recurring_schedule_id, created_by_user_id, created_by_role,
+               campus_id
+             ) VALUES ($1, $2, $3::varchar, $4, $5, $6, '已排课', 'recurring_expansion', $7, $8, $9,
+                       (SELECT campus_id FROM teachers WHERE id = $3::varchar))
              ON CONFLICT (recurring_schedule_id, start_at)
              WHERE source = 'recurring_expansion'
              DO NOTHING
@@ -150,11 +154,14 @@ export class ScheduleRepository {
       }
 
       await client.query(
+        // V52 campus_id ← teachers.campus_id 子查询（同事务，主校区源头）
+        // 显式 cast $3::varchar 防 PG 多处引用相同 placeholder 推断 inconsistent types
         `INSERT INTO schedules (
            id, course_product_id, teacher_id, start_at, duration_min, end_at,
            status, source, recurring_schedule_id, created_by_user_id, created_by_role, notes,
-           class_type, max_students
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+           class_type, max_students, campus_id
+         ) VALUES ($1,$2,$3::varchar,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+                   (SELECT campus_id FROM teachers WHERE id = $3::varchar))`,
         [
           schedule.id,
           schedule.courseProductId || null,

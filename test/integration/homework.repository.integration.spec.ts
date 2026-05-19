@@ -185,17 +185,17 @@ describe('HomeworkRepository [integration, real PG, V13]', () => {
   // ----------------------------------------------------------------
   // Case 5: setAssignmentStatus + NotFound
   // ----------------------------------------------------------------
-  it('setAssignmentStatus draft→published / 不存在 id → NotFoundException', async () => {
-    // 找一个 draft 作业
-    const draftRows = await runInSchema(schema, async (c) => {
+  it('setAssignmentStatus archived→published / 不存在 id → NotFoundException', async () => {
+    // V13 仅允许 published/archived（spec 原 draft 与 schema 不匹配）— Case 3 已灌 archived row
+    const archivedRows = await runInSchema(schema, async (c) => {
       const r = await c.query<{ id: string }>(
-        `SELECT id FROM homework_assignments WHERE status = 'draft' LIMIT 1`,
+        `SELECT id FROM homework_assignments WHERE status = 'archived' LIMIT 1`,
       );
       return r.rows;
     });
-    expect(draftRows.length).toBeGreaterThanOrEqual(1);
+    expect(archivedRows.length).toBeGreaterThanOrEqual(1);
 
-    const updated = await repo.setAssignmentStatus(schema, draftRows[0].id, 'published');
+    const updated = await repo.setAssignmentStatus(schema, archivedRows[0].id, 'published');
     expect(updated.status).toBe('published');
 
     // NotFound：不存在 id

@@ -20,6 +20,7 @@ module.exports = {
   rootDir: '.',
   testEnvironment: 'node',
   testRegex: 'test/integration/.*\\.integration\\.spec\\.ts$',
+  testPathIgnorePatterns: ['/node_modules/', '/.stryker-tmp/'],
   moduleFileExtensions: ['js', 'json', 'ts'],
   transform: {
     '^.+\\.(t|j)s$': 'ts-jest',
