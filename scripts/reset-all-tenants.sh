@@ -427,7 +427,11 @@ if [ "$ONLY_PHASE" = "drop" ] || [ "$ONLY_PHASE" = "both" ]; then
 
   # ----- TRUNCATE public 核心表 -----
   # 顺序：先 child（FK depend）再 parent；CASCADE 兜底
-  # 6 张表：
+  # 7 张表：
+  #   campus_free_slots       (V23 trigger 自建，引用 campuses + parents)
+  #                           Day 2 Phase A P0-2 fix: 必须显式先 TRUNCATE，
+  #                           CASCADE 行为不稳定（不同 PG 14 版本对 trigger 创建的子表 cascade 不一致）+
+  #                           保证 reset cleanup 时 FK 不阻 DELETE campuses
   #   parent_student_bindings (FK → parents + tenants)
   #   parent_payment_orders   (FK → parents + parent_subscriptions)
   #   parent_subscriptions    (FK → parents)
@@ -436,6 +440,7 @@ if [ "$ONLY_PHASE" = "drop" ] || [ "$ONLY_PHASE" = "both" ]; then
   #   tenants                 (root) — 最后，触发 FK cascade 清 public.campuses 等
   info "TRUNCATE public 核心表（CASCADE）..."
   TRUNCATE_TABLES=(
+    "public.campus_free_slots"
     "public.parent_student_bindings"
     "public.parent_payment_orders"
     "public.parent_subscriptions"
@@ -603,13 +608,18 @@ if [ "$ONLY_PHASE" = "provision" ] || [ "$ONLY_PHASE" = "both" ]; then
     fi
 
     # ===== 构造 provision body =====
+    # Day 2 Phase A P0-1 fix: adminName 必须 <= 32 char (tenant.users.name VARCHAR(32))
+    #   原 'demo-admin-${LOGICAL_NAME}' 对 demo-admin-multi-campus (23) / demo-parent-multi-tenant (24)
+    #   合计 34/35 char overflow VARCHAR(32) → "value too long" 500（5/19 reset 2 个失败根因）
+    #   修：去掉 'demo-' 前缀 + 用 ${LOGICAL_NAME} 直接当 adminName（最多 24 char + 不冗余）
+    #   demo-admin-multi-campus = 23 char ✓ / demo-parent-multi-tenant = 24 char ✓ / 全 15 个均 <= 24
     PROVISION_BODY=$(node -e "
       const body = {
         tenantId: '${TENANT_ID}',
         name: '${LOGICAL_NAME}',
         sku: '${SKU}',
         campuses: ${CAMPUSES_JSON},
-        adminName: 'demo-admin-${LOGICAL_NAME}',
+        adminName: '${LOGICAL_NAME}',
         adminPhone: '${ADMIN_PHONE}',
         adminEmail: '${LOGICAL_NAME}@demo.local',
         adminPassword: '${DEMO_ADMIN_PASSWORD}',
@@ -695,7 +705,7 @@ if [ "$ONLY_PHASE" = "provision" ] || [ "$ONLY_PHASE" = "both" ]; then
         campusIds: ${CAMPUS_IDS_JSON},
         admin: {
           userId: '${ADMIN_USER_ID}',
-          name: 'demo-admin-${LOGICAL_NAME}',
+          name: '${LOGICAL_NAME}',
           phone: '${ADMIN_PHONE}',
           password: '${DEMO_ADMIN_PASSWORD}',
           email: '${LOGICAL_NAME}@demo.local',

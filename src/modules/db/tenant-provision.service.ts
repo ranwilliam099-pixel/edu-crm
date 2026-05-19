@@ -84,6 +84,10 @@ const TENANT_MIGRATIONS = [
   //   不跑 V41 新 wizard 注册的 tenant customers 表缺 primary_mobile_hash + primary_mobile_encrypted →
   //   POST /db/customers INSERT 时 23502 column does not exist 500
   'V41__customers_primary_mobile_hash_and_encrypted.sql',
+  // Day 2 Phase C X1 (2026-05-19 用户拍板 D1.4): 物理删 teachers.hourly_price_yuan
+  //   「老师页面零财务字段」+ 课消从合同带价（每客户合同价不同），DB 不存老师定价
+  //   新 tenant provision 跑完 V50 后 teachers 表无此列 — 应用层 teacher.repository 已对齐
+  'V50__drop_teachers_hourly_price.sql',
 ];
 
 @Injectable()
@@ -212,6 +216,22 @@ export class TenantProvisionService {
       }
     }
 
+    // Day 2 Phase A P0-1 fix: adminName 前置长度校验（防 schema 已建后 createAdminUser overflow
+    //   留 orphan schema）。同 createAdminUser 中的二次校验，两层防护：
+    //     1. 此处 fail-fast：不浪费 1 个 schema + N 个 migration runs
+    //     2. createAdminUser 二次：防直接调 createAdminUser 的内部路径绕过
+    //   计算实际写入 users.name 的值（与 createAdminUser line 322 同 fallback 链）
+    const resolvedAdminName =
+      input.adminName || input.admin?.name || '老板';
+    if (typeof resolvedAdminName !== 'string' || resolvedAdminName.length === 0) {
+      throw new BadRequestException('admin name required');
+    }
+    if (resolvedAdminName.length > 32) {
+      throw new BadRequestException(
+        `admin name too long (max 32 chars, got ${resolvedAdminName.length}): ${resolvedAdminName}`,
+      );
+    }
+
     const tenantSchema = `tenant_${input.tenantId.toLowerCase()}`;
     const ranMigrations: string[] = [];
 
@@ -290,10 +310,15 @@ export class TenantProvisionService {
         throw new BadRequestException('campus name required');
       }
       // V2 campuses 仅有 id/name/address/status/created_at/updated_at/created_by/updated_by
+      // Day 2 Phase A P0-1 fix: 用 fully-qualified ${tenantSchema}.campuses 而非依赖 SET LOCAL search_path
+      //   根因: PgPoolService.withClient 不启 BEGIN/COMMIT (line 89-96), `SET LOCAL search_path`
+      //         在 autocommit 模式下产生 WARNING 后被忽略 (PG 14 行为) → search_path 仍为 public →
+      //         INSERT 找 public.campuses (有 address 但缺 created_by/updated_by) → 各种 column 错。
+      //   修复策略 C (最安全): tenantSchema 已通过 /^tenant_[a-z0-9_]+$/ 白名单校验 (pg-pool.service.ts:70),
+      //         可安全用 schema 前缀消除 search_path 依赖。无需改 pg-pool.service.ts 影响面更大。
       await this.pg.withClient(async (client) => {
-        await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
         await client.query(
-          `INSERT INTO campuses (id, name, address, status, created_by, updated_by)
+          `INSERT INTO ${tenantSchema}.campuses (id, name, address, status, created_by, updated_by)
            VALUES ($1, $2, $3, '启用', 'wizard', 'wizard')
            ON CONFLICT (id) DO NOTHING`,
           [c.id, c.name, c.address || null],
@@ -397,10 +422,21 @@ export class TenantProvisionService {
     //   修：拆成 $5 (password_hash) + $6 (password_updated_at) 两个独立参数，
     //   应用层直接算 timestamp，pg 无歧义。
     const passwordUpdatedAt = passwordHash === '' ? null : new Date();
+    // Day 2 Phase A P0-1 fix: 同 campus 段，改用 fully-qualified ${tenantSchema}.users
+    //   防 search_path 失效写到 public schema 中（public.users 不存在）或者错误的 schema
+    //   验证 input.name <= VARCHAR(32) 防 reset-all-tenants.sh 'demo-admin-demo-admin-multi-campus'
+    //   (34 char) 等超长 adminName overflow VARCHAR(32) 的事故（实际今日 2 个 tenant 失败根因）
+    if (typeof input.name !== 'string' || input.name.length === 0) {
+      throw new BadRequestException('admin name required');
+    }
+    if (input.name.length > 32) {
+      throw new BadRequestException(
+        `admin name too long (max 32 chars, got ${input.name.length}): ${input.name}`,
+      );
+    }
     await this.pg.withClient(async (client) => {
-      await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
       await client.query(
-        `INSERT INTO users
+        `INSERT INTO ${tenantSchema}.users
            (id, name, mobile, role, campus_id, status, password_hash, password_updated_at, created_by, updated_by)
          VALUES ($1, $2, $3, 'admin', $4, '启用', $5, $6, $1, $1)
          ON CONFLICT (id) DO UPDATE
@@ -437,10 +473,10 @@ export class TenantProvisionService {
         const id = this.simpleUlid();
         const classType = cls.type || '一对一';
         const price = Number(cls.price || 0);
+        // Day 2 Phase A P0-1 fix: 同 campus/admin user 段，fully-qualified schema 名
         await this.pg.withClient(async (client) => {
-          await client.query(`SET LOCAL search_path TO ${tenantSchema}, public`);
           await client.query(
-            `INSERT INTO course_products
+            `INSERT INTO ${tenantSchema}.course_products
                (id, product_name, course_line, class_type, lesson_package,
                 standard_price, campus_scope, status, created_by, updated_by)
              VALUES ($1, $2, $3, $4, $5, $6, $7, '上架', $8, $8)

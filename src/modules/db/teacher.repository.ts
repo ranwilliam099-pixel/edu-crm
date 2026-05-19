@@ -18,9 +18,15 @@ export interface TeacherArchiveResult {
  *
  * 来源：用户 2026-05-02「做啊」（首个真接 PG 的 Repository）
  *
- * tenant schema 内的 teachers 表（V7 已建 + V34 加 phone_encrypted）：
+ * tenant schema 内的 teachers 表（V7 已建 + V34 加 phone_encrypted + V50 DROP hourly_price_yuan）：
  *   id / campus_id / name / phone / phone_encrypted (V34) / user_id / subjects(JSONB)
- *   bio / hourly_price_yuan (V39 RENAMED from hourly_rate_yuan) / status / created_at / updated_at / created_by / updated_by
+ *   bio / status / created_at / updated_at / created_by / updated_by
+ *
+ * V50 (2026-05-19 X1 重构 D1.4):
+ *   - 物理删除 hourly_price_yuan 字段（「老师页面零财务字段」拍板）
+ *   - 课消金额改从合同带价（contract.coursePrice / contract.lessonHours）
+ *   - 每客户合同价不同 — 老师定价不再有业务意义
+ *   - 防御深度：DB 没字段 = 任何 SQL 注入 / API leak 都不会 expose
  *
  * V34 双写双读模式（A02-1，2026-05-11）：
  *   - INSERT/UPDATE：phone 明文列 + phone_encrypted BYTEA 列同时写
@@ -51,12 +57,13 @@ export class TeacherRepository {
   ): Promise<Teacher> {
     const phonePlain = teacher.phone || null;
     const phoneEncrypted = this.encryptPhone(phonePlain);
+    // V50 (2026-05-19 X1): 物理删 hourly_price_yuan 列 — INSERT 不再写此字段
     const sql = `
       INSERT INTO teachers (
         id, campus_id, name, phone, phone_encrypted, user_id, subjects,
-        hourly_price_yuan, status, created_by, updated_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
+        status, created_by, updated_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, status
     `;
     const params = [
       teacher.id,
@@ -66,7 +73,6 @@ export class TeacherRepository {
       phoneEncrypted,
       teacher.userId || null,
       JSON.stringify(teacher.subjects || []),
-      teacher.hourlyPriceYuan ?? null,
       teacher.status,
       operator,
       operator,
@@ -80,9 +86,10 @@ export class TeacherRepository {
    * V44: deleted_at IS NULL 排除已软删（status='在职' 已隐含未归档，但软删层独立）
    */
   async listActiveInTenant(tenantSchema: string): Promise<Teacher[]> {
+    // V50 (2026-05-19 X1): hourly_price_yuan 列已物理删除
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
+      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, status
        FROM teachers
        WHERE status = '在职' AND deleted_at IS NULL
        ORDER BY created_at DESC`,
@@ -95,9 +102,10 @@ export class TeacherRepository {
    * V44: deleted_at IS NULL 排除已软删
    */
   async findById(tenantSchema: string, id: string): Promise<Teacher | null> {
+    // V50 (2026-05-19 X1): hourly_price_yuan 列已物理删除
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
+      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, status
        FROM teachers WHERE id = $1 AND deleted_at IS NULL`,
       [id],
     );
@@ -121,9 +129,10 @@ export class TeacherRepository {
    */
   async findByUserId(tenantSchema: string, userId: string): Promise<Teacher | null> {
     // V44: deleted_at IS NULL 排除已软删
+    // V50 (2026-05-19 X1): hourly_price_yuan 列已物理删除
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
+      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, status
        FROM teachers WHERE user_id = $1 AND deleted_at IS NULL
        ORDER BY created_at ASC
        LIMIT 1`,
@@ -142,9 +151,10 @@ export class TeacherRepository {
   ): Promise<Teacher[]> {
     const limit = options.limit ?? 50;
     const offset = options.offset ?? 0;
+    // V50 (2026-05-19 X1): hourly_price_yuan 列已物理删除
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status
+      `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, status
        FROM teachers
        WHERE deleted_at IS NULL
        ORDER BY created_at DESC
@@ -165,12 +175,13 @@ export class TeacherRepository {
     newStatus: '在职' | '请假' | '归档',
     operator: string,
   ): Promise<Teacher> {
+    // V50 (2026-05-19 X1): hourly_price_yuan 列已物理删除
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
       `UPDATE teachers
        SET status = $1, updated_by = $2, updated_at = NOW()
        WHERE id = $3
-       RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status`,
+       RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, status`,
       [newStatus, operator, id],
     );
     if (rows.length === 0) {
@@ -237,11 +248,12 @@ export class TeacherRepository {
 
     return this.pg.transaction(
       async (client) => {
+        // V50 (2026-05-19 X1): hourly_price_yuan 列已物理删除
         const teacherRows = await client.query<PgRow>(
           `UPDATE teachers
               SET status = '归档', updated_by = $2, updated_at = NOW()
             WHERE id = $1 AND status <> '归档'
-          RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, hourly_price_yuan, status`,
+          RETURNING id, campus_id, name, phone, phone_encrypted, user_id, subjects, status`,
           [teacherId, operator],
         );
         if (teacherRows.rowCount === 0) {
@@ -325,6 +337,7 @@ export class TeacherRepository {
   }
 
   private mapRow(row: PgRow): Teacher {
+    // V50 (2026-05-19 X1): hourly_price_yuan 列已物理删除 — 不再 map 此字段
     return {
       id: row.id,
       campusId: row.campus_id,
@@ -332,7 +345,6 @@ export class TeacherRepository {
       phone: this.decryptPhone(row.id, row.phone_encrypted, row.phone),
       userId: row.user_id || undefined,
       subjects: typeof row.subjects === 'string' ? JSON.parse(row.subjects) : row.subjects || [],
-      hourlyPriceYuan: row.hourly_price_yuan !== null ? Number(row.hourly_price_yuan) : undefined,
       status: row.status,
     };
   }

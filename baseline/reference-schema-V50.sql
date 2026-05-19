@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict fFKiHliNllj5kiNbJ3UR1E5ZKWc6JFKPMLK9mhqKlavdNg9AnuktbcwszwDTGai
+\restrict GpsZkodq9HcwD9GdV6Y35EWQN0yHUkCmkeGUdJP1wMVMLLhf4HNmWGKPOE7rHSt
 
 --
 -- Name: __TENANT_SCHEMA__; Type: SCHEMA; Schema: -; Owner: -
@@ -1418,7 +1418,6 @@ CREATE TABLE __TENANT_SCHEMA__.teachers (
     user_id character varying(32),
     subjects jsonb DEFAULT '[]'::jsonb NOT NULL,
     bio text,
-    hourly_price_yuan numeric(10,2),
     status character varying(16) DEFAULT '在职'::character varying NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -1428,12 +1427,6 @@ CREATE TABLE __TENANT_SCHEMA__.teachers (
     deleted_at timestamp with time zone,
     CONSTRAINT teachers_status_check CHECK (((status)::text = ANY ((ARRAY['在职'::character varying, '请假'::character varying, '归档'::character varying])::text[])))
 );
-
---
--- Name: COLUMN teachers.hourly_price_yuan; Type: COMMENT; Schema: __TENANT_SCHEMA__; Owner: -
---
-
-COMMENT ON COLUMN __TENANT_SCHEMA__.teachers.hourly_price_yuan IS '课时单价（机构对老师的定价，单位元 / NUMERIC(10,2)）— V39 RENAMED from hourly_rate_yuan；与课消金额计算关联，与工资业务无关';
 
 --
 -- Name: COLUMN teachers.phone_encrypted; Type: COMMENT; Schema: __TENANT_SCHEMA__; Owner: -
@@ -3285,5 +3278,5 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.users
 -- PostgreSQL database dump complete
 --
 
-\unrestrict fFKiHliNllj5kiNbJ3UR1E5ZKWc6JFKPMLK9mhqKlavdNg9AnuktbcwszwDTGai
+\unrestrict GpsZkodq9HcwD9GdV6Y35EWQN0yHUkCmkeGUdJP1wMVMLLhf4HNmWGKPOE7rHSt
 

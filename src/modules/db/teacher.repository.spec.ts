@@ -47,7 +47,7 @@ describe('TeacherRepository (V28 archive + V34 字段加密双写双读)', () =>
         : MOCK_CIPHER,
     user_id: null,
     subjects: ['数学'],
-    hourly_price_yuan: 200,
+    // V50 (2026-05-19 X1 拍板): hourly_price_yuan 列已物理删除 — 老师视图零财务字段
     status: overrides.status || '在职',
   });
 

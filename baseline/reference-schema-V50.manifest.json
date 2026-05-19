@@ -1,7 +1,7 @@
 {
-  "version": "V49",
-  "snapshotAt": "2026-05-19T03:16:21Z",
-  "sourceTenant": "tenant_00mpc1iaalyglk4uajazfswn1fharrlq",
+  "version": "V50",
+  "snapshotAt": "2026-05-19T04:04:28Z",
+  "sourceTenant": "tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub",
   "tables": [
   {
     "name": "assessments",
@@ -69,53 +69,53 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX assessments_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.assessments USING btree (id)",
+        "def": "CREATE UNIQUE INDEX assessments_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.assessments USING btree (id)",
         "name": "assessments_pkey"
       },
       {
-        "def": "CREATE INDEX idx_as_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.assessments USING btree (status)",
+        "def": "CREATE INDEX idx_as_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.assessments USING btree (status)",
         "name": "idx_as_status"
       },
       {
-        "def": "CREATE INDEX idx_as_teacher ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.assessments USING btree (teacher_id, scheduled_at DESC)",
+        "def": "CREATE INDEX idx_as_teacher ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.assessments USING btree (teacher_id, scheduled_at DESC)",
         "name": "idx_as_teacher"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162425_10_not_null",
+        "name": "190348_191095_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162425_1_not_null",
+        "name": "190348_191095_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162425_2_not_null",
+        "name": "190348_191095_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162425_3_not_null",
+        "name": "190348_191095_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162425_4_not_null",
+        "name": "190348_191095_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162425_5_not_null",
+        "name": "190348_191095_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162425_6_not_null",
+        "name": "190348_191095_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162425_8_not_null",
+        "name": "190348_191095_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162425_9_not_null",
+        "name": "190348_191095_9_not_null",
         "type": "CHECK"
       },
       {
@@ -167,21 +167,21 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX assignment_recipients_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.assignment_recipients USING btree (assignment_id, student_id)",
+        "def": "CREATE UNIQUE INDEX assignment_recipients_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.assignment_recipients USING btree (assignment_id, student_id)",
         "name": "assignment_recipients_pkey"
       },
       {
-        "def": "CREATE INDEX idx_ar_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.assignment_recipients USING btree (student_id)",
+        "def": "CREATE INDEX idx_ar_student ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.assignment_recipients USING btree (student_id)",
         "name": "idx_ar_student"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162382_1_not_null",
+        "name": "190348_191052_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162382_2_not_null",
+        "name": "190348_191052_2_not_null",
         "type": "CHECK"
       },
       {
@@ -268,41 +268,41 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX campuses_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.campuses USING btree (id)",
+        "def": "CREATE UNIQUE INDEX campuses_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.campuses USING btree (id)",
         "name": "campuses_pkey"
       },
       {
-        "def": "CREATE INDEX idx_campuses_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.campuses USING btree (status)",
+        "def": "CREATE INDEX idx_campuses_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.campuses USING btree (status)",
         "name": "idx_campuses_status"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161679_1_not_null",
+        "name": "190348_190349_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161679_2_not_null",
+        "name": "190348_190349_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161679_3_not_null",
+        "name": "190348_190349_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161679_4_not_null",
+        "name": "190348_190349_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161679_5_not_null",
+        "name": "190348_190349_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161679_6_not_null",
+        "name": "190348_190349_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161679_7_not_null",
+        "name": "190348_190349_7_not_null",
         "type": "CHECK"
       },
       {
@@ -514,117 +514,117 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX contracts_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (id)",
+        "def": "CREATE UNIQUE INDEX contracts_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (id)",
         "name": "contracts_pkey"
       },
       {
-        "def": "CREATE INDEX idx_contracts_campus ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (campus_id, signed_at DESC)",
+        "def": "CREATE INDEX idx_contracts_campus ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (campus_id, signed_at DESC)",
         "name": "idx_contracts_campus"
       },
       {
-        "def": "CREATE INDEX idx_contracts_course_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (course_product_id)",
+        "def": "CREATE INDEX idx_contracts_course_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (course_product_id)",
         "name": "idx_contracts_course_id"
       },
       {
-        "def": "CREATE INDEX idx_contracts_course_name ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (course_product_name) WHERE (course_product_name IS NOT NULL)",
+        "def": "CREATE INDEX idx_contracts_course_name ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (course_product_name) WHERE (course_product_name IS NOT NULL)",
         "name": "idx_contracts_course_name"
       },
       {
-        "def": "CREATE INDEX idx_contracts_order_type ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (order_type)",
+        "def": "CREATE INDEX idx_contracts_order_type ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (order_type)",
         "name": "idx_contracts_order_type"
       },
       {
-        "def": "CREATE INDEX idx_contracts_owner ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (owner_user_id, signed_at DESC)",
+        "def": "CREATE INDEX idx_contracts_owner ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (owner_user_id, signed_at DESC)",
         "name": "idx_contracts_owner"
       },
       {
-        "def": "CREATE INDEX idx_contracts_owner_changed ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (owner_changed_at DESC) WHERE (owner_changed_at IS NOT NULL)",
+        "def": "CREATE INDEX idx_contracts_owner_changed ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (owner_changed_at DESC) WHERE (owner_changed_at IS NOT NULL)",
         "name": "idx_contracts_owner_changed"
       },
       {
-        "def": "CREATE INDEX idx_contracts_paid_locked ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (paid_locked)",
+        "def": "CREATE INDEX idx_contracts_paid_locked ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (paid_locked)",
         "name": "idx_contracts_paid_locked"
       },
       {
-        "def": "CREATE INDEX idx_contracts_pending_invoice ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (signed_at DESC) WHERE ((invoice_issued = false) AND (deleted_at IS NULL))",
+        "def": "CREATE INDEX idx_contracts_pending_invoice ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (signed_at DESC) WHERE ((invoice_issued = false) AND (deleted_at IS NULL))",
         "name": "idx_contracts_pending_invoice"
       },
       {
-        "def": "CREATE INDEX idx_contracts_reverse_from ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (reverse_from_id)",
+        "def": "CREATE INDEX idx_contracts_reverse_from ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (reverse_from_id)",
         "name": "idx_contracts_reverse_from"
       },
       {
-        "def": "CREATE INDEX idx_contracts_signed_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (signed_at DESC) WHERE (signed_at IS NOT NULL)",
+        "def": "CREATE INDEX idx_contracts_signed_at ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (signed_at DESC) WHERE (signed_at IS NOT NULL)",
         "name": "idx_contracts_signed_at"
       },
       {
-        "def": "CREATE INDEX idx_contracts_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (status)",
+        "def": "CREATE INDEX idx_contracts_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (status)",
         "name": "idx_contracts_status"
       },
       {
-        "def": "CREATE INDEX idx_contracts_student_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (student_id)",
+        "def": "CREATE INDEX idx_contracts_student_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.contracts USING btree (student_id)",
         "name": "idx_contracts_student_id"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161848_10_not_null",
+        "name": "190348_190518_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_11_not_null",
+        "name": "190348_190518_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_14_not_null",
+        "name": "190348_190518_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_15_not_null",
+        "name": "190348_190518_15_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_16_not_null",
+        "name": "190348_190518_16_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_17_not_null",
+        "name": "190348_190518_17_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_1_not_null",
+        "name": "190348_190518_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_26_not_null",
+        "name": "190348_190518_26_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_2_not_null",
+        "name": "190348_190518_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_32_not_null",
+        "name": "190348_190518_32_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_5_not_null",
+        "name": "190348_190518_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_6_not_null",
+        "name": "190348_190518_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_7_not_null",
+        "name": "190348_190518_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_8_not_null",
+        "name": "190348_190518_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161848_9_not_null",
+        "name": "190348_190518_9_not_null",
         "type": "CHECK"
       },
       {
@@ -787,49 +787,49 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX course_consumptions_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_consumptions USING btree (id)",
+        "def": "CREATE UNIQUE INDEX course_consumptions_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.course_consumptions USING btree (id)",
         "name": "course_consumptions_pkey"
       },
       {
-        "def": "CREATE UNIQUE INDEX course_consumptions_schedule_id_student_id_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_consumptions USING btree (schedule_id, student_id)",
+        "def": "CREATE UNIQUE INDEX course_consumptions_schedule_id_student_id_key ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.course_consumptions USING btree (schedule_id, student_id)",
         "name": "course_consumptions_schedule_id_student_id_key"
       },
       {
-        "def": "CREATE INDEX idx_cc_status_due ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_consumptions USING btree (status, feedback_due_at) WHERE ((status)::text = 'pending_feedback'::text)",
+        "def": "CREATE INDEX idx_cc_status_due ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.course_consumptions USING btree (status, feedback_due_at) WHERE ((status)::text = 'pending_feedback'::text)",
         "name": "idx_cc_status_due"
       },
       {
-        "def": "CREATE INDEX idx_cc_teacher_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_consumptions USING btree (teacher_id, status)",
+        "def": "CREATE INDEX idx_cc_teacher_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.course_consumptions USING btree (teacher_id, status)",
         "name": "idx_cc_teacher_status"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162270_11_not_null",
+        "name": "190348_190940_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162270_1_not_null",
+        "name": "190348_190940_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162270_2_not_null",
+        "name": "190348_190940_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162270_3_not_null",
+        "name": "190348_190940_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162270_4_not_null",
+        "name": "190348_190940_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162270_5_not_null",
+        "name": "190348_190940_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162270_8_not_null",
+        "name": "190348_190940_8_not_null",
         "type": "CHECK"
       },
       {
@@ -970,65 +970,65 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX course_packages_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_packages USING btree (id)",
+        "def": "CREATE UNIQUE INDEX course_packages_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.course_packages USING btree (id)",
         "name": "course_packages_pkey"
       },
       {
-        "def": "CREATE INDEX idx_cp_product ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_packages USING btree (course_product_id)",
+        "def": "CREATE INDEX idx_cp_product ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.course_packages USING btree (course_product_id)",
         "name": "idx_cp_product"
       },
       {
-        "def": "CREATE INDEX idx_cp_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_packages USING btree (status)",
+        "def": "CREATE INDEX idx_cp_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.course_packages USING btree (status)",
         "name": "idx_cp_status"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162302_10_not_null",
+        "name": "190348_190972_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162302_11_not_null",
+        "name": "190348_190972_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162302_12_not_null",
+        "name": "190348_190972_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162302_1_not_null",
+        "name": "190348_190972_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162302_2_not_null",
+        "name": "190348_190972_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162302_3_not_null",
+        "name": "190348_190972_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162302_4_not_null",
+        "name": "190348_190972_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162302_5_not_null",
+        "name": "190348_190972_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162302_6_not_null",
+        "name": "190348_190972_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162302_7_not_null",
+        "name": "190348_190972_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162302_8_not_null",
+        "name": "190348_190972_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162302_9_not_null",
+        "name": "190348_190972_9_not_null",
         "type": "CHECK"
       },
       {
@@ -1148,61 +1148,61 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX course_products_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_products USING btree (id)",
+        "def": "CREATE UNIQUE INDEX course_products_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.course_products USING btree (id)",
         "name": "course_products_pkey"
       },
       {
-        "def": "CREATE INDEX idx_courseproducts_course_line ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_products USING btree (course_line)",
+        "def": "CREATE INDEX idx_courseproducts_course_line ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.course_products USING btree (course_line)",
         "name": "idx_courseproducts_course_line"
       },
       {
-        "def": "CREATE INDEX idx_courseproducts_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_products USING btree (status)",
+        "def": "CREATE INDEX idx_courseproducts_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.course_products USING btree (status)",
         "name": "idx_courseproducts_status"
       },
       {
-        "def": "CREATE UNIQUE INDEX uq_courseproducts_name_active ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_products USING btree (product_name) WHERE ((status)::text = '上架'::text)",
+        "def": "CREATE UNIQUE INDEX uq_courseproducts_name_active ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.course_products USING btree (product_name) WHERE ((status)::text = '上架'::text)",
         "name": "uq_courseproducts_name_active"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161830_10_not_null",
+        "name": "190348_190500_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161830_11_not_null",
+        "name": "190348_190500_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161830_12_not_null",
+        "name": "190348_190500_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161830_1_not_null",
+        "name": "190348_190500_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161830_2_not_null",
+        "name": "190348_190500_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161830_3_not_null",
+        "name": "190348_190500_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161830_4_not_null",
+        "name": "190348_190500_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161830_6_not_null",
+        "name": "190348_190500_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161830_8_not_null",
+        "name": "190348_190500_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161830_9_not_null",
+        "name": "190348_190500_9_not_null",
         "type": "CHECK"
       },
       {
@@ -1274,41 +1274,41 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX customer_follow_log_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customer_follow_log USING btree (id)",
+        "def": "CREATE UNIQUE INDEX customer_follow_log_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.customer_follow_log USING btree (id)",
         "name": "customer_follow_log_pkey"
       },
       {
-        "def": "CREATE INDEX idx_cfl_by_user ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customer_follow_log USING btree (by_user_id, occurred_at DESC) WHERE (by_user_id IS NOT NULL)",
+        "def": "CREATE INDEX idx_cfl_by_user ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.customer_follow_log USING btree (by_user_id, occurred_at DESC) WHERE (by_user_id IS NOT NULL)",
         "name": "idx_cfl_by_user"
       },
       {
-        "def": "CREATE INDEX idx_cfl_opportunity ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customer_follow_log USING btree (opportunity_id, occurred_at DESC)",
+        "def": "CREATE INDEX idx_cfl_opportunity ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.customer_follow_log USING btree (opportunity_id, occurred_at DESC)",
         "name": "idx_cfl_opportunity"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162609_1_not_null",
+        "name": "190348_191279_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162609_2_not_null",
+        "name": "190348_191279_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162609_3_not_null",
+        "name": "190348_191279_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162609_4_not_null",
+        "name": "190348_191279_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162609_6_not_null",
+        "name": "190348_191279_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162609_7_not_null",
+        "name": "190348_191279_7_not_null",
         "type": "CHECK"
       },
       {
@@ -1448,69 +1448,69 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX customers_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (id)",
+        "def": "CREATE UNIQUE INDEX customers_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.customers USING btree (id)",
         "name": "customers_pkey"
       },
       {
-        "def": "CREATE UNIQUE INDEX customers_primary_mobile_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (primary_mobile)",
+        "def": "CREATE UNIQUE INDEX customers_primary_mobile_key ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.customers USING btree (primary_mobile)",
         "name": "customers_primary_mobile_key"
       },
       {
-        "def": "CREATE INDEX idx_customers_campus_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (campus_id)",
+        "def": "CREATE INDEX idx_customers_campus_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.customers USING btree (campus_id)",
         "name": "idx_customers_campus_id"
       },
       {
-        "def": "CREATE INDEX idx_customers_is_return ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (is_returning_customer)",
+        "def": "CREATE INDEX idx_customers_is_return ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.customers USING btree (is_returning_customer)",
         "name": "idx_customers_is_return"
       },
       {
-        "def": "CREATE INDEX idx_customers_owner_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (owner_id)",
+        "def": "CREATE INDEX idx_customers_owner_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.customers USING btree (owner_id)",
         "name": "idx_customers_owner_id"
       },
       {
-        "def": "CREATE INDEX idx_customers_primary_mobile_hash ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (primary_mobile_hash)",
+        "def": "CREATE INDEX idx_customers_primary_mobile_hash ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.customers USING btree (primary_mobile_hash)",
         "name": "idx_customers_primary_mobile_hash"
       },
       {
-        "def": "CREATE INDEX idx_customers_referrer_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (referrer_id)",
+        "def": "CREATE INDEX idx_customers_referrer_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.customers USING btree (referrer_id)",
         "name": "idx_customers_referrer_id"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161736_10_not_null",
+        "name": "190348_190406_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161736_12_not_null",
+        "name": "190348_190406_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161736_13_not_null",
+        "name": "190348_190406_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161736_14_not_null",
+        "name": "190348_190406_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161736_15_not_null",
+        "name": "190348_190406_15_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161736_1_not_null",
+        "name": "190348_190406_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161736_2_not_null",
+        "name": "190348_190406_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161736_3_not_null",
+        "name": "190348_190406_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161736_6_not_null",
+        "name": "190348_190406_6_not_null",
         "type": "CHECK"
       },
       {
@@ -1619,45 +1619,45 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX homework_assignments_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_assignments USING btree (id)",
+        "def": "CREATE UNIQUE INDEX homework_assignments_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.homework_assignments USING btree (id)",
         "name": "homework_assignments_pkey"
       },
       {
-        "def": "CREATE INDEX idx_ha_schedule ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_assignments USING btree (schedule_id)",
+        "def": "CREATE INDEX idx_ha_schedule ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.homework_assignments USING btree (schedule_id)",
         "name": "idx_ha_schedule"
       },
       {
-        "def": "CREATE INDEX idx_ha_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_assignments USING btree (status)",
+        "def": "CREATE INDEX idx_ha_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.homework_assignments USING btree (status)",
         "name": "idx_ha_status"
       },
       {
-        "def": "CREATE INDEX idx_ha_teacher ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_assignments USING btree (teacher_id, created_at DESC)",
+        "def": "CREATE INDEX idx_ha_teacher ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.homework_assignments USING btree (teacher_id, created_at DESC)",
         "name": "idx_ha_teacher"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162357_10_not_null",
+        "name": "190348_191027_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162357_11_not_null",
+        "name": "190348_191027_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162357_1_not_null",
+        "name": "190348_191027_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162357_3_not_null",
+        "name": "190348_191027_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162357_4_not_null",
+        "name": "190348_191027_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162357_9_not_null",
+        "name": "190348_191027_9_not_null",
         "type": "CHECK"
       },
       {
@@ -1782,49 +1782,49 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX homework_submissions_assignment_id_student_id_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_submissions USING btree (assignment_id, student_id)",
+        "def": "CREATE UNIQUE INDEX homework_submissions_assignment_id_student_id_key ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.homework_submissions USING btree (assignment_id, student_id)",
         "name": "homework_submissions_assignment_id_student_id_key"
       },
       {
-        "def": "CREATE UNIQUE INDEX homework_submissions_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_submissions USING btree (id)",
+        "def": "CREATE UNIQUE INDEX homework_submissions_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.homework_submissions USING btree (id)",
         "name": "homework_submissions_pkey"
       },
       {
-        "def": "CREATE INDEX idx_hs_pending_grade ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_submissions USING btree (graded_at) WHERE ((status)::text = 'submitted'::text)",
+        "def": "CREATE INDEX idx_hs_pending_grade ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.homework_submissions USING btree (graded_at) WHERE ((status)::text = 'submitted'::text)",
         "name": "idx_hs_pending_grade"
       },
       {
-        "def": "CREATE INDEX idx_hs_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_submissions USING btree (status)",
+        "def": "CREATE INDEX idx_hs_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.homework_submissions USING btree (status)",
         "name": "idx_hs_status"
       },
       {
-        "def": "CREATE INDEX idx_hs_student_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_submissions USING btree (student_id, submitted_at DESC)",
+        "def": "CREATE INDEX idx_hs_student_time ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.homework_submissions USING btree (student_id, submitted_at DESC)",
         "name": "idx_hs_student_time"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162398_12_not_null",
+        "name": "190348_191068_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162398_13_not_null",
+        "name": "190348_191068_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162398_1_not_null",
+        "name": "190348_191068_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162398_2_not_null",
+        "name": "190348_191068_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162398_3_not_null",
+        "name": "190348_191068_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162398_7_not_null",
+        "name": "190348_191068_7_not_null",
         "type": "CHECK"
       },
       {
@@ -2001,57 +2001,57 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX idx_invoices_contract_unique_active ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.invoices USING btree (contract_id) WHERE ((status)::text = ANY ((ARRAY['pending'::character varying, 'issued'::character varying])::text[]))",
+        "def": "CREATE UNIQUE INDEX idx_invoices_contract_unique_active ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.invoices USING btree (contract_id) WHERE ((status)::text = ANY ((ARRAY['pending'::character varying, 'issued'::character varying])::text[]))",
         "name": "idx_invoices_contract_unique_active"
       },
       {
-        "def": "CREATE INDEX idx_invoices_status_created ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.invoices USING btree (status, created_at DESC)",
+        "def": "CREATE INDEX idx_invoices_status_created ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.invoices USING btree (status, created_at DESC)",
         "name": "idx_invoices_status_created"
       },
       {
-        "def": "CREATE INDEX idx_invoices_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.invoices USING btree (student_id) WHERE (student_id IS NOT NULL)",
+        "def": "CREATE INDEX idx_invoices_student ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.invoices USING btree (student_id) WHERE (student_id IS NOT NULL)",
         "name": "idx_invoices_student"
       },
       {
-        "def": "CREATE UNIQUE INDEX invoices_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.invoices USING btree (id)",
+        "def": "CREATE UNIQUE INDEX invoices_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.invoices USING btree (id)",
         "name": "invoices_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162707_14_not_null",
+        "name": "190348_191377_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162707_16_not_null",
+        "name": "190348_191377_16_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162707_17_not_null",
+        "name": "190348_191377_17_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162707_1_not_null",
+        "name": "190348_191377_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162707_20_not_null",
+        "name": "190348_191377_20_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162707_21_not_null",
+        "name": "190348_191377_21_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162707_2_not_null",
+        "name": "190348_191377_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162707_5_not_null",
+        "name": "190348_191377_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162707_6_not_null",
+        "name": "190348_191377_6_not_null",
         "type": "CHECK"
       },
       {
@@ -2163,61 +2163,61 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_leads_campus_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leads USING btree (campus_id)",
+        "def": "CREATE INDEX idx_leads_campus_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.leads USING btree (campus_id)",
         "name": "idx_leads_campus_id"
       },
       {
-        "def": "CREATE INDEX idx_leads_first_contact_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leads USING btree (first_contact_at)",
+        "def": "CREATE INDEX idx_leads_first_contact_at ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.leads USING btree (first_contact_at)",
         "name": "idx_leads_first_contact_at"
       },
       {
-        "def": "CREATE INDEX idx_leads_owner_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leads USING btree (owner_id)",
+        "def": "CREATE INDEX idx_leads_owner_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.leads USING btree (owner_id)",
         "name": "idx_leads_owner_id"
       },
       {
-        "def": "CREATE INDEX idx_leads_source_level1 ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leads USING btree (source_level1)",
+        "def": "CREATE INDEX idx_leads_source_level1 ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.leads USING btree (source_level1)",
         "name": "idx_leads_source_level1"
       },
       {
-        "def": "CREATE UNIQUE INDEX leads_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leads USING btree (id)",
+        "def": "CREATE UNIQUE INDEX leads_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.leads USING btree (id)",
         "name": "leads_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161710_10_not_null",
+        "name": "190348_190380_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161710_11_not_null",
+        "name": "190348_190380_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161710_12_not_null",
+        "name": "190348_190380_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161710_13_not_null",
+        "name": "190348_190380_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161710_14_not_null",
+        "name": "190348_190380_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161710_1_not_null",
+        "name": "190348_190380_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161710_2_not_null",
+        "name": "190348_190380_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161710_3_not_null",
+        "name": "190348_190380_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161710_5_not_null",
+        "name": "190348_190380_5_not_null",
         "type": "CHECK"
       },
       {
@@ -2336,41 +2336,41 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_leaves_lesson ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leaves USING btree (lesson_id)",
+        "def": "CREATE INDEX idx_leaves_lesson ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.leaves USING btree (lesson_id)",
         "name": "idx_leaves_lesson"
       },
       {
-        "def": "CREATE INDEX idx_leaves_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leaves USING btree (status)",
+        "def": "CREATE INDEX idx_leaves_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.leaves USING btree (status)",
         "name": "idx_leaves_status"
       },
       {
-        "def": "CREATE INDEX idx_leaves_student_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leaves USING btree (student_id, created_at DESC)",
+        "def": "CREATE INDEX idx_leaves_student_time ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.leaves USING btree (student_id, created_at DESC)",
         "name": "idx_leaves_student_time"
       },
       {
-        "def": "CREATE UNIQUE INDEX leaves_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leaves USING btree (id)",
+        "def": "CREATE UNIQUE INDEX leaves_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.leaves USING btree (id)",
         "name": "leaves_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162486_11_not_null",
+        "name": "190348_191156_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162486_1_not_null",
+        "name": "190348_191156_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162486_2_not_null",
+        "name": "190348_191156_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162486_4_not_null",
+        "name": "190348_191156_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162486_9_not_null",
+        "name": "190348_191156_9_not_null",
         "type": "CHECK"
       },
       {
@@ -2531,57 +2531,57 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_lf_student_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.lesson_feedbacks USING btree (student_id, submitted_at DESC)",
+        "def": "CREATE INDEX idx_lf_student_time ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.lesson_feedbacks USING btree (student_id, submitted_at DESC)",
         "name": "idx_lf_student_time"
       },
       {
-        "def": "CREATE INDEX idx_lf_teacher_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.lesson_feedbacks USING btree (teacher_id, submitted_at DESC)",
+        "def": "CREATE INDEX idx_lf_teacher_time ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.lesson_feedbacks USING btree (teacher_id, submitted_at DESC)",
         "name": "idx_lf_teacher_time"
       },
       {
-        "def": "CREATE INDEX idx_lf_unread ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.lesson_feedbacks USING btree (parent_read_at) WHERE (parent_read_at IS NULL)",
+        "def": "CREATE INDEX idx_lf_unread ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.lesson_feedbacks USING btree (parent_read_at) WHERE (parent_read_at IS NULL)",
         "name": "idx_lf_unread"
       },
       {
-        "def": "CREATE UNIQUE INDEX lesson_feedbacks_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.lesson_feedbacks USING btree (id)",
+        "def": "CREATE UNIQUE INDEX lesson_feedbacks_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.lesson_feedbacks USING btree (id)",
         "name": "lesson_feedbacks_pkey"
       },
       {
-        "def": "CREATE UNIQUE INDEX lesson_feedbacks_schedule_id_student_id_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.lesson_feedbacks USING btree (schedule_id, student_id)",
+        "def": "CREATE UNIQUE INDEX lesson_feedbacks_schedule_id_student_id_key ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.lesson_feedbacks USING btree (schedule_id, student_id)",
         "name": "lesson_feedbacks_schedule_id_student_id_key"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162215_13_not_null",
+        "name": "190348_190885_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162215_14_not_null",
+        "name": "190348_190885_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162215_1_not_null",
+        "name": "190348_190885_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162215_2_not_null",
+        "name": "190348_190885_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162215_3_not_null",
+        "name": "190348_190885_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162215_4_not_null",
+        "name": "190348_190885_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162215_5_not_null",
+        "name": "190348_190885_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162215_6_not_null",
+        "name": "190348_190885_6_not_null",
         "type": "CHECK"
       },
       {
@@ -2647,7 +2647,7 @@
       {
         "name": "id",
         "type": "bigint",
-        "default": "nextval('tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_aggregates_id_seq'::regclass)",
+        "default": "nextval('tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.monthly_aggregates_id_seq'::regclass)",
         "nullable": false
       },
       {
@@ -2725,41 +2725,41 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_ma_entity_month ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_aggregates USING btree (entity_type, entity_id, month DESC)",
+        "def": "CREATE INDEX idx_ma_entity_month ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.monthly_aggregates USING btree (entity_type, entity_id, month DESC)",
         "name": "idx_ma_entity_month"
       },
       {
-        "def": "CREATE INDEX idx_ma_month ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_aggregates USING btree (month DESC)",
+        "def": "CREATE INDEX idx_ma_month ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.monthly_aggregates USING btree (month DESC)",
         "name": "idx_ma_month"
       },
       {
-        "def": "CREATE UNIQUE INDEX monthly_aggregates_entity_type_entity_id_month_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_aggregates USING btree (entity_type, entity_id, month)",
+        "def": "CREATE UNIQUE INDEX monthly_aggregates_entity_type_entity_id_month_key ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.monthly_aggregates USING btree (entity_type, entity_id, month)",
         "name": "monthly_aggregates_entity_type_entity_id_month_key"
       },
       {
-        "def": "CREATE UNIQUE INDEX monthly_aggregates_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_aggregates USING btree (id)",
+        "def": "CREATE UNIQUE INDEX monthly_aggregates_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.monthly_aggregates USING btree (id)",
         "name": "monthly_aggregates_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162591_14_not_null",
+        "name": "190348_191261_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162591_1_not_null",
+        "name": "190348_191261_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162591_2_not_null",
+        "name": "190348_191261_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162591_3_not_null",
+        "name": "190348_191261_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162591_4_not_null",
+        "name": "190348_191261_4_not_null",
         "type": "CHECK"
       },
       {
@@ -2891,61 +2891,61 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_mr_parent_pending ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_reports USING btree (student_id, month DESC) WHERE ((parent_finalized_at IS NULL) AND ((status)::text = 'teacher_finalized'::text))",
+        "def": "CREATE INDEX idx_mr_parent_pending ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.monthly_reports USING btree (student_id, month DESC) WHERE ((parent_finalized_at IS NULL) AND ((status)::text = 'teacher_finalized'::text))",
         "name": "idx_mr_parent_pending"
       },
       {
-        "def": "CREATE INDEX idx_mr_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_reports USING btree (status)",
+        "def": "CREATE INDEX idx_mr_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.monthly_reports USING btree (status)",
         "name": "idx_mr_status"
       },
       {
-        "def": "CREATE INDEX idx_mr_student_month ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_reports USING btree (student_id, month DESC)",
+        "def": "CREATE INDEX idx_mr_student_month ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.monthly_reports USING btree (student_id, month DESC)",
         "name": "idx_mr_student_month"
       },
       {
-        "def": "CREATE UNIQUE INDEX monthly_reports_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_reports USING btree (id)",
+        "def": "CREATE UNIQUE INDEX monthly_reports_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.monthly_reports USING btree (id)",
         "name": "monthly_reports_pkey"
       },
       {
-        "def": "CREATE UNIQUE INDEX monthly_reports_student_id_month_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_reports USING btree (student_id, month)",
+        "def": "CREATE UNIQUE INDEX monthly_reports_student_id_month_key ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.monthly_reports USING btree (student_id, month)",
         "name": "monthly_reports_student_id_month_key"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162246_10_not_null",
+        "name": "190348_190916_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162246_11_not_null",
+        "name": "190348_190916_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162246_1_not_null",
+        "name": "190348_190916_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162246_2_not_null",
+        "name": "190348_190916_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162246_3_not_null",
+        "name": "190348_190916_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162246_4_not_null",
+        "name": "190348_190916_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162246_5_not_null",
+        "name": "190348_190916_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162246_6_not_null",
+        "name": "190348_190916_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162246_7_not_null",
+        "name": "190348_190916_7_not_null",
         "type": "CHECK"
       },
       {
@@ -3184,85 +3184,85 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_opps_campus ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (campus_id)",
+        "def": "CREATE INDEX idx_opps_campus ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (campus_id)",
         "name": "idx_opps_campus"
       },
       {
-        "def": "CREATE INDEX idx_opps_course_product_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (course_product_id)",
+        "def": "CREATE INDEX idx_opps_course_product_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (course_product_id)",
         "name": "idx_opps_course_product_id"
       },
       {
-        "def": "CREATE INDEX idx_opps_intent_level ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (intent_level)",
+        "def": "CREATE INDEX idx_opps_intent_level ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (intent_level)",
         "name": "idx_opps_intent_level"
       },
       {
-        "def": "CREATE INDEX idx_opps_last_contact ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (last_contact_at) WHERE ((owner_user_id IS NOT NULL) AND ((stage)::text <> ALL ((ARRAY['已报名'::character varying, '已失单'::character varying])::text[])))",
+        "def": "CREATE INDEX idx_opps_last_contact ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (last_contact_at) WHERE ((owner_user_id IS NOT NULL) AND ((stage)::text <> ALL ((ARRAY['已报名'::character varying, '已失单'::character varying])::text[])))",
         "name": "idx_opps_last_contact"
       },
       {
-        "def": "CREATE INDEX idx_opps_next_followup_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (next_followup_at)",
+        "def": "CREATE INDEX idx_opps_next_followup_at ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (next_followup_at)",
         "name": "idx_opps_next_followup_at"
       },
       {
-        "def": "CREATE INDEX idx_opps_owner ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (owner_user_id)",
+        "def": "CREATE INDEX idx_opps_owner ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (owner_user_id)",
         "name": "idx_opps_owner"
       },
       {
-        "def": "CREATE INDEX idx_opps_owner_campus ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (owner_user_id, campus_id) WHERE (owner_user_id IS NOT NULL)",
+        "def": "CREATE INDEX idx_opps_owner_campus ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (owner_user_id, campus_id) WHERE (owner_user_id IS NOT NULL)",
         "name": "idx_opps_owner_campus"
       },
       {
-        "def": "CREATE INDEX idx_opps_owner_changed ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (owner_changed_at DESC) WHERE (owner_changed_at IS NOT NULL)",
+        "def": "CREATE INDEX idx_opps_owner_changed ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (owner_changed_at DESC) WHERE (owner_changed_at IS NOT NULL)",
         "name": "idx_opps_owner_changed"
       },
       {
-        "def": "CREATE INDEX idx_opps_pool ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (entered_pool_at) WHERE (owner_user_id IS NULL)",
+        "def": "CREATE INDEX idx_opps_pool ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (entered_pool_at) WHERE (owner_user_id IS NULL)",
         "name": "idx_opps_pool"
       },
       {
-        "def": "CREATE INDEX idx_opps_stage ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (stage)",
+        "def": "CREATE INDEX idx_opps_stage ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (stage)",
         "name": "idx_opps_stage"
       },
       {
-        "def": "CREATE INDEX idx_opps_student_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (student_id)",
+        "def": "CREATE INDEX idx_opps_student_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (student_id)",
         "name": "idx_opps_student_id"
       },
       {
-        "def": "CREATE UNIQUE INDEX opportunities_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (id)",
+        "def": "CREATE UNIQUE INDEX opportunities_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.opportunities USING btree (id)",
         "name": "opportunities_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161780_11_not_null",
+        "name": "190348_190450_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161780_12_not_null",
+        "name": "190348_190450_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161780_13_not_null",
+        "name": "190348_190450_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161780_14_not_null",
+        "name": "190348_190450_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161780_1_not_null",
+        "name": "190348_190450_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161780_23_not_null",
+        "name": "190348_190450_23_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161780_2_not_null",
+        "name": "190348_190450_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161780_4_not_null",
+        "name": "190348_190450_4_not_null",
         "type": "CHECK"
       },
       {
@@ -3398,61 +3398,61 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_pr_parent ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_recommendations USING btree (parent_id)",
+        "def": "CREATE INDEX idx_pr_parent ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.parent_recommendations USING btree (parent_id)",
         "name": "idx_pr_parent"
       },
       {
-        "def": "CREATE INDEX idx_pr_teacher_displayed ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_recommendations USING btree (teacher_id, displayed)",
+        "def": "CREATE INDEX idx_pr_teacher_displayed ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.parent_recommendations USING btree (teacher_id, displayed)",
         "name": "idx_pr_teacher_displayed"
       },
       {
-        "def": "CREATE INDEX idx_pr_teacher_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_recommendations USING btree (teacher_id, submitted_at DESC)",
+        "def": "CREATE INDEX idx_pr_teacher_time ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.parent_recommendations USING btree (teacher_id, submitted_at DESC)",
         "name": "idx_pr_teacher_time"
       },
       {
-        "def": "CREATE UNIQUE INDEX parent_recommendations_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_recommendations USING btree (id)",
+        "def": "CREATE UNIQUE INDEX parent_recommendations_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.parent_recommendations USING btree (id)",
         "name": "parent_recommendations_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162510_10_not_null",
+        "name": "190348_191180_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162510_11_not_null",
+        "name": "190348_191180_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162510_1_not_null",
+        "name": "190348_191180_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162510_2_not_null",
+        "name": "190348_191180_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162510_3_not_null",
+        "name": "190348_191180_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162510_4_not_null",
+        "name": "190348_191180_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162510_5_not_null",
+        "name": "190348_191180_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162510_7_not_null",
+        "name": "190348_191180_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162510_8_not_null",
+        "name": "190348_191180_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162510_9_not_null",
+        "name": "190348_191180_9_not_null",
         "type": "CHECK"
       },
       {
@@ -3591,65 +3591,65 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_pr_code ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (referral_code)",
+        "def": "CREATE INDEX idx_pr_code ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.parent_referrals USING btree (referral_code)",
         "name": "idx_pr_code"
       },
       {
-        "def": "CREATE INDEX idx_pr_pending_expires ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (expires_at) WHERE ((status)::text = 'created'::text)",
+        "def": "CREATE INDEX idx_pr_pending_expires ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.parent_referrals USING btree (expires_at) WHERE ((status)::text = 'created'::text)",
         "name": "idx_pr_pending_expires"
       },
       {
-        "def": "CREATE INDEX idx_pr_referrer ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (referrer_parent_id, created_at DESC)",
+        "def": "CREATE INDEX idx_pr_referrer ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.parent_referrals USING btree (referrer_parent_id, created_at DESC)",
         "name": "idx_pr_referrer"
       },
       {
-        "def": "CREATE INDEX idx_pr_teacher_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (teacher_id, status)",
+        "def": "CREATE INDEX idx_pr_teacher_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.parent_referrals USING btree (teacher_id, status)",
         "name": "idx_pr_teacher_status"
       },
       {
-        "def": "CREATE UNIQUE INDEX parent_referrals_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (id)",
+        "def": "CREATE UNIQUE INDEX parent_referrals_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.parent_referrals USING btree (id)",
         "name": "parent_referrals_pkey"
       },
       {
-        "def": "CREATE UNIQUE INDEX parent_referrals_referral_code_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (referral_code)",
+        "def": "CREATE UNIQUE INDEX parent_referrals_referral_code_key ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.parent_referrals USING btree (referral_code)",
         "name": "parent_referrals_referral_code_key"
       },
       {
-        "def": "CREATE UNIQUE INDEX uq_pr_referee_parent ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (referee_parent_id) WHERE (referee_parent_id IS NOT NULL)",
+        "def": "CREATE UNIQUE INDEX uq_pr_referee_parent ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.parent_referrals USING btree (referee_parent_id) WHERE (referee_parent_id IS NOT NULL)",
         "name": "uq_pr_referee_parent"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162537_12_not_null",
+        "name": "190348_191207_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162537_15_not_null",
+        "name": "190348_191207_15_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162537_1_not_null",
+        "name": "190348_191207_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162537_2_not_null",
+        "name": "190348_191207_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162537_3_not_null",
+        "name": "190348_191207_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162537_4_not_null",
+        "name": "190348_191207_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162537_7_not_null",
+        "name": "190348_191207_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162537_8_not_null",
+        "name": "190348_191207_8_not_null",
         "type": "CHECK"
       },
       {
@@ -3830,89 +3830,89 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_payments_contract_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (contract_id)",
+        "def": "CREATE INDEX idx_payments_contract_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.payments USING btree (contract_id)",
         "name": "idx_payments_contract_id"
       },
       {
-        "def": "CREATE INDEX idx_payments_paid_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (paid_at)",
+        "def": "CREATE INDEX idx_payments_paid_at ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.payments USING btree (paid_at)",
         "name": "idx_payments_paid_at"
       },
       {
-        "def": "CREATE INDEX idx_payments_paid_locked ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (paid_locked)",
+        "def": "CREATE INDEX idx_payments_paid_locked ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.payments USING btree (paid_locked)",
         "name": "idx_payments_paid_locked"
       },
       {
-        "def": "CREATE INDEX idx_payments_payment_type ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (payment_type)",
+        "def": "CREATE INDEX idx_payments_payment_type ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.payments USING btree (payment_type)",
         "name": "idx_payments_payment_type"
       },
       {
-        "def": "CREATE INDEX idx_payments_refund_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (refund_status)",
+        "def": "CREATE INDEX idx_payments_refund_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.payments USING btree (refund_status)",
         "name": "idx_payments_refund_status"
       },
       {
-        "def": "CREATE INDEX idx_payments_student_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (student_id)",
+        "def": "CREATE INDEX idx_payments_student_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.payments USING btree (student_id)",
         "name": "idx_payments_student_id"
       },
       {
-        "def": "CREATE UNIQUE INDEX payments_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (id)",
+        "def": "CREATE UNIQUE INDEX payments_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.payments USING btree (id)",
         "name": "payments_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161882_11_not_null",
+        "name": "190348_190552_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_14_not_null",
+        "name": "190348_190552_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_15_not_null",
+        "name": "190348_190552_15_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_16_not_null",
+        "name": "190348_190552_16_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_17_not_null",
+        "name": "190348_190552_17_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_1_not_null",
+        "name": "190348_190552_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_2_not_null",
+        "name": "190348_190552_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_3_not_null",
+        "name": "190348_190552_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_4_not_null",
+        "name": "190348_190552_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_5_not_null",
+        "name": "190348_190552_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_6_not_null",
+        "name": "190348_190552_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_7_not_null",
+        "name": "190348_190552_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_8_not_null",
+        "name": "190348_190552_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161882_9_not_null",
+        "name": "190348_190552_9_not_null",
         "type": "CHECK"
       },
       {
@@ -4069,73 +4069,73 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_rs_active ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.recurring_schedules USING btree (status) WHERE ((status)::text = 'active'::text)",
+        "def": "CREATE INDEX idx_rs_active ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.recurring_schedules USING btree (status) WHERE ((status)::text = 'active'::text)",
         "name": "idx_rs_active"
       },
       {
-        "def": "CREATE INDEX idx_rs_binding ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.recurring_schedules USING btree (binding_id)",
+        "def": "CREATE INDEX idx_rs_binding ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.recurring_schedules USING btree (binding_id)",
         "name": "idx_rs_binding"
       },
       {
-        "def": "CREATE INDEX idx_rs_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.recurring_schedules USING btree (student_id)",
+        "def": "CREATE INDEX idx_rs_student ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.recurring_schedules USING btree (student_id)",
         "name": "idx_rs_student"
       },
       {
-        "def": "CREATE INDEX idx_rs_teacher ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.recurring_schedules USING btree (teacher_id)",
+        "def": "CREATE INDEX idx_rs_teacher ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.recurring_schedules USING btree (teacher_id)",
         "name": "idx_rs_teacher"
       },
       {
-        "def": "CREATE UNIQUE INDEX recurring_schedules_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.recurring_schedules USING btree (id)",
+        "def": "CREATE UNIQUE INDEX recurring_schedules_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.recurring_schedules USING btree (id)",
         "name": "recurring_schedules_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162179_11_not_null",
+        "name": "190348_190849_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162179_12_not_null",
+        "name": "190348_190849_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162179_13_not_null",
+        "name": "190348_190849_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162179_14_not_null",
+        "name": "190348_190849_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162179_1_not_null",
+        "name": "190348_190849_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162179_2_not_null",
+        "name": "190348_190849_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162179_3_not_null",
+        "name": "190348_190849_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162179_4_not_null",
+        "name": "190348_190849_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162179_6_not_null",
+        "name": "190348_190849_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162179_7_not_null",
+        "name": "190348_190849_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162179_8_not_null",
+        "name": "190348_190849_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162179_9_not_null",
+        "name": "190348_190849_9_not_null",
         "type": "CHECK"
       },
       {
@@ -4286,69 +4286,69 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_referrals_campus ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (campus_id)",
+        "def": "CREATE INDEX idx_referrals_campus ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.referrals USING btree (campus_id)",
         "name": "idx_referrals_campus"
       },
       {
-        "def": "CREATE INDEX idx_referrals_created_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (created_at)",
+        "def": "CREATE INDEX idx_referrals_created_at ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.referrals USING btree (created_at)",
         "name": "idx_referrals_created_at"
       },
       {
-        "def": "CREATE INDEX idx_referrals_referrer ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (referrer_customer_id)",
+        "def": "CREATE INDEX idx_referrals_referrer ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.referrals USING btree (referrer_customer_id)",
         "name": "idx_referrals_referrer"
       },
       {
-        "def": "CREATE INDEX idx_referrals_reward_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (reward_status)",
+        "def": "CREATE INDEX idx_referrals_reward_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.referrals USING btree (reward_status)",
         "name": "idx_referrals_reward_status"
       },
       {
-        "def": "CREATE INDEX idx_referrals_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (status)",
+        "def": "CREATE INDEX idx_referrals_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.referrals USING btree (status)",
         "name": "idx_referrals_status"
       },
       {
-        "def": "CREATE UNIQUE INDEX referrals_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (id)",
+        "def": "CREATE UNIQUE INDEX referrals_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.referrals USING btree (id)",
         "name": "referrals_pkey"
       },
       {
-        "def": "CREATE UNIQUE INDEX uq_referrals_tenant_mobile ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (tenant_id, referred_mobile)",
+        "def": "CREATE UNIQUE INDEX uq_referrals_tenant_mobile ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.referrals USING btree (tenant_id, referred_mobile)",
         "name": "uq_referrals_tenant_mobile"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161977_10_not_null",
+        "name": "190348_190647_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161977_13_not_null",
+        "name": "190348_190647_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161977_1_not_null",
+        "name": "190348_190647_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161977_2_not_null",
+        "name": "190348_190647_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161977_3_not_null",
+        "name": "190348_190647_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161977_5_not_null",
+        "name": "190348_190647_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161977_6_not_null",
+        "name": "190348_190647_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161977_8_not_null",
+        "name": "190348_190647_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161977_9_not_null",
+        "name": "190348_190647_9_not_null",
         "type": "CHECK"
       },
       {
@@ -4510,73 +4510,73 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_renewals_campus ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (campus_id)",
+        "def": "CREATE INDEX idx_renewals_campus ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.renewals USING btree (campus_id)",
         "name": "idx_renewals_campus"
       },
       {
-        "def": "CREATE INDEX idx_renewals_due_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (due_at)",
+        "def": "CREATE INDEX idx_renewals_due_at ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.renewals USING btree (due_at)",
         "name": "idx_renewals_due_at"
       },
       {
-        "def": "CREATE INDEX idx_renewals_owner ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (owner_id)",
+        "def": "CREATE INDEX idx_renewals_owner ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.renewals USING btree (owner_id)",
         "name": "idx_renewals_owner"
       },
       {
-        "def": "CREATE INDEX idx_renewals_source ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (source_contract_id)",
+        "def": "CREATE INDEX idx_renewals_source ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.renewals USING btree (source_contract_id)",
         "name": "idx_renewals_source"
       },
       {
-        "def": "CREATE INDEX idx_renewals_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (status)",
+        "def": "CREATE INDEX idx_renewals_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.renewals USING btree (status)",
         "name": "idx_renewals_status"
       },
       {
-        "def": "CREATE UNIQUE INDEX renewals_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (id)",
+        "def": "CREATE UNIQUE INDEX renewals_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.renewals USING btree (id)",
         "name": "renewals_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162019_10_not_null",
+        "name": "190348_190689_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162019_13_not_null",
+        "name": "190348_190689_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162019_1_not_null",
+        "name": "190348_190689_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162019_2_not_null",
+        "name": "190348_190689_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162019_3_not_null",
+        "name": "190348_190689_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162019_4_not_null",
+        "name": "190348_190689_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162019_5_not_null",
+        "name": "190348_190689_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162019_6_not_null",
+        "name": "190348_190689_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162019_7_not_null",
+        "name": "190348_190689_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162019_8_not_null",
+        "name": "190348_190689_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162019_9_not_null",
+        "name": "190348_190689_9_not_null",
         "type": "CHECK"
       },
       {
@@ -4768,73 +4768,73 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_reverse_source_contract ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.reverse_orders USING btree (source_contract_id)",
+        "def": "CREATE INDEX idx_reverse_source_contract ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.reverse_orders USING btree (source_contract_id)",
         "name": "idx_reverse_source_contract"
       },
       {
-        "def": "CREATE INDEX idx_reverse_source_payment ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.reverse_orders USING btree (source_payment_id)",
+        "def": "CREATE INDEX idx_reverse_source_payment ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.reverse_orders USING btree (source_payment_id)",
         "name": "idx_reverse_source_payment"
       },
       {
-        "def": "CREATE INDEX idx_reverse_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.reverse_orders USING btree (reverse_status)",
+        "def": "CREATE INDEX idx_reverse_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.reverse_orders USING btree (reverse_status)",
         "name": "idx_reverse_status"
       },
       {
-        "def": "CREATE INDEX idx_reverse_type ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.reverse_orders USING btree (reverse_type)",
+        "def": "CREATE INDEX idx_reverse_type ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.reverse_orders USING btree (reverse_type)",
         "name": "idx_reverse_type"
       },
       {
-        "def": "CREATE UNIQUE INDEX reverse_orders_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.reverse_orders USING btree (id)",
+        "def": "CREATE UNIQUE INDEX reverse_orders_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.reverse_orders USING btree (id)",
         "name": "reverse_orders_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161919_12_not_null",
+        "name": "190348_190589_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161919_13_not_null",
+        "name": "190348_190589_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161919_14_not_null",
+        "name": "190348_190589_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161919_15_not_null",
+        "name": "190348_190589_15_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161919_1_not_null",
+        "name": "190348_190589_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161919_2_not_null",
+        "name": "190348_190589_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161919_4_not_null",
+        "name": "190348_190589_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161919_5_not_null",
+        "name": "190348_190589_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161919_6_not_null",
+        "name": "190348_190589_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161919_7_not_null",
+        "name": "190348_190589_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161919_8_not_null",
+        "name": "190348_190589_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161919_9_not_null",
+        "name": "190348_190589_9_not_null",
         "type": "CHECK"
       },
       {
@@ -4916,33 +4916,33 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_schedule_students_attendance ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedule_students USING btree (attendance_status)",
+        "def": "CREATE INDEX idx_schedule_students_attendance ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.schedule_students USING btree (attendance_status)",
         "name": "idx_schedule_students_attendance"
       },
       {
-        "def": "CREATE INDEX idx_schedule_students_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedule_students USING btree (student_id)",
+        "def": "CREATE INDEX idx_schedule_students_student ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.schedule_students USING btree (student_id)",
         "name": "idx_schedule_students_student"
       },
       {
-        "def": "CREATE UNIQUE INDEX schedule_students_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedule_students USING btree (schedule_id, student_id)",
+        "def": "CREATE UNIQUE INDEX schedule_students_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.schedule_students USING btree (schedule_id, student_id)",
         "name": "schedule_students_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162130_1_not_null",
+        "name": "190348_190800_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162130_2_not_null",
+        "name": "190348_190800_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162130_3_not_null",
+        "name": "190348_190800_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162130_4_not_null",
+        "name": "190348_190800_4_not_null",
         "type": "CHECK"
       },
       {
@@ -5081,77 +5081,77 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_schedules_class_type ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (class_type) WHERE (class_type IS NOT NULL)",
+        "def": "CREATE INDEX idx_schedules_class_type ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.schedules USING btree (class_type) WHERE (class_type IS NOT NULL)",
         "name": "idx_schedules_class_type"
       },
       {
-        "def": "CREATE INDEX idx_schedules_course ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (course_product_id)",
+        "def": "CREATE INDEX idx_schedules_course ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.schedules USING btree (course_product_id)",
         "name": "idx_schedules_course"
       },
       {
-        "def": "CREATE INDEX idx_schedules_recurring ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (recurring_schedule_id)",
+        "def": "CREATE INDEX idx_schedules_recurring ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.schedules USING btree (recurring_schedule_id)",
         "name": "idx_schedules_recurring"
       },
       {
-        "def": "CREATE INDEX idx_schedules_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (status)",
+        "def": "CREATE INDEX idx_schedules_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.schedules USING btree (status)",
         "name": "idx_schedules_status"
       },
       {
-        "def": "CREATE INDEX idx_schedules_teacher_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (teacher_id, start_at, end_at)",
+        "def": "CREATE INDEX idx_schedules_teacher_time ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.schedules USING btree (teacher_id, start_at, end_at)",
         "name": "idx_schedules_teacher_time"
       },
       {
-        "def": "CREATE UNIQUE INDEX schedules_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (id)",
+        "def": "CREATE UNIQUE INDEX schedules_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.schedules USING btree (id)",
         "name": "schedules_pkey"
       },
       {
-        "def": "CREATE UNIQUE INDEX uniq_recurring_expansion ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (recurring_schedule_id, start_at) WHERE ((source)::text = 'recurring_expansion'::text)",
+        "def": "CREATE UNIQUE INDEX uniq_recurring_expansion ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.schedules USING btree (recurring_schedule_id, start_at) WHERE ((source)::text = 'recurring_expansion'::text)",
         "name": "uniq_recurring_expansion"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162102_10_not_null",
+        "name": "190348_190772_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162102_11_not_null",
+        "name": "190348_190772_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162102_13_not_null",
+        "name": "190348_190772_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162102_14_not_null",
+        "name": "190348_190772_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162102_1_not_null",
+        "name": "190348_190772_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162102_3_not_null",
+        "name": "190348_190772_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162102_4_not_null",
+        "name": "190348_190772_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162102_5_not_null",
+        "name": "190348_190772_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162102_6_not_null",
+        "name": "190348_190772_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162102_7_not_null",
+        "name": "190348_190772_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162102_8_not_null",
+        "name": "190348_190772_8_not_null",
         "type": "CHECK"
       },
       {
@@ -5260,33 +5260,33 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_sar_assessment ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_assessment_results USING btree (assessment_id)",
+        "def": "CREATE INDEX idx_sar_assessment ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_assessment_results USING btree (assessment_id)",
         "name": "idx_sar_assessment"
       },
       {
-        "def": "CREATE INDEX idx_sar_student_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_assessment_results USING btree (student_id, recorded_at DESC)",
+        "def": "CREATE INDEX idx_sar_student_time ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_assessment_results USING btree (student_id, recorded_at DESC)",
         "name": "idx_sar_student_time"
       },
       {
-        "def": "CREATE UNIQUE INDEX student_assessment_results_assessment_id_student_id_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_assessment_results USING btree (assessment_id, student_id)",
+        "def": "CREATE UNIQUE INDEX student_assessment_results_assessment_id_student_id_key ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_assessment_results USING btree (assessment_id, student_id)",
         "name": "student_assessment_results_assessment_id_student_id_key"
       },
       {
-        "def": "CREATE UNIQUE INDEX student_assessment_results_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_assessment_results USING btree (id)",
+        "def": "CREATE UNIQUE INDEX student_assessment_results_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_assessment_results USING btree (id)",
         "name": "student_assessment_results_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162445_1_not_null",
+        "name": "190348_191115_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162445_2_not_null",
+        "name": "190348_191115_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162445_3_not_null",
+        "name": "190348_191115_3_not_null",
         "type": "CHECK"
       },
       {
@@ -5413,73 +5413,73 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_scp_expires ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_course_packages USING btree (expires_at) WHERE ((status)::text = 'active'::text)",
+        "def": "CREATE INDEX idx_scp_expires ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_course_packages USING btree (expires_at) WHERE ((status)::text = 'active'::text)",
         "name": "idx_scp_expires"
       },
       {
-        "def": "CREATE INDEX idx_scp_lowbal ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_course_packages USING btree (student_id, remaining_lessons) WHERE (((status)::text = 'active'::text) AND (low_balance_alerted = false))",
+        "def": "CREATE INDEX idx_scp_lowbal ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_course_packages USING btree (student_id, remaining_lessons) WHERE (((status)::text = 'active'::text) AND (low_balance_alerted = false))",
         "name": "idx_scp_lowbal"
       },
       {
-        "def": "CREATE INDEX idx_scp_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_course_packages USING btree (status)",
+        "def": "CREATE INDEX idx_scp_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_course_packages USING btree (status)",
         "name": "idx_scp_status"
       },
       {
-        "def": "CREATE INDEX idx_scp_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_course_packages USING btree (student_id)",
+        "def": "CREATE INDEX idx_scp_student ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_course_packages USING btree (student_id)",
         "name": "idx_scp_student"
       },
       {
-        "def": "CREATE UNIQUE INDEX student_course_packages_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_course_packages USING btree (id)",
+        "def": "CREATE UNIQUE INDEX student_course_packages_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_course_packages USING btree (id)",
         "name": "student_course_packages_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162323_10_not_null",
+        "name": "190348_190993_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162323_11_not_null",
+        "name": "190348_190993_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162323_12_not_null",
+        "name": "190348_190993_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162323_13_not_null",
+        "name": "190348_190993_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162323_14_not_null",
+        "name": "190348_190993_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162323_1_not_null",
+        "name": "190348_190993_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162323_2_not_null",
+        "name": "190348_190993_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162323_3_not_null",
+        "name": "190348_190993_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162323_5_not_null",
+        "name": "190348_190993_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162323_6_not_null",
+        "name": "190348_190993_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162323_7_not_null",
+        "name": "190348_190993_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162323_9_not_null",
+        "name": "190348_190993_9_not_null",
         "type": "CHECK"
       },
       {
@@ -5603,45 +5603,45 @@
     ],
     "indexes": [
       {
-        "def": "CREATE UNIQUE INDEX student_learning_profile_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_learning_profile USING btree (student_id)",
+        "def": "CREATE UNIQUE INDEX student_learning_profile_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_learning_profile USING btree (student_id)",
         "name": "student_learning_profile_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162466_10_not_null",
+        "name": "190348_191136_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162466_11_not_null",
+        "name": "190348_191136_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162466_1_not_null",
+        "name": "190348_191136_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162466_2_not_null",
+        "name": "190348_191136_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162466_3_not_null",
+        "name": "190348_191136_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162466_4_not_null",
+        "name": "190348_191136_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162466_5_not_null",
+        "name": "190348_191136_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162466_8_not_null",
+        "name": "190348_191136_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162466_9_not_null",
+        "name": "190348_191136_9_not_null",
         "type": "CHECK"
       },
       {
@@ -5717,49 +5717,49 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_stb_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_teacher_bindings USING btree (status)",
+        "def": "CREATE INDEX idx_stb_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_teacher_bindings USING btree (status)",
         "name": "idx_stb_status"
       },
       {
-        "def": "CREATE INDEX idx_stb_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_teacher_bindings USING btree (student_id)",
+        "def": "CREATE INDEX idx_stb_student ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_teacher_bindings USING btree (student_id)",
         "name": "idx_stb_student"
       },
       {
-        "def": "CREATE INDEX idx_stb_teacher ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_teacher_bindings USING btree (teacher_id)",
+        "def": "CREATE INDEX idx_stb_teacher ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_teacher_bindings USING btree (teacher_id)",
         "name": "idx_stb_teacher"
       },
       {
-        "def": "CREATE UNIQUE INDEX student_teacher_bindings_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_teacher_bindings USING btree (id)",
+        "def": "CREATE UNIQUE INDEX student_teacher_bindings_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_teacher_bindings USING btree (id)",
         "name": "student_teacher_bindings_pkey"
       },
       {
-        "def": "CREATE UNIQUE INDEX student_teacher_bindings_student_id_teacher_id_subject_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_teacher_bindings USING btree (student_id, teacher_id, subject)",
+        "def": "CREATE UNIQUE INDEX student_teacher_bindings_student_id_teacher_id_subject_key ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.student_teacher_bindings USING btree (student_id, teacher_id, subject)",
         "name": "student_teacher_bindings_student_id_teacher_id_subject_key"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162151_1_not_null",
+        "name": "190348_190821_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162151_2_not_null",
+        "name": "190348_190821_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162151_3_not_null",
+        "name": "190348_190821_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162151_5_not_null",
+        "name": "190348_190821_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162151_6_not_null",
+        "name": "190348_190821_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162151_8_not_null",
+        "name": "190348_190821_8_not_null",
         "type": "CHECK"
       },
       {
@@ -5931,57 +5931,57 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_students_assigned_teacher ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (assigned_teacher_id) WHERE (assigned_teacher_id IS NOT NULL)",
+        "def": "CREATE INDEX idx_students_assigned_teacher ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.students USING btree (assigned_teacher_id) WHERE (assigned_teacher_id IS NOT NULL)",
         "name": "idx_students_assigned_teacher"
       },
       {
-        "def": "CREATE INDEX idx_students_customer_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (customer_id)",
+        "def": "CREATE INDEX idx_students_customer_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.students USING btree (customer_id)",
         "name": "idx_students_customer_id"
       },
       {
-        "def": "CREATE INDEX idx_students_deleted_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)",
+        "def": "CREATE INDEX idx_students_deleted_at ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.students USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)",
         "name": "idx_students_deleted_at"
       },
       {
-        "def": "CREATE INDEX idx_students_intended_subject ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (intended_subject)",
+        "def": "CREATE INDEX idx_students_intended_subject ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.students USING btree (intended_subject)",
         "name": "idx_students_intended_subject"
       },
       {
-        "def": "CREATE INDEX idx_students_owner_sales ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (owner_sales_id) WHERE (owner_sales_id IS NOT NULL)",
+        "def": "CREATE INDEX idx_students_owner_sales ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.students USING btree (owner_sales_id) WHERE (owner_sales_id IS NOT NULL)",
         "name": "idx_students_owner_sales"
       },
       {
-        "def": "CREATE UNIQUE INDEX students_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (id)",
+        "def": "CREATE UNIQUE INDEX students_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.students USING btree (id)",
         "name": "students_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161763_10_not_null",
+        "name": "190348_190433_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161763_11_not_null",
+        "name": "190348_190433_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161763_12_not_null",
+        "name": "190348_190433_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161763_13_not_null",
+        "name": "190348_190433_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161763_14_not_null",
+        "name": "190348_190433_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161763_1_not_null",
+        "name": "190348_190433_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161763_2_not_null",
+        "name": "190348_190433_2_not_null",
         "type": "CHECK"
       },
       {
@@ -6095,29 +6095,29 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_tr_avg_stars ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_ratings USING btree (avg_stars DESC NULLS LAST)",
+        "def": "CREATE INDEX idx_tr_avg_stars ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.teacher_ratings USING btree (avg_stars DESC NULLS LAST)",
         "name": "idx_tr_avg_stars"
       },
       {
-        "def": "CREATE UNIQUE INDEX teacher_ratings_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_ratings USING btree (teacher_id)",
+        "def": "CREATE UNIQUE INDEX teacher_ratings_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.teacher_ratings USING btree (teacher_id)",
         "name": "teacher_ratings_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162576_10_not_null",
+        "name": "190348_191246_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162576_1_not_null",
+        "name": "190348_191246_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162576_2_not_null",
+        "name": "190348_191246_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162576_3_not_null",
+        "name": "190348_191246_3_not_null",
         "type": "CHECK"
       },
       {
@@ -6205,49 +6205,49 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_tsm_disp_rec_count ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_showcase_meta USING btree (displayed_recommendations_count DESC)",
+        "def": "CREATE INDEX idx_tsm_disp_rec_count ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.teacher_showcase_meta USING btree (displayed_recommendations_count DESC)",
         "name": "idx_tsm_disp_rec_count"
       },
       {
-        "def": "CREATE INDEX idx_tsm_trial_available ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_showcase_meta USING btree (trial_available) WHERE (trial_available = true)",
+        "def": "CREATE INDEX idx_tsm_trial_available ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.teacher_showcase_meta USING btree (trial_available) WHERE (trial_available = true)",
         "name": "idx_tsm_trial_available"
       },
       {
-        "def": "CREATE INDEX idx_tsm_updated_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_showcase_meta USING btree (updated_at DESC)",
+        "def": "CREATE INDEX idx_tsm_updated_at ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.teacher_showcase_meta USING btree (updated_at DESC)",
         "name": "idx_tsm_updated_at"
       },
       {
-        "def": "CREATE UNIQUE INDEX teacher_showcase_meta_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_showcase_meta USING btree (teacher_id)",
+        "def": "CREATE UNIQUE INDEX teacher_showcase_meta_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.teacher_showcase_meta USING btree (teacher_id)",
         "name": "teacher_showcase_meta_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162684_1_not_null",
+        "name": "190348_191354_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162684_4_not_null",
+        "name": "190348_191354_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162684_5_not_null",
+        "name": "190348_191354_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162684_6_not_null",
+        "name": "190348_191354_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162684_7_not_null",
+        "name": "190348_191354_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162684_8_not_null",
+        "name": "190348_191354_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162684_9_not_null",
+        "name": "190348_191354_9_not_null",
         "type": "CHECK"
       },
       {
@@ -6319,12 +6319,6 @@
         "nullable": true
       },
       {
-        "name": "hourly_price_yuan",
-        "type": "numeric",
-        "default": null,
-        "nullable": true
-      },
-      {
         "name": "status",
         "type": "character varying",
         "default": "'在职'::character varying",
@@ -6369,61 +6363,61 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_teachers_campus_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teachers USING btree (campus_id)",
+        "def": "CREATE INDEX idx_teachers_campus_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.teachers USING btree (campus_id)",
         "name": "idx_teachers_campus_id"
       },
       {
-        "def": "CREATE INDEX idx_teachers_deleted_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teachers USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)",
+        "def": "CREATE INDEX idx_teachers_deleted_at ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.teachers USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)",
         "name": "idx_teachers_deleted_at"
       },
       {
-        "def": "CREATE INDEX idx_teachers_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teachers USING btree (status)",
+        "def": "CREATE INDEX idx_teachers_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.teachers USING btree (status)",
         "name": "idx_teachers_status"
       },
       {
-        "def": "CREATE INDEX idx_teachers_user_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teachers USING btree (user_id)",
+        "def": "CREATE INDEX idx_teachers_user_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.teachers USING btree (user_id)",
         "name": "idx_teachers_user_id"
       },
       {
-        "def": "CREATE UNIQUE INDEX teachers_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teachers USING btree (id)",
+        "def": "CREATE UNIQUE INDEX teachers_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.teachers USING btree (id)",
         "name": "teachers_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_162077_10_not_null",
+        "name": "190348_190747_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162077_11_not_null",
+        "name": "190348_190747_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162077_12_not_null",
+        "name": "190348_190747_12_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162077_13_not_null",
+        "name": "190348_190747_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162077_1_not_null",
+        "name": "190348_190747_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162077_2_not_null",
+        "name": "190348_190747_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162077_3_not_null",
+        "name": "190348_190747_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162077_6_not_null",
+        "name": "190348_190747_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_162077_9_not_null",
+        "name": "190348_190747_9_not_null",
         "type": "CHECK"
       },
       {
@@ -6562,73 +6556,73 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_trial_campus_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.trial_lessons USING btree (campus_id)",
+        "def": "CREATE INDEX idx_trial_campus_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.trial_lessons USING btree (campus_id)",
         "name": "idx_trial_campus_id"
       },
       {
-        "def": "CREATE INDEX idx_trial_opp_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.trial_lessons USING btree (opportunity_id)",
+        "def": "CREATE INDEX idx_trial_opp_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.trial_lessons USING btree (opportunity_id)",
         "name": "idx_trial_opp_id"
       },
       {
-        "def": "CREATE INDEX idx_trial_schedule_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.trial_lessons USING btree (schedule_at)",
+        "def": "CREATE INDEX idx_trial_schedule_at ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.trial_lessons USING btree (schedule_at)",
         "name": "idx_trial_schedule_at"
       },
       {
-        "def": "CREATE INDEX idx_trial_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.trial_lessons USING btree (status)",
+        "def": "CREATE INDEX idx_trial_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.trial_lessons USING btree (status)",
         "name": "idx_trial_status"
       },
       {
-        "def": "CREATE UNIQUE INDEX trial_lessons_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.trial_lessons USING btree (id)",
+        "def": "CREATE UNIQUE INDEX trial_lessons_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.trial_lessons USING btree (id)",
         "name": "trial_lessons_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161802_13_not_null",
+        "name": "190348_190472_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161802_14_not_null",
+        "name": "190348_190472_14_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161802_15_not_null",
+        "name": "190348_190472_15_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161802_16_not_null",
+        "name": "190348_190472_16_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161802_1_not_null",
+        "name": "190348_190472_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161802_2_not_null",
+        "name": "190348_190472_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161802_3_not_null",
+        "name": "190348_190472_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161802_4_not_null",
+        "name": "190348_190472_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161802_6_not_null",
+        "name": "190348_190472_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161802_7_not_null",
+        "name": "190348_190472_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161802_8_not_null",
+        "name": "190348_190472_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161802_9_not_null",
+        "name": "190348_190472_9_not_null",
         "type": "CHECK"
       },
       {
@@ -6759,77 +6753,77 @@
     ],
     "indexes": [
       {
-        "def": "CREATE INDEX idx_users_campus_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (campus_id)",
+        "def": "CREATE INDEX idx_users_campus_id ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.users USING btree (campus_id)",
         "name": "idx_users_campus_id"
       },
       {
-        "def": "CREATE INDEX idx_users_deleted_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)",
+        "def": "CREATE INDEX idx_users_deleted_at ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.users USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)",
         "name": "idx_users_deleted_at"
       },
       {
-        "def": "CREATE INDEX idx_users_role ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (role)",
+        "def": "CREATE INDEX idx_users_role ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.users USING btree (role)",
         "name": "idx_users_role"
       },
       {
-        "def": "CREATE INDEX idx_users_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (status)",
+        "def": "CREATE INDEX idx_users_status ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.users USING btree (status)",
         "name": "idx_users_status"
       },
       {
-        "def": "CREATE UNIQUE INDEX users_mobile_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (mobile)",
+        "def": "CREATE UNIQUE INDEX users_mobile_key ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.users USING btree (mobile)",
         "name": "users_mobile_key"
       },
       {
-        "def": "CREATE UNIQUE INDEX users_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (id)",
+        "def": "CREATE UNIQUE INDEX users_pkey ON tenant_00mpc3mzjlf01h27joi3vzlfgvbbquub.users USING btree (id)",
         "name": "users_pkey"
       }
     ],
     "constraints": [
       {
-        "name": "161678_161689_10_not_null",
+        "name": "190348_190359_10_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161689_11_not_null",
+        "name": "190348_190359_11_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161689_13_not_null",
+        "name": "190348_190359_13_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161689_1_not_null",
+        "name": "190348_190359_1_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161689_2_not_null",
+        "name": "190348_190359_2_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161689_3_not_null",
+        "name": "190348_190359_3_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161689_4_not_null",
+        "name": "190348_190359_4_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161689_5_not_null",
+        "name": "190348_190359_5_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161689_6_not_null",
+        "name": "190348_190359_6_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161689_7_not_null",
+        "name": "190348_190359_7_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161689_8_not_null",
+        "name": "190348_190359_8_not_null",
         "type": "CHECK"
       },
       {
-        "name": "161678_161689_9_not_null",
+        "name": "190348_190359_9_not_null",
         "type": "CHECK"
       },
       {

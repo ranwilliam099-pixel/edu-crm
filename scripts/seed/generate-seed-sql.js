@@ -594,7 +594,11 @@ function buildSpec(opts) {
       owner_user_id: salesUsers.length > 0 ? salesUsers[i % salesUsers.length].id : null,
       opportunity_id: null,
       signed_at: new Date(Date.now() - i * 86400 * 1000).toISOString(),
-      status: i < pendingScheduleContractCount ? 'pending_schedule' : 'active',
+      // Day 2 Phase A P0-3 fix: contracts.status CHECK (V25 line 71) 允许 'pending'/'active'/'expired'/'cancelled'
+      //   原 'pending_schedule' 不在枚举内 → 23514 CHECK violation (demo-sales-active seed 失败根因)
+      //   语义保持: 「待教务接单」用 status='pending' + paid_locked=FALSE 表达，前端工作台
+      //   按 status='pending' AND paid_locked=FALSE 筛选「待教务排课」列表（业务侧无变更）
+      status: i < pendingScheduleContractCount ? 'pending' : 'active',
       activated_at: null,
       campus_id: campusIds[i % campusIds.length],
     });
@@ -711,30 +715,89 @@ function buildSpec(opts) {
   }
 
   // ---- invoices ----
+  // Day 2 Phase A P0-3 fix: V42 idx_invoices_contract_unique_active 唯一索引限制
+  //   `WHERE status IN ('pending', 'issued')` — 1 contract 最多 1 个 active (pending/issued) invoice
+  //   原 generator (i % contracts.length) 让 invoice 0/8 都指向 contract[0] 且都是 active →
+  //   23505 unique violation (demo-finance-invoice seed 失败根因)
+  //   修：active invoice (status='issued' 或 'pending') 严格每 contract 至多 1 个，
+  //       cancelled invoice 允许同 contract 多个（partial UNIQUE 排除 cancelled）
+  //   策略：先把 issued + pending 各分 1 个到不同 contracts；cancelled 余量 round-robin
+  //   demo-finance-invoice: 8 contract, 10 invoice → 7 issued + 2 pending + 1 cancelled
+  //                      = 9 active 占 9 contract? 但只有 8 个 → 改成 7 issued + 1 pending + 2 cancelled
+  //                      = 8 active 占 8 contract ✓
   const invoices = [];
-  for (let i = 0; i < invoiceCount; i++) {
-    if (contracts.length === 0) break;
-    const ct = contracts[i % contracts.length];
-    let status;
-    if (i < 7) status = 'issued';
-    else if (i < 9) status = 'pending';
-    else status = 'cancelled';
-    invoices.push({
-      id: deterministicUlid('invoice', i),
-      contract_id: ct.id,
-      student_id: ct.student_id,
-      customer_id: students.find(s => s.id === ct.student_id)?.customer_id || null,
-      title_type: i % 2 === 0 ? '个人' : '企业',
-      invoice_title: `开票抬头-${i + 1}`,
-      tax_id: i % 2 === 1 ? `91500000${String(100000000 + i).slice(0, 9)}MA` : null,
-      receive_email: `invoice-${i}@demo.local`,
-      receive_phone: `138${String(20000000 + i).padStart(8, '0')}`,
-      amount: 3000,
-      status,
-      created_by_user_id: users.find(u => u.role === 'finance')?.id || admin.userId,
-      issued_at: status === 'issued' ? new Date().toISOString() : null,
-      cancelled_at: status === 'cancelled' ? new Date().toISOString() : null,
-    });
+  if (invoiceCount > 0 && contracts.length > 0) {
+    // 拍板：active = min(invoiceCount * 0.7 + invoiceCount * 0.2 cap by contracts.length, contracts.length)
+    // 直接策略：active 数 = min(invoiceCount, contracts.length)；剩 invoiceCount - active 全部 cancelled
+    const activeCount = Math.min(invoiceCount, contracts.length);
+    const cancelledCount = invoiceCount - activeCount;
+    // active 中前 ~78% 'issued'，剩 'pending'（保持原比例 7:2）
+    const issuedCount = Math.min(7, activeCount);
+    const pendingCount = activeCount - issuedCount;
+    let invoiceIdx = 0;
+    // issued: 占用 contract[0..issuedCount-1]
+    for (let i = 0; i < issuedCount; i++) {
+      const ct = contracts[i];
+      invoices.push({
+        id: deterministicUlid('invoice', invoiceIdx),
+        contract_id: ct.id,
+        student_id: ct.student_id,
+        customer_id: students.find(s => s.id === ct.student_id)?.customer_id || null,
+        title_type: invoiceIdx % 2 === 0 ? '个人' : '企业',
+        invoice_title: `开票抬头-${invoiceIdx + 1}`,
+        tax_id: invoiceIdx % 2 === 1 ? `91500000${String(100000000 + invoiceIdx).slice(0, 9)}MA` : null,
+        receive_email: `invoice-${invoiceIdx}@demo.local`,
+        receive_phone: `138${String(20000000 + invoiceIdx).padStart(8, '0')}`,
+        amount: 3000,
+        status: 'issued',
+        created_by_user_id: users.find(u => u.role === 'finance')?.id || admin.userId,
+        issued_at: new Date().toISOString(),
+        cancelled_at: null,
+      });
+      invoiceIdx++;
+    }
+    // pending: 占用 contract[issuedCount..activeCount-1]（绝不与 issued 重叠 contract）
+    for (let i = 0; i < pendingCount; i++) {
+      const ct = contracts[issuedCount + i];
+      invoices.push({
+        id: deterministicUlid('invoice', invoiceIdx),
+        contract_id: ct.id,
+        student_id: ct.student_id,
+        customer_id: students.find(s => s.id === ct.student_id)?.customer_id || null,
+        title_type: invoiceIdx % 2 === 0 ? '个人' : '企业',
+        invoice_title: `开票抬头-${invoiceIdx + 1}`,
+        tax_id: invoiceIdx % 2 === 1 ? `91500000${String(100000000 + invoiceIdx).slice(0, 9)}MA` : null,
+        receive_email: `invoice-${invoiceIdx}@demo.local`,
+        receive_phone: `138${String(20000000 + invoiceIdx).padStart(8, '0')}`,
+        amount: 3000,
+        status: 'pending',
+        created_by_user_id: users.find(u => u.role === 'finance')?.id || admin.userId,
+        issued_at: null,
+        cancelled_at: null,
+      });
+      invoiceIdx++;
+    }
+    // cancelled: round-robin contracts，因为 partial UNIQUE 不约束 cancelled
+    for (let i = 0; i < cancelledCount; i++) {
+      const ct = contracts[i % contracts.length];
+      invoices.push({
+        id: deterministicUlid('invoice', invoiceIdx),
+        contract_id: ct.id,
+        student_id: ct.student_id,
+        customer_id: students.find(s => s.id === ct.student_id)?.customer_id || null,
+        title_type: invoiceIdx % 2 === 0 ? '个人' : '企业',
+        invoice_title: `开票抬头-${invoiceIdx + 1}`,
+        tax_id: invoiceIdx % 2 === 1 ? `91500000${String(100000000 + invoiceIdx).slice(0, 9)}MA` : null,
+        receive_email: `invoice-${invoiceIdx}@demo.local`,
+        receive_phone: `138${String(20000000 + invoiceIdx).padStart(8, '0')}`,
+        amount: 3000,
+        status: 'cancelled',
+        created_by_user_id: users.find(u => u.role === 'finance')?.id || admin.userId,
+        issued_at: null,
+        cancelled_at: new Date().toISOString(),
+      });
+      invoiceIdx++;
+    }
   }
 
   // ---- parent_referrals ----

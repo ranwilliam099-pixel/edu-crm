@@ -34,7 +34,7 @@ export class CourseConsumptionService {
    * schedule.completed 时为每个 present/late 学员创建一条 course_consumptions
    *
    * @param scheduleEndAt 排课结束时间（用于计算 feedback_due_at = end_at + 24h）
-   * @param amountYuan 课消金额（来自 teacher.hourly_price_yuan × duration_hour；V39 列已 RENAME from hourly_rate_yuan）
+   * @param amountYuan 课消金额（V50 2026-05-19 X1 拍板：从合同 contract.coursePrice/lessonHours 带价，不再用 teacher.hourly_price_yuan — 已物理删除）
    */
   createConsumption(input: {
     id: string;

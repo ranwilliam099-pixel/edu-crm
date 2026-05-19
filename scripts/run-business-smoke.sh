@@ -329,6 +329,72 @@ if [[ -z "$SALES_TOKEN" ]]; then
 fi
 
 # ============================================================
+# Inspect demo tenant — Day 2 Phase A P0-4 fix
+# ============================================================
+# 原 P0-4 缺口：smoke 需要 DEMO_CAMPUS_ID / DEMO_STUDENT_ID / DEMO_TEACHER_ID / DEMO_CONTRACT_ID /
+#   DEMO_SCHEDULE_ID / DEMO_COURSE_PRODUCT_ID 共 6 个 ENV 才能跑 Case 2-5；
+#   原方案依赖 seed-demo-data.sh 输出 ENV 文件 source，但 demo-empty / demo-archived / demo-frozen
+#   等 seed 量为 0 的 tenant 拿不到，且 ENV 注入易丢链路。
+# 修复：smoke 启动后直接从 PG 查 demo tenant 的第一行数据 ID，避免依赖 ENV var injection。
+#   - 任 1 缺失 → 输出 MISSING，继续跑（后续 case 自然 fail 报详细原因）
+#   - 已有 ENV 设置 → 不覆盖（允许显式注入）
+#   - 用 ssh pdfserver psql；如本机直跑（CI 模式）改用 PGPASSWORD/PG_DSN
+echo ""
+echo "[Inspect] 从 PG 查 demo tenant 业务 ID（避免 ENV var injection 缺失）"
+
+# Day 2 Phase A P0-4 fix: 内嵌 pg_select 用临时关闭 ERR trap（防 SSH 不可达或 psql 缺失时 fatal exit）
+# - 优先 psql（本机直跑/CI 模式）
+# - fallback ssh pdfserver psql（dev 机器跑 smoke 验证生产数据）
+# - 全部不可达 → 输出空字符串，让后续 case 报「missing ID」而不是脚本 abort
+_inspect_pg_select() {
+  local table="$1"
+  local q="SELECT id FROM ${TENANT_SCHEMA}.${table} ORDER BY created_at LIMIT 1"
+  local result=""
+  # 优先 sudo -u postgres psql（生产 host 本地路径）
+  if command -v sudo >/dev/null 2>&1 && command -v psql >/dev/null 2>&1; then
+    result=$(sudo -u "${PG_USER_OS:-postgres}" psql -d "${PG_DB:-edu}" -tA -c "$q" 2>/dev/null | tr -d ' \r' | head -1) || result=""
+  fi
+  # fallback 本机直 psql（CI dev 环境，PGUSER/PGPASSWORD 已配）
+  if [[ -z "$result" ]] && command -v psql >/dev/null 2>&1; then
+    result=$(psql -d "${PG_DB:-edu}" -tA -c "$q" 2>/dev/null | tr -d ' \r' | head -1) || result=""
+  fi
+  # fallback ssh pdfserver psql（dev mac 跑 smoke 测生产数据）
+  if [[ -z "$result" ]] && command -v ssh >/dev/null 2>&1; then
+    if ssh -o ConnectTimeout=3 -o BatchMode=yes pdfserver "true" >/dev/null 2>&1; then
+      result=$(ssh pdfserver "sudo -u postgres psql -d edu -tA -c \"$q\"" 2>/dev/null | tr -d ' \r' | head -1) || result=""
+    fi
+  fi
+  echo "$result"
+}
+
+# 关键：内嵌调用 wrap 在子 shell 防 ERR trap 在 || 上炸（trap ERR 不传染子 shell）
+inspect_demo_ids() {
+  set +e  # 临时关闭，回调结尾再 set -e（注：本脚本 33 行未 set -e，但留兜底）
+  [[ -z "$DEMO_CAMPUS_ID" ]]         && DEMO_CAMPUS_ID=$(_inspect_pg_select "campuses")
+  [[ -z "$DEMO_STUDENT_ID" ]]        && DEMO_STUDENT_ID=$(_inspect_pg_select "students")
+  [[ -z "$DEMO_TEACHER_ID" ]]        && DEMO_TEACHER_ID=$(_inspect_pg_select "teachers")
+  [[ -z "$DEMO_CONTRACT_ID" ]]       && DEMO_CONTRACT_ID=$(_inspect_pg_select "contracts")
+  [[ -z "$DEMO_SCHEDULE_ID" ]]       && DEMO_SCHEDULE_ID=$(_inspect_pg_select "schedules")
+  [[ -z "$DEMO_COURSE_PRODUCT_ID" ]] && DEMO_COURSE_PRODUCT_ID=$(_inspect_pg_select "course_products")
+  return 0  # 显式 return 0 防 || trap
+}
+
+# 临时禁用 trap ERR 跑 inspect（防 SSH/psql 失败 trap → fatal exit）
+trap - ERR
+inspect_demo_ids || true
+# 恢复 trap ERR
+trap 'echo "[ERR] run-business-smoke.sh fatal at line $LINENO" >&2; exit 3' ERR
+
+echo "[Inspect] Demo IDs:"
+echo "  campus         = ${DEMO_CAMPUS_ID:-MISSING}"
+echo "  student        = ${DEMO_STUDENT_ID:-MISSING}"
+echo "  teacher        = ${DEMO_TEACHER_ID:-MISSING}"
+echo "  contract       = ${DEMO_CONTRACT_ID:-MISSING}"
+echo "  schedule       = ${DEMO_SCHEDULE_ID:-MISSING}"
+echo "  course_product = ${DEMO_COURSE_PRODUCT_ID:-MISSING}"
+echo ""
+
+# ============================================================
 # Case 2: POST /api/db/customers (sales)
 # ============================================================
 echo "[Case 2] POST /api/db/customers (sales)"
