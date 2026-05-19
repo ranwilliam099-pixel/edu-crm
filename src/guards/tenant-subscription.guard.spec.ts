@@ -139,6 +139,73 @@ describe('TenantSubscriptionGuard - T9-EPIC 14d 试用 / expired 数据只读', 
     });
   });
 
+  // ============================================================
+  // V49 扩展：archived + frozen 状态阻断（5/19 leader 决策 D1.1）
+  // ============================================================
+  it('archived 状态 → 抛 403 ForbiddenException 含 code=subscription_archived', async () => {
+    pg.query.mockResolvedValue([{ subscription_status: 'archived' }]);
+    const ctx = makeCtx({
+      method: 'POST',
+      user: { sub: 'u', role: 'sales', tenantId: 't1', campusId: 'c1' },
+    });
+    let caught: unknown;
+    try {
+      await guard.canActivate(ctx);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ForbiddenException);
+    const response = (caught as ForbiddenException).getResponse();
+    expect(response).toMatchObject({
+      code: 'subscription_archived',
+      message: expect.stringContaining('归档'),
+    });
+    expect(pg.query).toHaveBeenCalledWith(
+      expect.stringContaining('SELECT subscription_status FROM public.tenants'),
+      ['t1'],
+    );
+  });
+
+  it('frozen 状态 → 抛 403 ForbiddenException 含 code=subscription_frozen', async () => {
+    pg.query.mockResolvedValue([{ subscription_status: 'frozen' }]);
+    const ctx = makeCtx({
+      method: 'POST',
+      user: { sub: 'u', role: 'sales', tenantId: 't1', campusId: 'c1' },
+    });
+    let caught: unknown;
+    try {
+      await guard.canActivate(ctx);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ForbiddenException);
+    const response = (caught as ForbiddenException).getResponse();
+    expect(response).toMatchObject({
+      code: 'subscription_frozen',
+      message: expect.stringContaining('冻结'),
+    });
+  });
+
+  it('archived + GET 请求 → 放行（数据只读保护语义）', async () => {
+    const ctx = makeCtx({
+      method: 'GET',
+      url: '/api/db/students',
+      user: { sub: 'u', role: 'sales', tenantId: 't1', campusId: 'c1' },
+    });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(pg.query).not.toHaveBeenCalled();
+  });
+
+  it('frozen + GET 请求 → 放行（同 expired 早退分支）', async () => {
+    const ctx = makeCtx({
+      method: 'GET',
+      url: '/api/db/students',
+      user: { sub: 'u', role: 'sales', tenantId: 't1', campusId: 'c1' },
+    });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(pg.query).not.toHaveBeenCalled();
+  });
+
   it('DB query 抛错 → fail-open 放行（与 audit_log 一致）', async () => {
     pg.query.mockRejectedValueOnce(new Error('PG down'));
     const ctx = makeCtx({

@@ -1,0 +1,6867 @@
+{
+  "version": "V49",
+  "snapshotAt": "2026-05-19T03:16:21Z",
+  "sourceTenant": "tenant_00mpc1iaalyglk4uajazfswn1fharrlq",
+  "tables": [
+  {
+    "name": "assessments",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "title",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "subject",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "assessment_type",
+        "type": "character varying",
+        "default": "'月考'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "total_score",
+        "type": "numeric",
+        "default": "100",
+        "nullable": false
+      },
+      {
+        "name": "scheduled_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'draft'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX assessments_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.assessments USING btree (id)",
+        "name": "assessments_pkey"
+      },
+      {
+        "def": "CREATE INDEX idx_as_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.assessments USING btree (status)",
+        "name": "idx_as_status"
+      },
+      {
+        "def": "CREATE INDEX idx_as_teacher ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.assessments USING btree (teacher_id, scheduled_at DESC)",
+        "name": "idx_as_teacher"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162425_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162425_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162425_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162425_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162425_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162425_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162425_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162425_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162425_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "assessments_assessment_type_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "assessments_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "assessments_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "assessments_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "assessments_total_score_check",
+        "type": "CHECK"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "assessments_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "assignment_recipients",
+    "columns": [
+      {
+        "name": "assignment_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX assignment_recipients_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.assignment_recipients USING btree (assignment_id, student_id)",
+        "name": "assignment_recipients_pkey"
+      },
+      {
+        "def": "CREATE INDEX idx_ar_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.assignment_recipients USING btree (student_id)",
+        "name": "idx_ar_student"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162382_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162382_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "assignment_recipients_assignment_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "assignment_recipients_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "assignment_recipients_student_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "assignment_recipients_assignment_id_fkey",
+        "column": "assignment_id",
+        "onDelete": "CASCADE",
+        "refTable": "homework_assignments",
+        "refColumn": "id"
+      },
+      {
+        "name": "assignment_recipients_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "campuses",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "name",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'启用'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "address",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX campuses_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.campuses USING btree (id)",
+        "name": "campuses_pkey"
+      },
+      {
+        "def": "CREATE INDEX idx_campuses_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.campuses USING btree (status)",
+        "name": "idx_campuses_status"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161679_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161679_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161679_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161679_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161679_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161679_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161679_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "campuses_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "campuses_status_check",
+        "type": "CHECK"
+      }
+    ],
+    "foreignKeys": []
+  },
+  {
+    "name": "contracts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "course_product_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "class_type",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "lesson_hours",
+        "type": "integer",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "standard_price",
+        "type": "numeric",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "discount_amount",
+        "type": "numeric",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "gift_hours",
+        "type": "integer",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "total_amount",
+        "type": "numeric",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "order_type",
+        "type": "character varying",
+        "default": "'新签'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "paid_locked",
+        "type": "boolean",
+        "default": "false",
+        "nullable": false
+      },
+      {
+        "name": "reverse_from_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "reverse_type",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "deleted_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "course_product_name_snapshot",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "course_line_snapshot",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "class_type_snapshot",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "standard_price_snapshot",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "owner_user_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "opportunity_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "signed_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'pending'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "activated_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "campus_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "owner_changed_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "owner_change_reason",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "course_product_name",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "invoice_issued",
+        "type": "boolean",
+        "default": "false",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX contracts_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (id)",
+        "name": "contracts_pkey"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_campus ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (campus_id, signed_at DESC)",
+        "name": "idx_contracts_campus"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_course_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (course_product_id)",
+        "name": "idx_contracts_course_id"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_course_name ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (course_product_name) WHERE (course_product_name IS NOT NULL)",
+        "name": "idx_contracts_course_name"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_order_type ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (order_type)",
+        "name": "idx_contracts_order_type"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_owner ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (owner_user_id, signed_at DESC)",
+        "name": "idx_contracts_owner"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_owner_changed ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (owner_changed_at DESC) WHERE (owner_changed_at IS NOT NULL)",
+        "name": "idx_contracts_owner_changed"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_paid_locked ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (paid_locked)",
+        "name": "idx_contracts_paid_locked"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_pending_invoice ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (signed_at DESC) WHERE ((invoice_issued = false) AND (deleted_at IS NULL))",
+        "name": "idx_contracts_pending_invoice"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_reverse_from ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (reverse_from_id)",
+        "name": "idx_contracts_reverse_from"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_signed_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (signed_at DESC) WHERE (signed_at IS NOT NULL)",
+        "name": "idx_contracts_signed_at"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (status)",
+        "name": "idx_contracts_status"
+      },
+      {
+        "def": "CREATE INDEX idx_contracts_student_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.contracts USING btree (student_id)",
+        "name": "idx_contracts_student_id"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161848_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_15_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_16_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_17_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_26_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_32_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161848_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "contracts_campus_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "contracts_course_product_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "contracts_discount_amount_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "contracts_gift_hours_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "contracts_lesson_hours_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "contracts_opportunity_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "contracts_order_type_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "contracts_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "contracts_reverse_type_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "contracts_standard_price_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "contracts_standard_price_snapshot_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "contracts_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "contracts_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "contracts_total_amount_check",
+        "type": "CHECK"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "contracts_campus_id_fkey",
+        "column": "campus_id",
+        "onDelete": "NO ACTION",
+        "refTable": "campuses",
+        "refColumn": "id"
+      },
+      {
+        "name": "contracts_course_product_id_fkey",
+        "column": "course_product_id",
+        "onDelete": "NO ACTION",
+        "refTable": "course_products",
+        "refColumn": "id"
+      },
+      {
+        "name": "contracts_opportunity_id_fkey",
+        "column": "opportunity_id",
+        "onDelete": "NO ACTION",
+        "refTable": "opportunities",
+        "refColumn": "id"
+      },
+      {
+        "name": "contracts_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "course_consumptions",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "schedule_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'pending_feedback'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "amount_yuan",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "feedback_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "feedback_due_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "confirmed_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "locked_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX course_consumptions_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_consumptions USING btree (id)",
+        "name": "course_consumptions_pkey"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX course_consumptions_schedule_id_student_id_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_consumptions USING btree (schedule_id, student_id)",
+        "name": "course_consumptions_schedule_id_student_id_key"
+      },
+      {
+        "def": "CREATE INDEX idx_cc_status_due ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_consumptions USING btree (status, feedback_due_at) WHERE ((status)::text = 'pending_feedback'::text)",
+        "name": "idx_cc_status_due"
+      },
+      {
+        "def": "CREATE INDEX idx_cc_teacher_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_consumptions USING btree (teacher_id, status)",
+        "name": "idx_cc_teacher_status"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162270_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162270_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162270_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162270_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162270_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162270_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162270_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "course_consumptions_feedback_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "course_consumptions_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "course_consumptions_schedule_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "course_consumptions_schedule_id_student_id_key",
+        "type": "UNIQUE"
+      },
+      {
+        "name": "course_consumptions_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "course_consumptions_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "course_consumptions_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "course_consumptions_feedback_id_fkey",
+        "column": "feedback_id",
+        "onDelete": "NO ACTION",
+        "refTable": "lesson_feedbacks",
+        "refColumn": "id"
+      },
+      {
+        "name": "course_consumptions_schedule_id_fkey",
+        "column": "schedule_id",
+        "onDelete": "NO ACTION",
+        "refTable": "schedules",
+        "refColumn": "id"
+      },
+      {
+        "name": "course_consumptions_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      },
+      {
+        "name": "course_consumptions_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "course_packages",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "course_product_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "name",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "total_lessons",
+        "type": "integer",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "unit_price_yuan",
+        "type": "numeric",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "total_price_yuan",
+        "type": "numeric",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "validity_months",
+        "type": "integer",
+        "default": "12",
+        "nullable": false
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'active'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX course_packages_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_packages USING btree (id)",
+        "name": "course_packages_pkey"
+      },
+      {
+        "def": "CREATE INDEX idx_cp_product ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_packages USING btree (course_product_id)",
+        "name": "idx_cp_product"
+      },
+      {
+        "def": "CREATE INDEX idx_cp_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_packages USING btree (status)",
+        "name": "idx_cp_status"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162302_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162302_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162302_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162302_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162302_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162302_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162302_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162302_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162302_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162302_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162302_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162302_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "course_packages_course_product_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "course_packages_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "course_packages_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "course_packages_total_lessons_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "course_packages_total_price_yuan_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "course_packages_unit_price_yuan_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "course_packages_validity_months_check",
+        "type": "CHECK"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "course_packages_course_product_id_fkey",
+        "column": "course_product_id",
+        "onDelete": "NO ACTION",
+        "refTable": "course_products",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "course_products",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "product_name",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "course_line",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "class_type",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "lesson_package",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "standard_price",
+        "type": "numeric",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "campus_scope",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'上架'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX course_products_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_products USING btree (id)",
+        "name": "course_products_pkey"
+      },
+      {
+        "def": "CREATE INDEX idx_courseproducts_course_line ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_products USING btree (course_line)",
+        "name": "idx_courseproducts_course_line"
+      },
+      {
+        "def": "CREATE INDEX idx_courseproducts_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_products USING btree (status)",
+        "name": "idx_courseproducts_status"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX uq_courseproducts_name_active ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.course_products USING btree (product_name) WHERE ((status)::text = '上架'::text)",
+        "name": "uq_courseproducts_name_active"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161830_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161830_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161830_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161830_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161830_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161830_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161830_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161830_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161830_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161830_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "course_products_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "course_products_standard_price_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "course_products_status_check",
+        "type": "CHECK"
+      }
+    ],
+    "foreignKeys": []
+  },
+  {
+    "name": "customer_follow_log",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "opportunity_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "follow_type",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "label",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "by_user_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "by_label",
+        "type": "character varying",
+        "default": "'系统'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "occurred_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "extra_json",
+        "type": "jsonb",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX customer_follow_log_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customer_follow_log USING btree (id)",
+        "name": "customer_follow_log_pkey"
+      },
+      {
+        "def": "CREATE INDEX idx_cfl_by_user ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customer_follow_log USING btree (by_user_id, occurred_at DESC) WHERE (by_user_id IS NOT NULL)",
+        "name": "idx_cfl_by_user"
+      },
+      {
+        "def": "CREATE INDEX idx_cfl_opportunity ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customer_follow_log USING btree (opportunity_id, occurred_at DESC)",
+        "name": "idx_cfl_opportunity"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162609_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162609_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162609_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162609_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162609_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162609_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "customer_follow_log_follow_type_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "customer_follow_log_opportunity_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "customer_follow_log_pkey",
+        "type": "PRIMARY KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "customer_follow_log_opportunity_id_fkey",
+        "column": "opportunity_id",
+        "onDelete": "NO ACTION",
+        "refTable": "opportunities",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "customers",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "parent_name",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "primary_mobile",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "wechat_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "city",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "campus_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "family_tag",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "source_level1",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "owner_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "is_returning_customer",
+        "type": "boolean",
+        "default": "false",
+        "nullable": false
+      },
+      {
+        "name": "referrer_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "deleted_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "primary_mobile_hash",
+        "type": "bytea",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "primary_mobile_encrypted",
+        "type": "bytea",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX customers_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (id)",
+        "name": "customers_pkey"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX customers_primary_mobile_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (primary_mobile)",
+        "name": "customers_primary_mobile_key"
+      },
+      {
+        "def": "CREATE INDEX idx_customers_campus_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (campus_id)",
+        "name": "idx_customers_campus_id"
+      },
+      {
+        "def": "CREATE INDEX idx_customers_is_return ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (is_returning_customer)",
+        "name": "idx_customers_is_return"
+      },
+      {
+        "def": "CREATE INDEX idx_customers_owner_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (owner_id)",
+        "name": "idx_customers_owner_id"
+      },
+      {
+        "def": "CREATE INDEX idx_customers_primary_mobile_hash ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (primary_mobile_hash)",
+        "name": "idx_customers_primary_mobile_hash"
+      },
+      {
+        "def": "CREATE INDEX idx_customers_referrer_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.customers USING btree (referrer_id)",
+        "name": "idx_customers_referrer_id"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161736_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161736_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161736_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161736_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161736_15_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161736_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161736_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161736_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161736_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "customers_campus_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "customers_owner_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "customers_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "customers_primary_mobile_key",
+        "type": "UNIQUE"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "customers_campus_id_fkey",
+        "column": "campus_id",
+        "onDelete": "NO ACTION",
+        "refTable": "campuses",
+        "refColumn": "id"
+      },
+      {
+        "name": "customers_owner_id_fkey",
+        "column": "owner_id",
+        "onDelete": "NO ACTION",
+        "refTable": "users",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "homework_assignments",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "schedule_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "title",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "content",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "attachments",
+        "type": "jsonb",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "due_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "difficulty",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'published'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX homework_assignments_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_assignments USING btree (id)",
+        "name": "homework_assignments_pkey"
+      },
+      {
+        "def": "CREATE INDEX idx_ha_schedule ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_assignments USING btree (schedule_id)",
+        "name": "idx_ha_schedule"
+      },
+      {
+        "def": "CREATE INDEX idx_ha_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_assignments USING btree (status)",
+        "name": "idx_ha_status"
+      },
+      {
+        "def": "CREATE INDEX idx_ha_teacher ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_assignments USING btree (teacher_id, created_at DESC)",
+        "name": "idx_ha_teacher"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162357_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162357_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162357_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162357_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162357_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162357_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "homework_assignments_difficulty_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "homework_assignments_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "homework_assignments_schedule_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "homework_assignments_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "homework_assignments_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "homework_assignments_schedule_id_fkey",
+        "column": "schedule_id",
+        "onDelete": "NO ACTION",
+        "refTable": "schedules",
+        "refColumn": "id"
+      },
+      {
+        "name": "homework_assignments_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "homework_submissions",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "assignment_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "submitted_by_parent_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "content",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "attachments",
+        "type": "jsonb",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'submitted'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "grade",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "teacher_comment",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "graded_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "graded_by_user_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "submitted_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX homework_submissions_assignment_id_student_id_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_submissions USING btree (assignment_id, student_id)",
+        "name": "homework_submissions_assignment_id_student_id_key"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX homework_submissions_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_submissions USING btree (id)",
+        "name": "homework_submissions_pkey"
+      },
+      {
+        "def": "CREATE INDEX idx_hs_pending_grade ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_submissions USING btree (graded_at) WHERE ((status)::text = 'submitted'::text)",
+        "name": "idx_hs_pending_grade"
+      },
+      {
+        "def": "CREATE INDEX idx_hs_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_submissions USING btree (status)",
+        "name": "idx_hs_status"
+      },
+      {
+        "def": "CREATE INDEX idx_hs_student_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.homework_submissions USING btree (student_id, submitted_at DESC)",
+        "name": "idx_hs_student_time"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162398_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162398_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162398_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162398_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162398_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162398_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "homework_submissions_assignment_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "homework_submissions_assignment_id_student_id_key",
+        "type": "UNIQUE"
+      },
+      {
+        "name": "homework_submissions_grade_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "homework_submissions_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "homework_submissions_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "homework_submissions_student_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "homework_submissions_assignment_id_fkey",
+        "column": "assignment_id",
+        "onDelete": "NO ACTION",
+        "refTable": "homework_assignments",
+        "refColumn": "id"
+      },
+      {
+        "name": "homework_submissions_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "invoices",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "contract_id",
+        "type": "character",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "customer_id",
+        "type": "character",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "title_type",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "invoice_title",
+        "type": "text",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "invoice_title_encrypted",
+        "type": "bytea",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "tax_id",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "tax_id_encrypted",
+        "type": "bytea",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "receive_email",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "receive_phone",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "receive_phone_hash",
+        "type": "bytea",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "receive_phone_encrypted",
+        "type": "bytea",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "amount",
+        "type": "numeric",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "remark",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'pending'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "created_by_user_id",
+        "type": "character",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "issued_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "cancelled_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX idx_invoices_contract_unique_active ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.invoices USING btree (contract_id) WHERE ((status)::text = ANY ((ARRAY['pending'::character varying, 'issued'::character varying])::text[]))",
+        "name": "idx_invoices_contract_unique_active"
+      },
+      {
+        "def": "CREATE INDEX idx_invoices_status_created ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.invoices USING btree (status, created_at DESC)",
+        "name": "idx_invoices_status_created"
+      },
+      {
+        "def": "CREATE INDEX idx_invoices_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.invoices USING btree (student_id) WHERE (student_id IS NOT NULL)",
+        "name": "idx_invoices_student"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX invoices_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.invoices USING btree (id)",
+        "name": "invoices_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162707_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162707_16_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162707_17_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162707_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162707_20_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162707_21_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162707_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162707_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162707_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "invoices_amount_nonneg",
+        "type": "CHECK"
+      },
+      {
+        "name": "invoices_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "invoices_status_chk",
+        "type": "CHECK"
+      },
+      {
+        "name": "invoices_title_type_chk",
+        "type": "CHECK"
+      }
+    ],
+    "foreignKeys": []
+  },
+  {
+    "name": "leads",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "source_level1",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "source_level2",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "source_level3",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "campus_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "course_line",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "owner_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "first_contact_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "invalid_reason",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "enroll_attribution",
+        "type": "character varying",
+        "default": "'末次有效触点'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_leads_campus_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leads USING btree (campus_id)",
+        "name": "idx_leads_campus_id"
+      },
+      {
+        "def": "CREATE INDEX idx_leads_first_contact_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leads USING btree (first_contact_at)",
+        "name": "idx_leads_first_contact_at"
+      },
+      {
+        "def": "CREATE INDEX idx_leads_owner_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leads USING btree (owner_id)",
+        "name": "idx_leads_owner_id"
+      },
+      {
+        "def": "CREATE INDEX idx_leads_source_level1 ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leads USING btree (source_level1)",
+        "name": "idx_leads_source_level1"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX leads_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leads USING btree (id)",
+        "name": "leads_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161710_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161710_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161710_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161710_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161710_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161710_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161710_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161710_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161710_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "leads_campus_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "leads_enroll_attribution_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "leads_invalid_reason_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "leads_owner_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "leads_pkey",
+        "type": "PRIMARY KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "leads_campus_id_fkey",
+        "column": "campus_id",
+        "onDelete": "NO ACTION",
+        "refTable": "campuses",
+        "refColumn": "id"
+      },
+      {
+        "name": "leads_owner_id_fkey",
+        "column": "owner_id",
+        "onDelete": "NO ACTION",
+        "refTable": "users",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "leaves",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "lesson_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "type",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "reason",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "reason_note",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "new_date",
+        "type": "date",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "new_start_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'pending'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "reject_reason",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "decided_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_leaves_lesson ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leaves USING btree (lesson_id)",
+        "name": "idx_leaves_lesson"
+      },
+      {
+        "def": "CREATE INDEX idx_leaves_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leaves USING btree (status)",
+        "name": "idx_leaves_status"
+      },
+      {
+        "def": "CREATE INDEX idx_leaves_student_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leaves USING btree (student_id, created_at DESC)",
+        "name": "idx_leaves_student_time"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX leaves_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.leaves USING btree (id)",
+        "name": "leaves_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162486_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162486_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162486_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162486_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162486_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "leaves_lesson_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "leaves_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "leaves_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "leaves_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "leaves_type_check",
+        "type": "CHECK"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "leaves_lesson_id_fkey",
+        "column": "lesson_id",
+        "onDelete": "NO ACTION",
+        "refTable": "schedules",
+        "refColumn": "id"
+      },
+      {
+        "name": "leaves_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "lesson_feedbacks",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "schedule_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "attendance_status",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "classroom_performance",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "knowledge_points",
+        "type": "jsonb",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "homework",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "homework_attachments",
+        "type": "jsonb",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "teacher_note",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "teacher_internal_note",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "parent_read_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "submitted_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "knowledge_matrix",
+        "type": "jsonb",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "dim_ratings",
+        "type": "jsonb",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "homework_deadline",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "homework_difficulty",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "next_preview",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_lf_student_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.lesson_feedbacks USING btree (student_id, submitted_at DESC)",
+        "name": "idx_lf_student_time"
+      },
+      {
+        "def": "CREATE INDEX idx_lf_teacher_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.lesson_feedbacks USING btree (teacher_id, submitted_at DESC)",
+        "name": "idx_lf_teacher_time"
+      },
+      {
+        "def": "CREATE INDEX idx_lf_unread ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.lesson_feedbacks USING btree (parent_read_at) WHERE (parent_read_at IS NULL)",
+        "name": "idx_lf_unread"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX lesson_feedbacks_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.lesson_feedbacks USING btree (id)",
+        "name": "lesson_feedbacks_pkey"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX lesson_feedbacks_schedule_id_student_id_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.lesson_feedbacks USING btree (schedule_id, student_id)",
+        "name": "lesson_feedbacks_schedule_id_student_id_key"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162215_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162215_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162215_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162215_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162215_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162215_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162215_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162215_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "lesson_feedbacks_attendance_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "lesson_feedbacks_classroom_performance_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "lesson_feedbacks_homework_difficulty_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "lesson_feedbacks_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "lesson_feedbacks_schedule_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "lesson_feedbacks_schedule_id_student_id_key",
+        "type": "UNIQUE"
+      },
+      {
+        "name": "lesson_feedbacks_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "lesson_feedbacks_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "lesson_feedbacks_schedule_id_fkey",
+        "column": "schedule_id",
+        "onDelete": "NO ACTION",
+        "refTable": "schedules",
+        "refColumn": "id"
+      },
+      {
+        "name": "lesson_feedbacks_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      },
+      {
+        "name": "lesson_feedbacks_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "monthly_aggregates",
+    "columns": [
+      {
+        "name": "id",
+        "type": "bigint",
+        "default": "nextval('tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_aggregates_id_seq'::regclass)",
+        "nullable": false
+      },
+      {
+        "name": "entity_type",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "entity_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "month",
+        "type": "date",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "lessons_count",
+        "type": "integer",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "feedback_count",
+        "type": "integer",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "feedback_rate",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "avg_stars",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "revenue_yuan",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "new_signups",
+        "type": "integer",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "active_students",
+        "type": "integer",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "raw_json",
+        "type": "jsonb",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "computed_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_ma_entity_month ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_aggregates USING btree (entity_type, entity_id, month DESC)",
+        "name": "idx_ma_entity_month"
+      },
+      {
+        "def": "CREATE INDEX idx_ma_month ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_aggregates USING btree (month DESC)",
+        "name": "idx_ma_month"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX monthly_aggregates_entity_type_entity_id_month_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_aggregates USING btree (entity_type, entity_id, month)",
+        "name": "monthly_aggregates_entity_type_entity_id_month_key"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX monthly_aggregates_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_aggregates USING btree (id)",
+        "name": "monthly_aggregates_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162591_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162591_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162591_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162591_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162591_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "monthly_aggregates_entity_type_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "monthly_aggregates_entity_type_entity_id_month_key",
+        "type": "UNIQUE"
+      },
+      {
+        "name": "monthly_aggregates_pkey",
+        "type": "PRIMARY KEY"
+      }
+    ],
+    "foreignKeys": []
+  },
+  {
+    "name": "monthly_reports",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "month",
+        "type": "date",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "attendance_summary",
+        "type": "jsonb",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "performance_trend",
+        "type": "jsonb",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "knowledge_summary",
+        "type": "jsonb",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "teacher_blessing",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "renewal_suggestion",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'auto_generated'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "generated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "finalized_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "parent_read_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "parent_blessing",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "parent_highlights",
+        "type": "jsonb",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "parent_improvements",
+        "type": "jsonb",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "parent_next_plan",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "parent_finalized_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_mr_parent_pending ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_reports USING btree (student_id, month DESC) WHERE ((parent_finalized_at IS NULL) AND ((status)::text = 'teacher_finalized'::text))",
+        "name": "idx_mr_parent_pending"
+      },
+      {
+        "def": "CREATE INDEX idx_mr_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_reports USING btree (status)",
+        "name": "idx_mr_status"
+      },
+      {
+        "def": "CREATE INDEX idx_mr_student_month ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_reports USING btree (student_id, month DESC)",
+        "name": "idx_mr_student_month"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX monthly_reports_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_reports USING btree (id)",
+        "name": "monthly_reports_pkey"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX monthly_reports_student_id_month_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.monthly_reports USING btree (student_id, month)",
+        "name": "monthly_reports_student_id_month_key"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162246_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162246_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162246_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162246_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162246_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162246_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162246_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162246_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162246_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "monthly_reports_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "monthly_reports_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "monthly_reports_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "monthly_reports_student_id_month_key",
+        "type": "UNIQUE"
+      },
+      {
+        "name": "monthly_reports_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "monthly_reports_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      },
+      {
+        "name": "monthly_reports_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "opportunities",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "course_product_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "stage",
+        "type": "character varying",
+        "default": "'初步接触'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "quote_amount",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "intent_level",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "next_action",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "next_followup_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "signed_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "lost_reason",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "course_product_name_snapshot",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "course_line_snapshot",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "class_type_snapshot",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "standard_price_snapshot",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "owner_user_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "entered_pool_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "enter_pool_reason",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "last_contact_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "urgent",
+        "type": "boolean",
+        "default": "false",
+        "nullable": false
+      },
+      {
+        "name": "source",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "phone",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "wechat",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "note",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "campus_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "owner_changed_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "owner_change_reason",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "phone_encrypted",
+        "type": "bytea",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "wechat_encrypted",
+        "type": "bytea",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_opps_campus ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (campus_id)",
+        "name": "idx_opps_campus"
+      },
+      {
+        "def": "CREATE INDEX idx_opps_course_product_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (course_product_id)",
+        "name": "idx_opps_course_product_id"
+      },
+      {
+        "def": "CREATE INDEX idx_opps_intent_level ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (intent_level)",
+        "name": "idx_opps_intent_level"
+      },
+      {
+        "def": "CREATE INDEX idx_opps_last_contact ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (last_contact_at) WHERE ((owner_user_id IS NOT NULL) AND ((stage)::text <> ALL ((ARRAY['已报名'::character varying, '已失单'::character varying])::text[])))",
+        "name": "idx_opps_last_contact"
+      },
+      {
+        "def": "CREATE INDEX idx_opps_next_followup_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (next_followup_at)",
+        "name": "idx_opps_next_followup_at"
+      },
+      {
+        "def": "CREATE INDEX idx_opps_owner ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (owner_user_id)",
+        "name": "idx_opps_owner"
+      },
+      {
+        "def": "CREATE INDEX idx_opps_owner_campus ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (owner_user_id, campus_id) WHERE (owner_user_id IS NOT NULL)",
+        "name": "idx_opps_owner_campus"
+      },
+      {
+        "def": "CREATE INDEX idx_opps_owner_changed ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (owner_changed_at DESC) WHERE (owner_changed_at IS NOT NULL)",
+        "name": "idx_opps_owner_changed"
+      },
+      {
+        "def": "CREATE INDEX idx_opps_pool ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (entered_pool_at) WHERE (owner_user_id IS NULL)",
+        "name": "idx_opps_pool"
+      },
+      {
+        "def": "CREATE INDEX idx_opps_stage ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (stage)",
+        "name": "idx_opps_stage"
+      },
+      {
+        "def": "CREATE INDEX idx_opps_student_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (student_id)",
+        "name": "idx_opps_student_id"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX opportunities_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.opportunities USING btree (id)",
+        "name": "opportunities_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161780_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161780_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161780_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161780_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161780_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161780_23_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161780_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161780_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "fk_opps_course_product",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "opportunities_campus_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "opportunities_intent_level_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "opportunities_lost_reason_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "opportunities_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "opportunities_quote_amount_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "opportunities_stage_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "opportunities_standard_price_snapshot_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "opportunities_student_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "fk_opps_course_product",
+        "column": "course_product_id",
+        "onDelete": "NO ACTION",
+        "refTable": "course_products",
+        "refColumn": "id"
+      },
+      {
+        "name": "opportunities_campus_id_fkey",
+        "column": "campus_id",
+        "onDelete": "NO ACTION",
+        "refTable": "campuses",
+        "refColumn": "id"
+      },
+      {
+        "name": "opportunities_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "parent_recommendations",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "parent_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "stars",
+        "type": "smallint",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "content",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "tags",
+        "type": "jsonb",
+        "default": "'[]'::jsonb",
+        "nullable": false
+      },
+      {
+        "name": "parent_authorized",
+        "type": "boolean",
+        "default": "false",
+        "nullable": false
+      },
+      {
+        "name": "displayed",
+        "type": "boolean",
+        "default": "false",
+        "nullable": false
+      },
+      {
+        "name": "submitted_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_pr_parent ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_recommendations USING btree (parent_id)",
+        "name": "idx_pr_parent"
+      },
+      {
+        "def": "CREATE INDEX idx_pr_teacher_displayed ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_recommendations USING btree (teacher_id, displayed)",
+        "name": "idx_pr_teacher_displayed"
+      },
+      {
+        "def": "CREATE INDEX idx_pr_teacher_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_recommendations USING btree (teacher_id, submitted_at DESC)",
+        "name": "idx_pr_teacher_time"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX parent_recommendations_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_recommendations USING btree (id)",
+        "name": "parent_recommendations_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162510_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162510_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162510_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162510_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162510_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162510_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162510_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162510_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162510_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162510_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "parent_recommendations_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "parent_recommendations_stars_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "parent_recommendations_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "parent_recommendations_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "parent_recommendations_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      },
+      {
+        "name": "parent_recommendations_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "parent_referrals",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "referrer_parent_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "referrer_student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "referee_parent_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "referee_student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "referral_code",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'created'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "trial_schedule_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "rating_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "rating_id_source",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "trialed_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "rated_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "expires_at",
+        "type": "timestamp with time zone",
+        "default": "(now() + '30 days'::interval)",
+        "nullable": false
+      },
+      {
+        "name": "note",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_pr_code ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (referral_code)",
+        "name": "idx_pr_code"
+      },
+      {
+        "def": "CREATE INDEX idx_pr_pending_expires ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (expires_at) WHERE ((status)::text = 'created'::text)",
+        "name": "idx_pr_pending_expires"
+      },
+      {
+        "def": "CREATE INDEX idx_pr_referrer ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (referrer_parent_id, created_at DESC)",
+        "name": "idx_pr_referrer"
+      },
+      {
+        "def": "CREATE INDEX idx_pr_teacher_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (teacher_id, status)",
+        "name": "idx_pr_teacher_status"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX parent_referrals_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (id)",
+        "name": "parent_referrals_pkey"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX parent_referrals_referral_code_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (referral_code)",
+        "name": "parent_referrals_referral_code_key"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX uq_pr_referee_parent ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.parent_referrals USING btree (referee_parent_id) WHERE (referee_parent_id IS NOT NULL)",
+        "name": "uq_pr_referee_parent"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162537_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162537_15_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162537_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162537_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162537_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162537_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162537_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162537_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "parent_referrals_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "parent_referrals_rating_id_source_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "parent_referrals_referee_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "parent_referrals_referral_code_key",
+        "type": "UNIQUE"
+      },
+      {
+        "name": "parent_referrals_referrer_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "parent_referrals_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "parent_referrals_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "parent_referrals_trial_schedule_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "parent_referrals_referee_student_id_fkey",
+        "column": "referee_student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      },
+      {
+        "name": "parent_referrals_referrer_student_id_fkey",
+        "column": "referrer_student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      },
+      {
+        "name": "parent_referrals_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      },
+      {
+        "name": "parent_referrals_trial_schedule_id_fkey",
+        "column": "trial_schedule_id",
+        "onDelete": "NO ACTION",
+        "refTable": "schedules",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "payments",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "contract_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "payment_type",
+        "type": "character varying",
+        "default": "'定金'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "paid_amount",
+        "type": "numeric",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "due_amount",
+        "type": "numeric",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "installment_no",
+        "type": "integer",
+        "default": "1",
+        "nullable": false
+      },
+      {
+        "name": "invoice_status",
+        "type": "character varying",
+        "default": "'未申请'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "refund_status",
+        "type": "character varying",
+        "default": "'无退款'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "paid_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "paid_locked",
+        "type": "boolean",
+        "default": "false",
+        "nullable": false
+      },
+      {
+        "name": "reverse_from_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "reverse_type",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "deleted_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_payments_contract_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (contract_id)",
+        "name": "idx_payments_contract_id"
+      },
+      {
+        "def": "CREATE INDEX idx_payments_paid_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (paid_at)",
+        "name": "idx_payments_paid_at"
+      },
+      {
+        "def": "CREATE INDEX idx_payments_paid_locked ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (paid_locked)",
+        "name": "idx_payments_paid_locked"
+      },
+      {
+        "def": "CREATE INDEX idx_payments_payment_type ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (payment_type)",
+        "name": "idx_payments_payment_type"
+      },
+      {
+        "def": "CREATE INDEX idx_payments_refund_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (refund_status)",
+        "name": "idx_payments_refund_status"
+      },
+      {
+        "def": "CREATE INDEX idx_payments_student_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (student_id)",
+        "name": "idx_payments_student_id"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX payments_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.payments USING btree (id)",
+        "name": "payments_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161882_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_15_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_16_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_17_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161882_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "payments_contract_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "payments_due_amount_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "payments_installment_no_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "payments_invoice_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "payments_paid_amount_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "payments_payment_type_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "payments_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "payments_refund_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "payments_reverse_type_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "payments_student_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "payments_contract_id_fkey",
+        "column": "contract_id",
+        "onDelete": "NO ACTION",
+        "refTable": "contracts",
+        "refColumn": "id"
+      },
+      {
+        "name": "payments_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "recurring_schedules",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "binding_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "course_product_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "by_day",
+        "type": "jsonb",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "start_minutes",
+        "type": "integer",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "duration_min",
+        "type": "integer",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "start_date",
+        "type": "date",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "end_date",
+        "type": "date",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'active'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "created_by_user_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "created_by_role",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "archived_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_rs_active ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.recurring_schedules USING btree (status) WHERE ((status)::text = 'active'::text)",
+        "name": "idx_rs_active"
+      },
+      {
+        "def": "CREATE INDEX idx_rs_binding ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.recurring_schedules USING btree (binding_id)",
+        "name": "idx_rs_binding"
+      },
+      {
+        "def": "CREATE INDEX idx_rs_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.recurring_schedules USING btree (student_id)",
+        "name": "idx_rs_student"
+      },
+      {
+        "def": "CREATE INDEX idx_rs_teacher ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.recurring_schedules USING btree (teacher_id)",
+        "name": "idx_rs_teacher"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX recurring_schedules_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.recurring_schedules USING btree (id)",
+        "name": "recurring_schedules_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162179_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162179_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162179_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162179_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162179_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162179_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162179_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162179_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162179_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162179_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162179_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162179_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "recurring_schedules_binding_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "recurring_schedules_created_by_user_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "recurring_schedules_duration_min_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "recurring_schedules_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "recurring_schedules_start_minutes_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "recurring_schedules_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "recurring_schedules_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "recurring_schedules_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "recurring_schedules_binding_id_fkey",
+        "column": "binding_id",
+        "onDelete": "NO ACTION",
+        "refTable": "student_teacher_bindings",
+        "refColumn": "id"
+      },
+      {
+        "name": "recurring_schedules_created_by_user_id_fkey",
+        "column": "created_by_user_id",
+        "onDelete": "NO ACTION",
+        "refTable": "users",
+        "refColumn": "id"
+      },
+      {
+        "name": "recurring_schedules_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      },
+      {
+        "name": "recurring_schedules_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "referrals",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "tenant_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "referrer_customer_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "referrer_student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "referred_parent_name",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "referred_mobile",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "referred_student_name",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "campus_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'new'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "reward_status",
+        "type": "character varying",
+        "default": "'none'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "source_lead_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "converted_customer_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_referrals_campus ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (campus_id)",
+        "name": "idx_referrals_campus"
+      },
+      {
+        "def": "CREATE INDEX idx_referrals_created_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (created_at)",
+        "name": "idx_referrals_created_at"
+      },
+      {
+        "def": "CREATE INDEX idx_referrals_referrer ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (referrer_customer_id)",
+        "name": "idx_referrals_referrer"
+      },
+      {
+        "def": "CREATE INDEX idx_referrals_reward_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (reward_status)",
+        "name": "idx_referrals_reward_status"
+      },
+      {
+        "def": "CREATE INDEX idx_referrals_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (status)",
+        "name": "idx_referrals_status"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX referrals_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (id)",
+        "name": "referrals_pkey"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX uq_referrals_tenant_mobile ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.referrals USING btree (tenant_id, referred_mobile)",
+        "name": "uq_referrals_tenant_mobile"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161977_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161977_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161977_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161977_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161977_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161977_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161977_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161977_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161977_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "referrals_campus_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "referrals_converted_customer_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "referrals_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "referrals_referrer_customer_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "referrals_referrer_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "referrals_reward_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "referrals_source_lead_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "referrals_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "uq_referrals_tenant_mobile",
+        "type": "UNIQUE"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "referrals_campus_id_fkey",
+        "column": "campus_id",
+        "onDelete": "NO ACTION",
+        "refTable": "campuses",
+        "refColumn": "id"
+      },
+      {
+        "name": "referrals_converted_customer_id_fkey",
+        "column": "converted_customer_id",
+        "onDelete": "NO ACTION",
+        "refTable": "customers",
+        "refColumn": "id"
+      },
+      {
+        "name": "referrals_referrer_customer_id_fkey",
+        "column": "referrer_customer_id",
+        "onDelete": "NO ACTION",
+        "refTable": "customers",
+        "refColumn": "id"
+      },
+      {
+        "name": "referrals_referrer_student_id_fkey",
+        "column": "referrer_student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      },
+      {
+        "name": "referrals_source_lead_id_fkey",
+        "column": "source_lead_id",
+        "onDelete": "NO ACTION",
+        "refTable": "leads",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "renewals",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "tenant_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "source_contract_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "customer_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "campus_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "course_product_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "due_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'to_renew'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "owner_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "expected_amount",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "renewed_contract_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_renewals_campus ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (campus_id)",
+        "name": "idx_renewals_campus"
+      },
+      {
+        "def": "CREATE INDEX idx_renewals_due_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (due_at)",
+        "name": "idx_renewals_due_at"
+      },
+      {
+        "def": "CREATE INDEX idx_renewals_owner ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (owner_id)",
+        "name": "idx_renewals_owner"
+      },
+      {
+        "def": "CREATE INDEX idx_renewals_source ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (source_contract_id)",
+        "name": "idx_renewals_source"
+      },
+      {
+        "def": "CREATE INDEX idx_renewals_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (status)",
+        "name": "idx_renewals_status"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX renewals_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.renewals USING btree (id)",
+        "name": "renewals_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162019_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162019_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162019_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162019_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162019_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162019_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162019_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162019_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162019_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162019_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162019_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "renewals_campus_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "renewals_course_product_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "renewals_customer_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "renewals_expected_amount_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "renewals_owner_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "renewals_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "renewals_renewed_contract_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "renewals_source_contract_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "renewals_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "renewals_student_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "renewals_campus_id_fkey",
+        "column": "campus_id",
+        "onDelete": "NO ACTION",
+        "refTable": "campuses",
+        "refColumn": "id"
+      },
+      {
+        "name": "renewals_course_product_id_fkey",
+        "column": "course_product_id",
+        "onDelete": "NO ACTION",
+        "refTable": "course_products",
+        "refColumn": "id"
+      },
+      {
+        "name": "renewals_customer_id_fkey",
+        "column": "customer_id",
+        "onDelete": "NO ACTION",
+        "refTable": "customers",
+        "refColumn": "id"
+      },
+      {
+        "name": "renewals_owner_id_fkey",
+        "column": "owner_id",
+        "onDelete": "NO ACTION",
+        "refTable": "users",
+        "refColumn": "id"
+      },
+      {
+        "name": "renewals_renewed_contract_id_fkey",
+        "column": "renewed_contract_id",
+        "onDelete": "NO ACTION",
+        "refTable": "contracts",
+        "refColumn": "id"
+      },
+      {
+        "name": "renewals_source_contract_id_fkey",
+        "column": "source_contract_id",
+        "onDelete": "NO ACTION",
+        "refTable": "contracts",
+        "refColumn": "id"
+      },
+      {
+        "name": "renewals_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "reverse_orders",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "source_contract_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "source_payment_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "reverse_type",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "reverse_amount",
+        "type": "numeric",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "reverse_status",
+        "type": "character varying",
+        "default": "'待审核'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "reason",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "affect_gmv",
+        "type": "boolean",
+        "default": "true",
+        "nullable": false
+      },
+      {
+        "name": "affect_student_business",
+        "type": "boolean",
+        "default": "true",
+        "nullable": false
+      },
+      {
+        "name": "reviewed_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "executed_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_reverse_source_contract ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.reverse_orders USING btree (source_contract_id)",
+        "name": "idx_reverse_source_contract"
+      },
+      {
+        "def": "CREATE INDEX idx_reverse_source_payment ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.reverse_orders USING btree (source_payment_id)",
+        "name": "idx_reverse_source_payment"
+      },
+      {
+        "def": "CREATE INDEX idx_reverse_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.reverse_orders USING btree (reverse_status)",
+        "name": "idx_reverse_status"
+      },
+      {
+        "def": "CREATE INDEX idx_reverse_type ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.reverse_orders USING btree (reverse_type)",
+        "name": "idx_reverse_type"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX reverse_orders_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.reverse_orders USING btree (id)",
+        "name": "reverse_orders_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161919_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161919_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161919_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161919_15_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161919_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161919_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161919_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161919_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161919_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161919_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161919_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161919_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "reverse_orders_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "reverse_orders_reverse_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "reverse_orders_reverse_type_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "reverse_orders_reviewed_by_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "reverse_orders_source_contract_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "reverse_orders_source_payment_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "reverse_orders_reviewed_by_fkey",
+        "column": "reviewed_by",
+        "onDelete": "NO ACTION",
+        "refTable": "users",
+        "refColumn": "id"
+      },
+      {
+        "name": "reverse_orders_source_contract_id_fkey",
+        "column": "source_contract_id",
+        "onDelete": "NO ACTION",
+        "refTable": "contracts",
+        "refColumn": "id"
+      },
+      {
+        "name": "reverse_orders_source_payment_id_fkey",
+        "column": "source_payment_id",
+        "onDelete": "NO ACTION",
+        "refTable": "payments",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "schedule_students",
+    "columns": [
+      {
+        "name": "schedule_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "attendance_status",
+        "type": "character varying",
+        "default": "'待出勤'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "joined_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_schedule_students_attendance ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedule_students USING btree (attendance_status)",
+        "name": "idx_schedule_students_attendance"
+      },
+      {
+        "def": "CREATE INDEX idx_schedule_students_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedule_students USING btree (student_id)",
+        "name": "idx_schedule_students_student"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX schedule_students_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedule_students USING btree (schedule_id, student_id)",
+        "name": "schedule_students_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162130_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162130_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162130_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162130_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "schedule_students_attendance_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "schedule_students_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "schedule_students_schedule_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "schedule_students_student_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "schedule_students_schedule_id_fkey",
+        "column": "schedule_id",
+        "onDelete": "CASCADE",
+        "refTable": "schedules",
+        "refColumn": "id"
+      },
+      {
+        "name": "schedule_students_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "schedules",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "course_product_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "start_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "duration_min",
+        "type": "integer",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "end_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'已排课'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "source",
+        "type": "character varying",
+        "default": "'one_off'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "recurring_schedule_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_by_user_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "created_by_role",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "notes",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "class_type",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "max_students",
+        "type": "integer",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_schedules_class_type ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (class_type) WHERE (class_type IS NOT NULL)",
+        "name": "idx_schedules_class_type"
+      },
+      {
+        "def": "CREATE INDEX idx_schedules_course ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (course_product_id)",
+        "name": "idx_schedules_course"
+      },
+      {
+        "def": "CREATE INDEX idx_schedules_recurring ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (recurring_schedule_id)",
+        "name": "idx_schedules_recurring"
+      },
+      {
+        "def": "CREATE INDEX idx_schedules_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (status)",
+        "name": "idx_schedules_status"
+      },
+      {
+        "def": "CREATE INDEX idx_schedules_teacher_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (teacher_id, start_at, end_at)",
+        "name": "idx_schedules_teacher_time"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX schedules_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (id)",
+        "name": "schedules_pkey"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX uniq_recurring_expansion ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.schedules USING btree (recurring_schedule_id, start_at) WHERE ((source)::text = 'recurring_expansion'::text)",
+        "name": "uniq_recurring_expansion"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162102_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162102_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162102_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162102_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162102_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162102_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162102_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162102_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162102_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162102_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162102_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "schedules_created_by_user_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "schedules_duration_min_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "schedules_max_students_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "schedules_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "schedules_source_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "schedules_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "schedules_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "schedules_created_by_user_id_fkey",
+        "column": "created_by_user_id",
+        "onDelete": "NO ACTION",
+        "refTable": "users",
+        "refColumn": "id"
+      },
+      {
+        "name": "schedules_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "student_assessment_results",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "assessment_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "score",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "rank_in_class",
+        "type": "integer",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "knowledge_breakdown",
+        "type": "jsonb",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "teacher_comment",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "recorded_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "recorded_by_user_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_sar_assessment ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_assessment_results USING btree (assessment_id)",
+        "name": "idx_sar_assessment"
+      },
+      {
+        "def": "CREATE INDEX idx_sar_student_time ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_assessment_results USING btree (student_id, recorded_at DESC)",
+        "name": "idx_sar_student_time"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX student_assessment_results_assessment_id_student_id_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_assessment_results USING btree (assessment_id, student_id)",
+        "name": "student_assessment_results_assessment_id_student_id_key"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX student_assessment_results_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_assessment_results USING btree (id)",
+        "name": "student_assessment_results_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162445_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162445_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162445_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "student_assessment_results_assessment_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "student_assessment_results_assessment_id_student_id_key",
+        "type": "UNIQUE"
+      },
+      {
+        "name": "student_assessment_results_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "student_assessment_results_student_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "student_assessment_results_assessment_id_fkey",
+        "column": "assessment_id",
+        "onDelete": "NO ACTION",
+        "refTable": "assessments",
+        "refColumn": "id"
+      },
+      {
+        "name": "student_assessment_results_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "student_course_packages",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "course_package_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "contract_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "total_lessons",
+        "type": "integer",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "used_lessons",
+        "type": "integer",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "refunded_lessons",
+        "type": "integer",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "remaining_lessons",
+        "type": "integer",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "activated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "expires_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'active'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "low_balance_alerted",
+        "type": "boolean",
+        "default": "false",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_scp_expires ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_course_packages USING btree (expires_at) WHERE ((status)::text = 'active'::text)",
+        "name": "idx_scp_expires"
+      },
+      {
+        "def": "CREATE INDEX idx_scp_lowbal ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_course_packages USING btree (student_id, remaining_lessons) WHERE (((status)::text = 'active'::text) AND (low_balance_alerted = false))",
+        "name": "idx_scp_lowbal"
+      },
+      {
+        "def": "CREATE INDEX idx_scp_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_course_packages USING btree (status)",
+        "name": "idx_scp_status"
+      },
+      {
+        "def": "CREATE INDEX idx_scp_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_course_packages USING btree (student_id)",
+        "name": "idx_scp_student"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX student_course_packages_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_course_packages USING btree (id)",
+        "name": "student_course_packages_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162323_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162323_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162323_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162323_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162323_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162323_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162323_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162323_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162323_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162323_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162323_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162323_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "student_course_packages_contract_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "student_course_packages_course_package_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "student_course_packages_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "student_course_packages_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "student_course_packages_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "student_course_packages_total_lessons_check",
+        "type": "CHECK"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "student_course_packages_contract_id_fkey",
+        "column": "contract_id",
+        "onDelete": "NO ACTION",
+        "refTable": "contracts",
+        "refColumn": "id"
+      },
+      {
+        "name": "student_course_packages_course_package_id_fkey",
+        "column": "course_package_id",
+        "onDelete": "NO ACTION",
+        "refTable": "course_packages",
+        "refColumn": "id"
+      },
+      {
+        "name": "student_course_packages_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "student_learning_profile",
+    "columns": [
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "total_lessons",
+        "type": "integer",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "total_homeworks",
+        "type": "integer",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "total_assessments",
+        "type": "integer",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "attendance_rate",
+        "type": "numeric",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "avg_homework_grade",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "avg_assessment_score",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "knowledge_mastery",
+        "type": "jsonb",
+        "default": "'[]'::jsonb",
+        "nullable": false
+      },
+      {
+        "name": "weakness_points",
+        "type": "jsonb",
+        "default": "'[]'::jsonb",
+        "nullable": false
+      },
+      {
+        "name": "strength_points",
+        "type": "jsonb",
+        "default": "'[]'::jsonb",
+        "nullable": false
+      },
+      {
+        "name": "last_updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE UNIQUE INDEX student_learning_profile_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_learning_profile USING btree (student_id)",
+        "name": "student_learning_profile_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162466_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162466_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162466_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162466_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162466_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162466_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162466_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162466_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162466_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "student_learning_profile_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "student_learning_profile_student_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "student_learning_profile_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "student_teacher_bindings",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "subject",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'active'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "bound_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "unbound_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "bound_by_user_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_stb_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_teacher_bindings USING btree (status)",
+        "name": "idx_stb_status"
+      },
+      {
+        "def": "CREATE INDEX idx_stb_student ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_teacher_bindings USING btree (student_id)",
+        "name": "idx_stb_student"
+      },
+      {
+        "def": "CREATE INDEX idx_stb_teacher ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_teacher_bindings USING btree (teacher_id)",
+        "name": "idx_stb_teacher"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX student_teacher_bindings_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_teacher_bindings USING btree (id)",
+        "name": "student_teacher_bindings_pkey"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX student_teacher_bindings_student_id_teacher_id_subject_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.student_teacher_bindings USING btree (student_id, teacher_id, subject)",
+        "name": "student_teacher_bindings_student_id_teacher_id_subject_key"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162151_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162151_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162151_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162151_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162151_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162151_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "student_teacher_bindings_bound_by_user_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "student_teacher_bindings_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "student_teacher_bindings_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "student_teacher_bindings_student_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "student_teacher_bindings_student_id_teacher_id_subject_key",
+        "type": "UNIQUE"
+      },
+      {
+        "name": "student_teacher_bindings_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "student_teacher_bindings_bound_by_user_id_fkey",
+        "column": "bound_by_user_id",
+        "onDelete": "NO ACTION",
+        "refTable": "users",
+        "refColumn": "id"
+      },
+      {
+        "name": "student_teacher_bindings_student_id_fkey",
+        "column": "student_id",
+        "onDelete": "NO ACTION",
+        "refTable": "students",
+        "refColumn": "id"
+      },
+      {
+        "name": "student_teacher_bindings_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "students",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "student_name",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "gender",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "grade_or_age",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "school_name",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "intended_subject",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "ability_level",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "pain_point_tags",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "target_goal",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "customer_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "owner_sales_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "assigned_teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "owner_changed_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "owner_change_reason",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "deleted_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_students_assigned_teacher ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (assigned_teacher_id) WHERE (assigned_teacher_id IS NOT NULL)",
+        "name": "idx_students_assigned_teacher"
+      },
+      {
+        "def": "CREATE INDEX idx_students_customer_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (customer_id)",
+        "name": "idx_students_customer_id"
+      },
+      {
+        "def": "CREATE INDEX idx_students_deleted_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)",
+        "name": "idx_students_deleted_at"
+      },
+      {
+        "def": "CREATE INDEX idx_students_intended_subject ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (intended_subject)",
+        "name": "idx_students_intended_subject"
+      },
+      {
+        "def": "CREATE INDEX idx_students_owner_sales ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (owner_sales_id) WHERE (owner_sales_id IS NOT NULL)",
+        "name": "idx_students_owner_sales"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX students_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.students USING btree (id)",
+        "name": "students_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161763_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161763_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161763_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161763_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161763_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161763_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161763_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "students_assigned_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "students_customer_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "students_gender_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "students_owner_sales_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "students_pkey",
+        "type": "PRIMARY KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "students_assigned_teacher_id_fkey",
+        "column": "assigned_teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      },
+      {
+        "name": "students_customer_id_fkey",
+        "column": "customer_id",
+        "onDelete": "NO ACTION",
+        "refTable": "customers",
+        "refColumn": "id"
+      },
+      {
+        "name": "students_owner_sales_id_fkey",
+        "column": "owner_sales_id",
+        "onDelete": "NO ACTION",
+        "refTable": "users",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "teacher_ratings",
+    "columns": [
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "rating_count",
+        "type": "integer",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "rating_sum",
+        "type": "numeric",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "avg_stars",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "last_rated_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "avg_focus",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "avg_engage",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "avg_think",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "avg_homework",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_tr_avg_stars ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_ratings USING btree (avg_stars DESC NULLS LAST)",
+        "name": "idx_tr_avg_stars"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX teacher_ratings_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_ratings USING btree (teacher_id)",
+        "name": "teacher_ratings_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162576_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162576_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162576_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162576_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "teacher_ratings_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "teacher_ratings_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "teacher_ratings_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "NO ACTION",
+        "refTable": "teachers",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "teacher_showcase_meta",
+    "columns": [
+      {
+        "name": "teacher_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "avatar_url",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "bio",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "video_urls",
+        "type": "jsonb",
+        "default": "'[]'::jsonb",
+        "nullable": false
+      },
+      {
+        "name": "testimonials",
+        "type": "jsonb",
+        "default": "'[]'::jsonb",
+        "nullable": false
+      },
+      {
+        "name": "displayed_recommendations_count",
+        "type": "integer",
+        "default": "0",
+        "nullable": false
+      },
+      {
+        "name": "trial_available",
+        "type": "boolean",
+        "default": "false",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_by_user_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_tsm_disp_rec_count ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_showcase_meta USING btree (displayed_recommendations_count DESC)",
+        "name": "idx_tsm_disp_rec_count"
+      },
+      {
+        "def": "CREATE INDEX idx_tsm_trial_available ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_showcase_meta USING btree (trial_available) WHERE (trial_available = true)",
+        "name": "idx_tsm_trial_available"
+      },
+      {
+        "def": "CREATE INDEX idx_tsm_updated_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_showcase_meta USING btree (updated_at DESC)",
+        "name": "idx_tsm_updated_at"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX teacher_showcase_meta_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teacher_showcase_meta USING btree (teacher_id)",
+        "name": "teacher_showcase_meta_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162684_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162684_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162684_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162684_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162684_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162684_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162684_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "teacher_showcase_meta_displayed_recommendations_count_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "teacher_showcase_meta_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "teacher_showcase_meta_teacher_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "teacher_showcase_meta_teacher_id_fkey",
+        "column": "teacher_id",
+        "onDelete": "CASCADE",
+        "refTable": "teachers",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "teachers",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "campus_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "name",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "phone",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "user_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "subjects",
+        "type": "jsonb",
+        "default": "'[]'::jsonb",
+        "nullable": false
+      },
+      {
+        "name": "bio",
+        "type": "text",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "hourly_price_yuan",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'在职'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "phone_encrypted",
+        "type": "bytea",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "deleted_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_teachers_campus_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teachers USING btree (campus_id)",
+        "name": "idx_teachers_campus_id"
+      },
+      {
+        "def": "CREATE INDEX idx_teachers_deleted_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teachers USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)",
+        "name": "idx_teachers_deleted_at"
+      },
+      {
+        "def": "CREATE INDEX idx_teachers_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teachers USING btree (status)",
+        "name": "idx_teachers_status"
+      },
+      {
+        "def": "CREATE INDEX idx_teachers_user_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teachers USING btree (user_id)",
+        "name": "idx_teachers_user_id"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX teachers_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.teachers USING btree (id)",
+        "name": "teachers_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_162077_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162077_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162077_12_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162077_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162077_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162077_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162077_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162077_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_162077_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "teachers_campus_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "teachers_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "teachers_status_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "teachers_user_id_fkey",
+        "type": "FOREIGN KEY"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "teachers_campus_id_fkey",
+        "column": "campus_id",
+        "onDelete": "NO ACTION",
+        "refTable": "campuses",
+        "refColumn": "id"
+      },
+      {
+        "name": "teachers_user_id_fkey",
+        "column": "user_id",
+        "onDelete": "NO ACTION",
+        "refTable": "users",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "trial_lessons",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "opportunity_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "trial_course",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "campus_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "teacher_name",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "schedule_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'已预约试听'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "attended",
+        "type": "boolean",
+        "default": "false",
+        "nullable": false
+      },
+      {
+        "name": "completed",
+        "type": "boolean",
+        "default": "false",
+        "nullable": false
+      },
+      {
+        "name": "parent_feedback",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "student_feedback",
+        "type": "character varying",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "closing_probability",
+        "type": "numeric",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_trial_campus_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.trial_lessons USING btree (campus_id)",
+        "name": "idx_trial_campus_id"
+      },
+      {
+        "def": "CREATE INDEX idx_trial_opp_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.trial_lessons USING btree (opportunity_id)",
+        "name": "idx_trial_opp_id"
+      },
+      {
+        "def": "CREATE INDEX idx_trial_schedule_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.trial_lessons USING btree (schedule_at)",
+        "name": "idx_trial_schedule_at"
+      },
+      {
+        "def": "CREATE INDEX idx_trial_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.trial_lessons USING btree (status)",
+        "name": "idx_trial_status"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX trial_lessons_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.trial_lessons USING btree (id)",
+        "name": "trial_lessons_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161802_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161802_14_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161802_15_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161802_16_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161802_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161802_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161802_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161802_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161802_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161802_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161802_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161802_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "trial_lessons_campus_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "trial_lessons_closing_probability_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "trial_lessons_opportunity_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "trial_lessons_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "trial_lessons_status_check",
+        "type": "CHECK"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "trial_lessons_campus_id_fkey",
+        "column": "campus_id",
+        "onDelete": "NO ACTION",
+        "refTable": "campuses",
+        "refColumn": "id"
+      },
+      {
+        "name": "trial_lessons_opportunity_id_fkey",
+        "column": "opportunity_id",
+        "onDelete": "NO ACTION",
+        "refTable": "opportunities",
+        "refColumn": "id"
+      }
+    ]
+  },
+  {
+    "name": "users",
+    "columns": [
+      {
+        "name": "id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "name",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "mobile",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "role",
+        "type": "character varying",
+        "default": "'sales'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "campus_id",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "status",
+        "type": "character varying",
+        "default": "'启用'::character varying",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": false
+      },
+      {
+        "name": "created_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "updated_by",
+        "type": "character varying",
+        "default": null,
+        "nullable": false
+      },
+      {
+        "name": "campus_scope",
+        "type": "jsonb",
+        "default": "'[]'::jsonb",
+        "nullable": false
+      },
+      {
+        "name": "deleted_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      },
+      {
+        "name": "password_hash",
+        "type": "character varying",
+        "default": "''::character varying",
+        "nullable": false
+      },
+      {
+        "name": "password_updated_at",
+        "type": "timestamp with time zone",
+        "default": null,
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "def": "CREATE INDEX idx_users_campus_id ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (campus_id)",
+        "name": "idx_users_campus_id"
+      },
+      {
+        "def": "CREATE INDEX idx_users_deleted_at ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)",
+        "name": "idx_users_deleted_at"
+      },
+      {
+        "def": "CREATE INDEX idx_users_role ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (role)",
+        "name": "idx_users_role"
+      },
+      {
+        "def": "CREATE INDEX idx_users_status ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (status)",
+        "name": "idx_users_status"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX users_mobile_key ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (mobile)",
+        "name": "users_mobile_key"
+      },
+      {
+        "def": "CREATE UNIQUE INDEX users_pkey ON tenant_00mpc1iaalyglk4uajazfswn1fharrlq.users USING btree (id)",
+        "name": "users_pkey"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "161678_161689_10_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161689_11_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161689_13_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161689_1_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161689_2_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161689_3_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161689_4_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161689_5_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161689_6_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161689_7_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161689_8_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "161678_161689_9_not_null",
+        "type": "CHECK"
+      },
+      {
+        "name": "users_campus_id_fkey",
+        "type": "FOREIGN KEY"
+      },
+      {
+        "name": "users_mobile_key",
+        "type": "UNIQUE"
+      },
+      {
+        "name": "users_pkey",
+        "type": "PRIMARY KEY"
+      },
+      {
+        "name": "users_role_check",
+        "type": "CHECK"
+      },
+      {
+        "name": "users_status_check",
+        "type": "CHECK"
+      }
+    ],
+    "foreignKeys": [
+      {
+        "name": "users_campus_id_fkey",
+        "column": "campus_id",
+        "onDelete": "NO ACTION",
+        "refTable": "campuses",
+        "refColumn": "id"
+      }
+    ]
+  }
+]
+}
