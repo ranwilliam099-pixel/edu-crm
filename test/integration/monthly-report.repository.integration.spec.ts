@@ -82,8 +82,8 @@ describe('MonthlyReportRepository [integration, real PG, V9 + V36 双轨]', () =
     await runInSchema(schema, async (c) => {
       await c.query(
         `INSERT INTO ${schema}.teachers
-           (id, name, phone, status, hire_date, created_by, updated_by, campus_id)
-         VALUES ($1, '月报老师', '13900001300', '在职', NOW(), $2, $2, $3)`,
+           (id, name, phone, status, created_by, updated_by, campus_id)
+         VALUES ($1, '月报老师', '13900001300', '在职', $2, $2, $3)`,
         [teacherId, adminId, campusId],
       );
     });
@@ -366,8 +366,8 @@ describe('MonthlyReportRepository [integration, real PG, V9 + V36 双轨]', () =
       await runInSchema(driftSchema, async (c) => {
         await c.query(
           `INSERT INTO ${driftSchema}.teachers
-             (id, name, phone, status, hire_date, created_by, updated_by, campus_id)
-           VALUES ($1, '老师', '13900008813', '在职', NOW(), $2, $2, $3)`,
+             (id, name, phone, status, created_by, updated_by, campus_id)
+           VALUES ($1, '老师', '13900008813', '在职', $2, $2, $3)`,
           [tch, ad.id, cam.id],
         );
       });

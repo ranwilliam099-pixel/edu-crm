@@ -76,8 +76,8 @@ describe('HomeworkRepository [integration, real PG, V13]', () => {
     await runInSchema(schema, async (c) => {
       await c.query(
         `INSERT INTO ${schema}.teachers
-           (id, name, phone, status, hire_date, created_by, updated_by, campus_id)
-         VALUES ($1, '作业老师', '13900001100', '在职', NOW(), $2, $2, $3)`,
+           (id, name, phone, status, created_by, updated_by, campus_id)
+         VALUES ($1, '作业老师', '13900001100', '在职', $2, $2, $3)`,
         [teacherId, adminId, campusId],
       );
     });
@@ -110,7 +110,7 @@ describe('HomeworkRepository [integration, real PG, V13]', () => {
         { url: 'https://cos.com/a.jpg', type: 'image/jpeg', filename: 'a.jpg' },
       ],
       dueAt: new Date('2026-05-25T22:00:00Z'),
-      difficulty: 'medium',
+      difficulty: '中',
       status: 'published',
       recipientStudentIds: [studentA, studentB],
       createdAt: new Date(),
@@ -300,8 +300,8 @@ describe('HomeworkRepository [integration, real PG, V13]', () => {
       await runInSchema(driftSchema, async (c) => {
         await c.query(
           `INSERT INTO ${driftSchema}.teachers
-             (id, name, phone, status, hire_date, created_by, updated_by, campus_id)
-           VALUES ($1, '老师', '13900008811', '在职', NOW(), $2, $2, $3)`,
+             (id, name, phone, status, created_by, updated_by, campus_id)
+           VALUES ($1, '老师', '13900008811', '在职', $2, $2, $3)`,
           [tch, ad.id, cam.id],
         );
       });

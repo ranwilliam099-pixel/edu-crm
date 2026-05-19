@@ -75,8 +75,8 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
     await runInSchema(schema, async (c) => {
       await c.query(
         `INSERT INTO ${schema}.teachers
-           (id, name, phone, status, hire_date, created_by, updated_by, campus_id)
-         VALUES ($1, '考试老师', '13900001200', '在职', NOW(), $2, $2, $3)`,
+           (id, name, phone, status, created_by, updated_by, campus_id)
+         VALUES ($1, '考试老师', '13900001200', '在职', $2, $2, $3)`,
         [teacherId, adminId, campusId],
       );
     });
@@ -103,7 +103,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
       teacherId,
       title: '期中测评',
       subject: '数学',
-      assessmentType: 'mid_term',
+      assessmentType: '期中',
       totalScore: 100,
       draftAt: new Date('2026-05-25T09:00:00Z'),
       status: 'draft',
@@ -128,7 +128,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
       teacherId,
       title: '远期测评',
       subject: '语文',
-      assessmentType: 'final',
+      assessmentType: '期末',
       totalScore: 100,
       draftAt: new Date('2026-12-01T00:00:00Z'),
       status: 'draft',
@@ -139,7 +139,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
       teacherId,
       title: '无日期但近期创建',
       subject: '语文',
-      assessmentType: 'quiz',
+      assessmentType: '单元测',
       totalScore: 30,
       draftAt: null,
       status: 'draft',
@@ -176,7 +176,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
       teacherId,
       title: '单元测验',
       subject: '数学',
-      assessmentType: 'unit_test',
+      assessmentType: '单元测',
       totalScore: 100,
       draftAt: new Date(),
       status: 'draft',
@@ -214,7 +214,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
       teacherId,
       title: 'rank test',
       subject: '数学',
-      assessmentType: 'unit_test',
+      assessmentType: '单元测',
       totalScore: 100,
       draftAt: new Date(),
       status: 'closed',
@@ -322,8 +322,8 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
       await runInSchema(driftSchema, async (c) => {
         await c.query(
           `INSERT INTO ${driftSchema}.teachers
-             (id, name, phone, status, hire_date, created_by, updated_by, campus_id)
-           VALUES ($1, '老师', '13900008812', '在职', NOW(), $2, $2, $3)`,
+             (id, name, phone, status, created_by, updated_by, campus_id)
+           VALUES ($1, '老师', '13900008812', '在职', $2, $2, $3)`,
           [tch, ad.id, cam.id],
         );
         await c.query(
@@ -339,7 +339,7 @@ describe('AssessmentRepository [integration, real PG, V14]', () => {
         teacherId: tch,
         title: 'drift',
         subject: '数学',
-        assessmentType: 'unit_test',
+        assessmentType: '单元测',
         totalScore: 100,
         draftAt: new Date(),
         status: 'draft',

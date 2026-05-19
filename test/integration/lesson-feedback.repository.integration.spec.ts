@@ -81,8 +81,8 @@ describe('LessonFeedbackRepository [integration, real PG, V9 §4.1 + V18]', () =
     await runInSchema(schema, async (client) => {
       await client.query(
         `INSERT INTO ${schema}.teachers
-           (id, name, phone, status, hire_date, created_by, updated_by, campus_id)
-         VALUES ($1, $2, $3, '在职', NOW(), $4, $4, $5)`,
+           (id, name, phone, status, created_by, updated_by, campus_id)
+         VALUES ($1, $2, $3, '在职', $4, $4, $5)`,
         [teacherId, '测试老师', '13900001234', admin.id, campusId],
       );
     });
@@ -96,8 +96,8 @@ describe('LessonFeedbackRepository [integration, real PG, V9 §4.1 + V18]', () =
     await runInSchema(schema, async (client) => {
       await client.query(
         `INSERT INTO ${schema}.schedules
-           (id, teacher_id, start_at, end_at, status, created_by, updated_by, class_type)
-         VALUES ($1, $2, NOW(), NOW() + interval '1 hour', '已完成', $3, $3, '一对一')`,
+           (id, teacher_id, start_at, duration_min, end_at, status, created_by_user_id, created_by_role)
+         VALUES ($1, $2, NOW(), 60, NOW() + interval '1 hour', '已完成', $3, 'admin')`,
         [scheduleId, teacherId, admin.id],
       );
     });
@@ -346,8 +346,8 @@ describe('LessonFeedbackRepository [integration, real PG, V9 §4.1 + V18]', () =
       await runInSchema(driftSchema, async (c) => {
         await c.query(
           `INSERT INTO ${driftSchema}.teachers
-             (id, name, phone, status, hire_date, created_by, updated_by, campus_id)
-           VALUES ($1, '老师', '13900008888', '在职', NOW(), $2, $2, $3)`,
+             (id, name, phone, status, created_by, updated_by, campus_id)
+           VALUES ($1, '老师', '13900008888', '在职', $2, $2, $3)`,
           [tch2, admin2.id, campus2.id],
         );
       });
@@ -357,8 +357,8 @@ describe('LessonFeedbackRepository [integration, real PG, V9 §4.1 + V18]', () =
       await runInSchema(driftSchema, async (c) => {
         await c.query(
           `INSERT INTO ${driftSchema}.schedules
-             (id, teacher_id, start_at, end_at, status, created_by, updated_by, class_type)
-           VALUES ($1, $2, NOW(), NOW() + interval '1 hour', '已完成', $3, $3, '一对一')`,
+           (id, teacher_id, start_at, duration_min, end_at, status, created_by_user_id, created_by_role)
+         VALUES ($1, $2, NOW(), 60, NOW() + interval '1 hour', '已完成', $3, 'admin')`,
           [sched2, tch2, admin2.id],
         );
 

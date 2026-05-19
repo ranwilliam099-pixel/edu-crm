@@ -53,6 +53,10 @@ describe('RefreshTokenRepository [integration, real PG, V43 public.refresh_token
 
   const testSubjectId = testUlid();
   const otherSubjectId = testUlid();
+  // V43 check constraint refresh_tokens_tenant_for_b:
+  //   subject_type='b-user' → tenant_id IS NOT NULL
+  //   subject_type='parent' → tenant_id IS NULL
+  const testTenantId = testUlid();
 
   beforeAll(async () => {
     pool = getTestPool();
@@ -82,7 +86,7 @@ describe('RefreshTokenRepository [integration, real PG, V43 public.refresh_token
       id: testUlid(),
       subjectType: 'b-user',
       subjectId: testSubjectId,
-      tenantId: null,
+      tenantId: testTenantId,
       tokenHash,
       jti: 'jti-001',
       expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000), // 7 天后
@@ -94,7 +98,7 @@ describe('RefreshTokenRepository [integration, real PG, V43 public.refresh_token
     expect(found).not.toBeNull();
     expect(found!.subjectId).toBe(testSubjectId);
     expect(found!.subjectType).toBe('b-user');
-    expect(found!.jti).toBe('jti-001');
+    expect(found!.jti.trim()).toBe('jti-001'); // V43 jti CHAR(26) 右补空格
     expect(found!.revokedAt).toBeNull();
     expect(found!.userAgent).toBe('jest-test');
     expect(found!.tokenHash).toBeInstanceOf(Buffer);
@@ -110,7 +114,7 @@ describe('RefreshTokenRepository [integration, real PG, V43 public.refresh_token
       id: testUlid(),
       subjectType: 'b-user',
       subjectId: testSubjectId,
-      tenantId: null,
+      tenantId: testTenantId,
       tokenHash,
       jti: 'jti-unique-a',
       expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
@@ -124,7 +128,7 @@ describe('RefreshTokenRepository [integration, real PG, V43 public.refresh_token
         id: testUlid(),
         subjectType: 'b-user',
         subjectId: testSubjectId,
-        tenantId: null,
+        tenantId: testTenantId,
         tokenHash, // 同
         jti: 'jti-unique-b',
         expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
@@ -144,7 +148,7 @@ describe('RefreshTokenRepository [integration, real PG, V43 public.refresh_token
       id: rid,
       subjectType: 'b-user',
       subjectId: testSubjectId,
-      tenantId: null,
+      tenantId: testTenantId,
       tokenHash,
       jti: 'jti-revoke',
       expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
@@ -198,8 +202,8 @@ describe('RefreshTokenRepository [integration, real PG, V43 public.refresh_token
       await c.query(
         `INSERT INTO public.refresh_tokens
            (id, subject_type, subject_id, tenant_id, token_hash, jti, expires_at)
-         VALUES ($1, 'b-user', $2, NULL, $3, $4, NOW() - interval '100 days')`,
-        [oldId, testSubjectId, oldTokenHash, 'jti-expired'],
+         VALUES ($1, 'b-user', $2, $3, $4, $5, NOW() - interval '100 days')`,
+        [oldId, testSubjectId, testTenantId, oldTokenHash, 'jti-expired'],
       );
     });
 
@@ -241,7 +245,7 @@ describe('RefreshTokenRepository [integration, real PG, V43 public.refresh_token
       id: rid,
       subjectType: 'b-user',
       subjectId: testSubjectId,
-      tenantId: null,
+      tenantId: testTenantId,
       tokenHash,
       jti: 'jti-double-revoke',
       expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
@@ -273,7 +277,7 @@ describe('RefreshTokenRepository [integration, real PG, V43 public.refresh_token
       id: testUlid(),
       subjectType: 'b-user',
       subjectId: subA,
-      tenantId: null,
+      tenantId: testTenantId,
       tokenHash: hashA,
       jti: 'jti-iso-a',
       expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
@@ -284,7 +288,7 @@ describe('RefreshTokenRepository [integration, real PG, V43 public.refresh_token
       id: testUlid(),
       subjectType: 'b-user',
       subjectId: subB,
-      tenantId: null,
+      tenantId: testTenantId,
       tokenHash: hashB,
       jti: 'jti-iso-b',
       expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
