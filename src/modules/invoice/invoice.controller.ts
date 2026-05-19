@@ -45,9 +45,10 @@ import {
  *     - TenantScopeGuard: body/query/header tenantSchema 一致性校验
  *     - RbacGuard: 按 method-level @Roles 校验
  *
- * @Roles：finance / boss / admin
+ * @Roles：finance（2026-05-15 A-1 拍板严格收敛；不含 boss/admin）
+ *   - SSOT §6 操作权限矩阵：`finance.invoice.create=[finance]` — 5/15 A-1 修订：不含 boss/admin
  *   - 拍板 fields-by-role.md «财务作账域»：finance ✅ / sales ❌ / teacher ❌ / academic ❌ / hr ❌ / parent ❌
- *   - boss + admin 财务全权（老板校长视图）
+ *   - boss/admin 不直接开票（避免老板/校长越权代签财税单据）；红冲/作废仍走 delete 路径（admin/boss）
  *
  * @UseInterceptors(IdempotencyInterceptor)：
  *   - POST /db/invoices 强烈推荐带 Idempotency-Key 防双击双开票
@@ -122,12 +123,12 @@ export class InvoiceController {
    * @errors
    *   400 BadRequest          - validate 失败 / msgSecCheck risky
    *   401 Unauthorized        - JWT 缺
-   *   403 Forbidden           - role 不在 [finance, boss, admin] / tenantSchema mismatch
+   *   403 Forbidden           - role !== 'finance' / tenantSchema mismatch（5/15 A-1：boss/admin 也 403）
    *   404 ContractNotFound    - contractId 不存在 / 跨 tenant
    *   409 AlreadyIssued       - contract 已开票
    */
   @Post()
-  @Roles('finance', 'boss', 'admin')
+  @Roles('finance')
   @UseInterceptors(IdempotencyInterceptor)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @HttpCode(HttpStatus.CREATED)
@@ -183,7 +184,7 @@ export class InvoiceController {
    *   PendingContractView 含 parentNameMasked（finance ❌ customer.联系人 → mask）
    */
   @Get('pending-contracts')
-  @Roles('finance', 'boss', 'admin')
+  @Roles('finance')
   @HttpCode(HttpStatus.OK)
   async listPending(
     @Query('tenantSchema') tenantSchema: string,
@@ -214,7 +215,7 @@ export class InvoiceController {
    *   - 未来如扩展 sales/parent 查看，需 maskInvoice helper（当前 RBAC 已挡死）
    */
   @Get(':id')
-  @Roles('finance', 'boss', 'admin')
+  @Roles('finance')
   @HttpCode(HttpStatus.OK)
   async detail(
     @Param('id') id: string,

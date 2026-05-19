@@ -5,7 +5,8 @@
   "source": "docs/SSOT-拍板权威.md §1 角色 + §4 字段矩阵 + §6 操作权限矩阵",
   "doc": "Manifest 是 RBAC generator 的输入：9 角色 × 18 对象 × 4 CRUD = 期望 allow/deny 单元格。任何代码改 @Roles → 必同步改本 manifest → 重跑 generator → diff PR。Manifest 与代码不一致 = 真 bug 揭露。",
   "roles": {
-    "_doc": "SSOT §1 9 角色清单（8 业务 + 1 平台）+ 4 个代码现实辅助角色（marketing/hr/sales_manager/academic_admin 来自 TenantRole / SSOT §1 sales_manager 在 §6 矩阵）",
+    "_doc": "SSOT §1 9 角色清单（8 业务 + 1 平台）+ 4 个代码现实辅助角色（marketing/hr/sales_manager/academic_admin 来自 TenantRole / SSOT §1 sales_manager 在 §6 矩阵）。注意 finance_admin 同时出现在 auxiliary 和 platformOverride — 见 _platformRolesDoc。",
+    "_platformRolesDoc": "finance_admin 双重身份说明：TenantScopeGuard 视 finance_admin 为平台角色（isPlatformRole=true 跨 tenant 放行）；RbacGuard 视 finance_admin 为业务角色（B 端业务 endpoint 不在 allow → deny）。manifest 列在 auxiliary 是为测试 deny path 目的（验业务 endpoint 拒绝 finance_admin），不代表 finance_admin 是 SSOT §1 业务角色。同理 platform_admin 只在 TenantScopeGuard 放行，B 端业务 endpoint 全 deny。",
     "ssot": [
       "admin",
       "boss",
@@ -22,6 +23,13 @@
       "hr",
       "academic_admin",
       "finance_admin"
+    ],
+    "platformOverride": [
+      "platform_admin",
+      "finance_admin"
+    ],
+    "deleted": [
+      "sales_director"
     ]
   },
   "objects": {
@@ -317,26 +325,26 @@
     },
 
     "invoice": {
-      "_ssot": "§6 + invoice.controller.ts: @Roles('finance','boss','admin') 全部 endpoint；finance 主导",
+      "_ssot": "§6 A-1 拍板（2026-05-15）：finance.invoice.create=[finance] / finance.invoice.listPending=[finance]，不含 boss/admin。本对象 create/read/update 全部 [finance] 唯一；delete 仍保留 [admin,boss]（红冲/作废属平台操作）。",
       "create": {
-        "allow": ["finance", "boss", "admin"],
-        "_note": "invoice.controller:130 POST @Roles('finance','boss','admin')；销售/教务/老师不开票",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "allow": ["finance"],
+        "_note": "5/15 A-1 修订：仅 finance 可开票；boss/admin 不开票（SSOT §6 明文）。删除/作废走 delete 路径 admin/boss。",
+        "deny": ["boss", "admin", "sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
       },
       "read": {
-        "allow": ["finance", "boss", "admin"],
-        "_note": "invoice.controller:186/217 GET @Roles('finance','boss','admin')；parent 不看公司开票（自己合同票走 contract.read）",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "allow": ["finance"],
+        "_note": "5/15 A-1 同口径：read endpoint（listPending / detail）仅 finance；boss/admin 不读发票详情（避免越权查公司财税数据）；parent 自己合同票走 contract.read（不走 invoice.read）",
+        "deny": ["boss", "admin", "sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
       },
       "update": {
-        "allow": ["finance", "boss", "admin"],
-        "_note": "invoice 状态推进 仅 finance/boss/admin",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "allow": ["finance"],
+        "_note": "5/15 A-1 同口径：状态推进（issue / push parent / 红冲发起）仅 finance；boss/admin 不直接改发票状态。真正的红冲走 delete。",
+        "deny": ["boss", "admin", "sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
       },
       "delete": {
         "allow": ["admin", "boss"],
-        "_note": "invoice 红冲历史保留；admin/boss 兜底真删",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "_note": "invoice 红冲/作废保留 admin/boss（平台级操作，审计追溯）；finance 不直接删（避免单角色掩盖红冲）",
+        "deny": ["finance", "sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
       }
     },
 

@@ -1,5 +1,5 @@
 /**
- * L10 时序漂移测试（leader 自补 Day 5）
+ * L10 时序漂移测试（leader 自补 Day 5；P1-1 round 2 加强）
  *
  * 来源：v2.0 §3.L10 + plan Phase B.L10
  *
@@ -14,7 +14,14 @@
  *
  * 策略：用 mock service 模拟「老数据」状态，验证新代码 fallback 路径
  * 不依赖真 PG（pure logic test）
+ *
+ * P1-1 round 2 加强（2026-05-19）：
+ *   防回归 spec 通过 fs.readFileSync 读真实 production .repository.ts 源码，
+ *   验证 fallback 分支是否仍存在 — 而不是测试 spec 内部字符串字面量（false-green）。
+ *   未来 dev 删除生产 repository 的 fallback 分支时，本 spec 必失败。
  */
+import * as fs from 'fs';
+import * as path from 'path';
 
 describe('[L10 时序漂移] 老数据 + 新代码兼容性', () => {
   describe('场景 1: 6 月前 contract（无 currency 列）月报聚合不炸', () => {
@@ -202,27 +209,60 @@ describe('[L10 时序漂移] 老数据 + 新代码兼容性', () => {
     });
   });
 
-  describe('防回归：时序漂移防御代码不能被未来「优化」删除', () => {
-    it('PhoneLookup 必须保留 phone_hash NULL fallback 分支（V40 兼容）', () => {
-      // 这个 spec 防未来 dev 看「primary_mobile_hash IS NULL 是无效数据」就删 fallback
-      const codeContainsFallback = (code: string): boolean => {
-        return code.includes('phone_hash === null') || code.includes('phone_hash IS NULL');
-      };
-      const realCode = `
-        if (rows.some((r) => r.phone_hash !== null && r.phone_hash.equals(hashKey))) return true;
-        return rows.some((r) => r.phone_hash === null && r.phone === phone);
-      `;
-      expect(codeContainsFallback(realCode)).toBe(true);
+  describe('防回归：时序漂移防御代码不能被未来「优化」删除（P1-1 round 2 改读真实生产源码）', () => {
+    // 真实路径：src/modules/db/parent.repository.ts + src/modules/db/student-import.repository.ts
+    // 跑时 cwd = edu-server 根，path.resolve 解析绝对路径
+    const PARENT_REPO_PATH = path.resolve(__dirname, '../modules/db/parent.repository.ts');
+    const STUDENT_IMPORT_REPO_PATH = path.resolve(__dirname, '../modules/db/student-import.repository.ts');
+
+    it('parent.repository.ts 真源文件存在（防 path 移动）', () => {
+      expect(fs.existsSync(PARENT_REPO_PATH)).toBe(true);
     });
 
-    it('CustomerCheckDup 必须保留 primary_mobile_hash NULL fallback 分支（V41 兼容）', () => {
-      const codeContainsFallback = (code: string): boolean => {
-        return code.includes('primary_mobile_hash IS NULL') || code.includes('primary_mobile_hash === null');
-      };
-      const realCode = `
-        return rows.some((r) => r.primary_mobile_hash === null && r.primary_mobile === mobile);
-      `;
-      expect(codeContainsFallback(realCode)).toBe(true);
+    it('student-import.repository.ts 真源文件存在（防 path 移动）', () => {
+      expect(fs.existsSync(STUDENT_IMPORT_REPO_PATH)).toBe(true);
+    });
+
+    it('PhoneLookup 必须保留 phone_hash NULL fallback 分支（V40 兼容）— 读真实生产 parent.repository.ts', () => {
+      // 这个 spec 防未来 dev 看「phone_hash IS NULL 是无效数据」就删 fallback
+      // 改为读真实生产文件，不是 spec 内部字符串字面量
+      const parentRepoCode = fs.readFileSync(PARENT_REPO_PATH, 'utf-8');
+
+      // 必须含 hash 查询 + 明文 fallback 两段
+      // hash 查询：WHERE phone_hash = $1
+      expect(parentRepoCode).toMatch(/WHERE\s+phone_hash\s*=\s*\$/);
+      // 明文 fallback：WHERE phone = $1
+      expect(parentRepoCode).toMatch(/WHERE\s+phone\s*=\s*\$/);
+      // 必须有 "fallback 明文" 或 "兼容" 注释（防 dev 删 fallback 时连注释一起删）
+      expect(parentRepoCode).toMatch(/fallback\s*明文|兼容.*phone_hash=NULL/);
+    });
+
+    it('CustomerCheckDup 必须保留 primary_mobile_hash NULL fallback 分支（V41 兼容）— 读真实生产 student-import.repository.ts', () => {
+      const studentImportCode = fs.readFileSync(STUDENT_IMPORT_REPO_PATH, 'utf-8');
+
+      // hash 查询：WHERE primary_mobile_hash = $1
+      expect(studentImportCode).toMatch(/WHERE\s+primary_mobile_hash\s*=\s*\$/);
+      // 明文 fallback：WHERE primary_mobile = $1 或 OR primary_mobile = ...
+      expect(studentImportCode).toMatch(/primary_mobile\s*=\s*\$|primary_mobile\s*=\s*[`']/);
+      // 必须有 backfill 兼容注释（防回归）
+      expect(studentImportCode).toMatch(/backfill|兼容|primary_mobile_hash=NULL/);
+    });
+
+    it('CustomerRepository / parent.repository fallback 不能被简化为「只查 hash 列」（生产 backfill 未完成时 5K+ 老行查不到 → P0 事故）', () => {
+      // 复合断言：parent + student-import 两个文件都必须有 fallback 分支
+      // 这是 V40/V41 渐进 backfill 期间的关键防御代码
+      const parentCode = fs.readFileSync(PARENT_REPO_PATH, 'utf-8');
+      const studentCode = fs.readFileSync(STUDENT_IMPORT_REPO_PATH, 'utf-8');
+
+      // 验证两个都有「先查 hash → miss 后查明文」的模式
+      // parent.repository.ts: findParentByPhone 有 hash + 明文两段 SELECT
+      const parentSelectCount = (parentCode.match(/SELECT[\s\S]*?FROM\s+public\.parents\s+WHERE/g) ?? []).length;
+      expect(parentSelectCount).toBeGreaterThanOrEqual(2); // 至少 2 个 SELECT FROM parents WHERE（hash + 明文）
+
+      // student-import.repository.ts: 有 primary_mobile_hash 优先 SELECT + 明文 fallback SELECT
+      const studentHashSelect = studentCode.match(/SELECT[\s\S]*?WHERE\s+primary_mobile_hash\s*=/g);
+      expect(studentHashSelect).not.toBeNull();
+      expect(studentHashSelect!.length).toBeGreaterThanOrEqual(1);
     });
   });
 });

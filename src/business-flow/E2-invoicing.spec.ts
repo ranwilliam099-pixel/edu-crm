@@ -1,9 +1,9 @@
 /**
- * L8 业务流 E2 — 开票 (5 case, 5/15 新增)
+ * L8 业务流 E2 — 开票 (7 case, 5/15 A-1 修订)
  *
  * 来源:
  *   - v2.0 §5.E2 开票
- *   - SSOT §6 invoice.* = [finance, admin, boss]
+ *   - SSOT §6 操作权限矩阵：finance.invoice.create=[finance] — 5/15 A-1 修订：不含 boss/admin
  *   - 拍板: invoice 上传抬头 msgSecCheck (公司名/税号)
  *
  * 验证:
@@ -12,6 +12,8 @@
  *   - finance 上传抬头 msgSecCheck → 风险拦截
  *   - 开票完成 push parent
  *   - sales / academic / teacher 看 invoices → 403
+ *   - boss 创建/读发票 → 403（5/15 A-1）
+ *   - admin 创建/读发票 → 403（5/15 A-1）
  */
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
 
@@ -72,9 +74,10 @@ function createInvoice(
   store: MockStore,
   audit: MockAuditLog,
 ): Invoice {
-  if (!['finance', 'admin', 'boss'].includes(user.role)) {
-    audit.log({ actorRole: user.role, action: 'invoice.create', outcome: 'denied', meta: { reason: 'role not allowed' } });
-    throw new ForbiddenException(`role ${user.role} cannot create invoice`);
+  // 5/15 A-1 拍板：finance.invoice.create=[finance]（不含 boss/admin）
+  if (user.role !== 'finance') {
+    audit.log({ actorRole: user.role, action: 'invoice.create', outcome: 'denied', meta: { reason: 'role not allowed (A-1)' } });
+    throw new ForbiddenException(`role ${user.role} cannot create invoice (5/15 A-1: only finance)`);
   }
   const invoice: Invoice = {
     id: 'INV_' + Math.random().toString(36).slice(2, 8).toUpperCase(),
@@ -99,9 +102,10 @@ function uploadTitle(
   store: MockStore,
   audit: MockAuditLog,
 ): Invoice {
-  if (!['finance', 'admin', 'boss'].includes(user.role)) {
-    audit.log({ actorRole: user.role, action: 'invoice.upload-title', outcome: 'denied' });
-    throw new ForbiddenException(`role ${user.role} cannot upload title`);
+  // 5/15 A-1: upload-title 同 create — 仅 finance
+  if (user.role !== 'finance') {
+    audit.log({ actorRole: user.role, action: 'invoice.upload-title', outcome: 'denied', meta: { reason: 'A-1' } });
+    throw new ForbiddenException(`role ${user.role} cannot upload title (5/15 A-1: only finance)`);
   }
   const inv = store.invoices.find((i) => i.id === invoiceId);
   if (!inv) throw new BadRequestException('invoice not found');
@@ -135,9 +139,10 @@ function issueInvoice(
   audit: MockAuditLog,
   now: Date = new Date(),
 ): Invoice {
-  if (!['finance', 'admin', 'boss'].includes(user.role)) {
-    audit.log({ actorRole: user.role, action: 'invoice.issue', outcome: 'denied' });
-    throw new ForbiddenException(`role ${user.role} cannot issue invoice`);
+  // 5/15 A-1: issue 同 update — 仅 finance
+  if (user.role !== 'finance') {
+    audit.log({ actorRole: user.role, action: 'invoice.issue', outcome: 'denied', meta: { reason: 'A-1' } });
+    throw new ForbiddenException(`role ${user.role} cannot issue invoice (5/15 A-1: only finance)`);
   }
   const inv = store.invoices.find((i) => i.id === invoiceId);
   if (!inv) throw new BadRequestException('invoice not found');
@@ -156,10 +161,11 @@ function issueInvoice(
 }
 
 function readInvoice(user: MockUser, invoiceId: string, store: MockStore, audit: MockAuditLog): Invoice {
-  // sales / academic / teacher 不能看 invoices → 403
-  if (!['finance', 'admin', 'boss', 'parent'].includes(user.role)) {
-    audit.log({ actorRole: user.role, action: 'invoice.read', outcome: 'denied', meta: { reason: 'role not allowed' } });
-    throw new ForbiddenException(`role ${user.role} cannot read invoice`);
+  // 5/15 A-1 拍板：finance.invoice.read=[finance]（不含 boss/admin）
+  // parent 走 contract.read 看自己合同票（不走 invoice.read）
+  if (user.role !== 'finance') {
+    audit.log({ actorRole: user.role, action: 'invoice.read', outcome: 'denied', meta: { reason: 'role not allowed (A-1)' } });
+    throw new ForbiddenException(`role ${user.role} cannot read invoice (5/15 A-1: only finance)`);
   }
   const inv = store.invoices.find((i) => i.id === invoiceId);
   if (!inv) throw new BadRequestException('invoice not found');
@@ -174,8 +180,11 @@ const sales1: MockUser = { sub: 'SAL01', role: 'sales', tenantId: 'TNT01' };
 const academic1: MockUser = { sub: 'ACAD01', role: 'academic', tenantId: 'TNT01' };
 const teacher1: MockUser = { sub: 'T_001', role: 'teacher', tenantId: 'TNT01' };
 const parent1: MockUser = { sub: 'PAR01', role: 'parent', tenantId: 'TNT01' };
+// 5/15 A-1: boss/admin 也不能开票/读发票（仅 finance）
+const boss1: MockUser = { sub: 'BOSS01', role: 'boss', tenantId: 'TNT01' };
+const admin1: MockUser = { sub: 'ADM01', role: 'admin', tenantId: 'TNT01' };
 
-describe('[L8 业务流 E2] 开票 (5 case)', () => {
+describe('[L8 业务流 E2] 开票 (7 case, 5/15 A-1 修订)', () => {
   let store: MockStore;
   let audit: MockAuditLog;
 
@@ -240,21 +249,86 @@ describe('[L8 业务流 E2] 开票 (5 case)', () => {
     expect(store.notifications[0].body).toContain('北京某科技有限公司');
   });
 
-  it('E2.5 sales / academic / teacher 看 invoices → 403', () => {
+  it('E2.5 sales / academic / teacher / parent 看 invoices → 403', () => {
     const inv = createInvoice(finance1, { contractId: 'CONTRACT_01', invoiceType: 'normal' }, store, audit);
 
     expect(() => readInvoice(sales1, inv.id, store, audit)).toThrow(ForbiddenException);
     expect(() => readInvoice(academic1, inv.id, store, audit)).toThrow(ForbiddenException);
     expect(() => readInvoice(teacher1, inv.id, store, audit)).toThrow(ForbiddenException);
+    // 5/15 A-1：parent 看 invoice.read → 403（parent 走 contract.read 看自己合同票）
+    expect(() => readInvoice(parent1, inv.id, store, audit)).toThrow(ForbiddenException);
 
     const denied = audit.byAction('invoice.read').filter((e) => e.outcome === 'denied');
-    expect(denied).toHaveLength(3);
-    expect(denied.map((d) => d.actorRole).sort()).toEqual(['academic', 'sales', 'teacher']);
+    expect(denied).toHaveLength(4);
+    expect(denied.map((d) => d.actorRole).sort()).toEqual(['academic', 'parent', 'sales', 'teacher']);
 
-    // finance / parent / boss / admin 可读
+    // 仅 finance 可读
     const readByFin = readInvoice(finance1, inv.id, store, audit);
     expect(readByFin.id).toBe(inv.id);
-    const readByPar = readInvoice(parent1, inv.id, store, audit);
-    expect(readByPar.id).toBe(inv.id);
+  });
+
+  it('E2.6 boss 开票 / 读发票 / 上传抬头 / 推进状态 → 全部 403（5/15 A-1）', () => {
+    // boss 不能创建
+    expect(() =>
+      createInvoice(boss1, { contractId: 'CONTRACT_BOSS', invoiceType: 'normal' }, store, audit),
+    ).toThrow(ForbiddenException);
+
+    // 先用 finance 建一个 invoice 给后续 boss 操作
+    const inv = createInvoice(finance1, { contractId: 'CONTRACT_01', invoiceType: 'normal' }, store, audit);
+
+    // boss 不能 upload-title
+    expect(() =>
+      uploadTitle(boss1, inv.id, { companyName: '某公司', taxId: '91110000xx' }, store, audit),
+    ).toThrow(ForbiddenException);
+
+    // boss 不能 issue
+    expect(() => issueInvoice(boss1, inv.id, store, audit)).toThrow(ForbiddenException);
+
+    // boss 不能 read
+    expect(() => readInvoice(boss1, inv.id, store, audit)).toThrow(ForbiddenException);
+
+    // 4 个 denied 都落 audit（reason 含 A-1）
+    const allDenied = audit.entries.filter(
+      (e) => e.outcome === 'denied' && e.actorRole === 'boss',
+    );
+    expect(allDenied).toHaveLength(4);
+    expect(allDenied.map((d) => d.action).sort()).toEqual([
+      'invoice.create',
+      'invoice.issue',
+      'invoice.read',
+      'invoice.upload-title',
+    ]);
+  });
+
+  it('E2.7 admin 开票 / 读发票 / 上传抬头 / 推进状态 → 全部 403（5/15 A-1）', () => {
+    // admin 不能创建
+    expect(() =>
+      createInvoice(admin1, { contractId: 'CONTRACT_ADMIN', invoiceType: 'normal' }, store, audit),
+    ).toThrow(ForbiddenException);
+
+    // finance 先建一个 invoice
+    const inv = createInvoice(finance1, { contractId: 'CONTRACT_02', invoiceType: 'normal' }, store, audit);
+
+    // admin 不能 upload-title
+    expect(() =>
+      uploadTitle(admin1, inv.id, { companyName: '某公司', taxId: '91110000xx' }, store, audit),
+    ).toThrow(ForbiddenException);
+
+    // admin 不能 issue
+    expect(() => issueInvoice(admin1, inv.id, store, audit)).toThrow(ForbiddenException);
+
+    // admin 不能 read
+    expect(() => readInvoice(admin1, inv.id, store, audit)).toThrow(ForbiddenException);
+
+    const allDenied = audit.entries.filter(
+      (e) => e.outcome === 'denied' && e.actorRole === 'admin',
+    );
+    expect(allDenied).toHaveLength(4);
+    expect(allDenied.map((d) => d.action).sort()).toEqual([
+      'invoice.create',
+      'invoice.issue',
+      'invoice.read',
+      'invoice.upload-title',
+    ]);
   });
 });

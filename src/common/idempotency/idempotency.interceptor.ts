@@ -42,6 +42,35 @@ const VALID_KEY = /^[a-zA-Z0-9_-]{8,128}$/;
 const SKIP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const TTL_SECONDS = 86400; // 24h
 
+/**
+ * P1-5 round 2 加强（2026-05-19）：
+ *   Redis 错误 message 可能含 redis://user:password@host:port 形态
+ *   （ioredis URL 解析失败 / 连接失败时把完整 URL 回显到 error.message）
+ *   日志输出前必须先 sanitize 防 password 泄漏到 pino 日志 / Sentry。
+ *
+ *   覆盖通用 URL 模式：scheme://[user:]pass@host
+ *     - redis://user:password@host → redis://***@host
+ *     - rediss://user:password@host:6380 → rediss://***@host:6380
+ *     - redis://:password@host → redis://***@host
+ *
+ *   不依赖具体错误类（兼容 ioredis ReplyError / 标准 Error / Object）。
+ */
+export function sanitizeRedisError(err: unknown): string {
+  let msg: string;
+  if (err instanceof Error) {
+    msg = err.message;
+  } else if (typeof err === 'string') {
+    msg = err;
+  } else if (err && typeof err === 'object' && 'message' in err) {
+    msg = String((err as { message: unknown }).message);
+  } else {
+    msg = 'unknown error';
+  }
+  // 主防御：redis(s)?:// + 任意非 @ 字符 + @ → 替换为 *** 占位
+  // 同时覆盖 [user:]password 双段形态
+  return msg.replace(/(rediss?:\/\/)[^@\s]+@/gi, '$1***@');
+}
+
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
   private readonly logger = new Logger(IdempotencyInterceptor.name);
@@ -107,7 +136,8 @@ export class IdempotencyInterceptor implements NestInterceptor {
       if (!raw) return null;
       return JSON.parse(raw) as { status: number; body: unknown };
     } catch (err) {
-      this.logger.warn(`idem safeGet failed (fail-open): ${(err as Error).message}`);
+      // P1-5 round 2: sanitize 防 password 泄漏（错误 message 可能含 redis://user:pass@host）
+      this.logger.warn(`idem safeGet failed (fail-open): ${sanitizeRedisError(err)}`);
       return null;
     }
   }
@@ -116,7 +146,8 @@ export class IdempotencyInterceptor implements NestInterceptor {
     try {
       await this.redis.set(key, JSON.stringify(value), TTL_SECONDS);
     } catch (err) {
-      this.logger.warn(`idem safeSet failed (fail-open): ${(err as Error).message}`);
+      // P1-5 round 2: sanitize 防 password 泄漏
+      this.logger.warn(`idem safeSet failed (fail-open): ${sanitizeRedisError(err)}`);
     }
   }
 }

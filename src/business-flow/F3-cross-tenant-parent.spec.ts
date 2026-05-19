@@ -1,5 +1,5 @@
 /**
- * L8 业务流 F3 — 跨 tenant 家长 (6 case)
+ * L8 业务流 F3 — 跨 tenant 家长 (6 case, P1-3 round 2 真 HMAC-SHA256 改造)
  *
  * 来源:
  *   - v2.0 §5.F3 跨 tenant 家长
@@ -13,8 +13,24 @@
  *   - parent 跨 tenant 反馈聚合
  *   - V40 phone_hash 唯一性
  *   - parent 看非自己绑定 student → 403
+ *
+ * P1-3 round 2 改造（2026-05-19）：
+ *   原 hashPhone = 'PH_' + phone 是明文拼接 — 同 phone 输入永远同输出，但**不等价于 HMAC-SHA256**。
+ *   现改用真实 crypto.createHmac('sha256', HASH_KEY)，输出 32 字节 Buffer：
+ *     - 同输入 + 同 key → 同输出（确定性，可建唯一索引 / WHERE 等值查询）
+ *     - 同输入 + 不同 key → 不同输出
+ *     - 不同输入 + 同 key → 不同输出（碰撞概率 2^-128 可忽略）
+ *   断言改为 instanceof Buffer + length=32 + timingSafeEqual 比对（与生产 HmacHasher 一致）。
  */
 import { ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
+import { createHmac, timingSafeEqual } from 'crypto';
+
+// P1-3: 真实 HMAC-SHA256 hashPhone（与生产 src/common/crypto/hmac-hasher.ts 同算法）
+// HASH_KEY 用 32 字节固定测试 key（与 spec 通用的 0x01 重复 key 一致，避免 jest.setup 全 0 冲突）
+const TEST_HASH_KEY = Buffer.alloc(32, 0x01);
+function hashPhoneReal(phone: string): Buffer {
+  return createHmac('sha256', TEST_HASH_KEY).update(phone).digest();
+}
 
 interface AuditEntry {
   actorRole: string;
@@ -34,7 +50,7 @@ class MockAuditLog {
 
 interface Parent {
   id: string;
-  phoneHash: string; // V40
+  phoneHash: Buffer; // V40 — 真 HMAC-SHA256 32 字节
   encryptedPhone: string; // V41 mock encrypted
   createdAt: Date;
 }
@@ -57,8 +73,9 @@ class MockStore {
   parents: Parent[] = [];
   bindings: ParentStudentBinding[] = [];
   feedbacks: Feedback[] = [];
-  hashPhone(phone: string): string {
-    return 'PH_' + phone;
+  // P1-3 round 2: 用真 HMAC-SHA256（与生产 HmacHasher 同算法）
+  hashPhone(phone: string): Buffer {
+    return hashPhoneReal(phone);
   }
   encryptPhone(phone: string): string {
     return 'ENC_' + phone;
@@ -67,8 +84,10 @@ class MockStore {
 
 function registerParent(phone: string, store: MockStore, audit: MockAuditLog, now: Date = new Date()): Parent {
   const phoneHash = store.hashPhone(phone);
-  // V40 phone_hash 唯一
-  const existing = store.parents.find((p) => p.phoneHash === phoneHash);
+  // V40 phone_hash 唯一 — 用 timingSafeEqual 比对 Buffer（防侧信道，且 Buffer === 是引用比较不等价于内容比较）
+  const existing = store.parents.find(
+    (p) => p.phoneHash.length === phoneHash.length && timingSafeEqual(p.phoneHash, phoneHash),
+  );
   if (existing) {
     audit.log({ actorRole: 'parent', action: 'parent.register', outcome: 'denied', meta: { reason: 'phone exists' } });
     throw new ConflictException('phone already registered');
@@ -141,10 +160,16 @@ describe('[L8 业务流 F3] 跨 tenant 家长 (6 case)', () => {
     audit = new MockAuditLog();
   });
 
-  it('F3.1 parent 注册 (public.parents)', () => {
+  it('F3.1 parent 注册 (public.parents) — phone_hash 是真 HMAC-SHA256 32 字节', () => {
     const parent = registerParent('13800000001', store, audit);
     expect(parent.id).toBeTruthy();
-    expect(parent.phoneHash).toBe('PH_13800000001');
+    // P1-3 round 2: phone_hash 是 Buffer 长度 32（HMAC-SHA256 输出）
+    expect(parent.phoneHash).toBeInstanceOf(Buffer);
+    expect(parent.phoneHash).toHaveLength(32);
+    // 同 phone 输入必产出同 hash（确定性）
+    expect(timingSafeEqual(parent.phoneHash, hashPhoneReal('13800000001'))).toBe(true);
+    // 不同 phone 输入必产出不同 hash
+    expect(timingSafeEqual(parent.phoneHash, hashPhoneReal('13800000002'))).toBe(false);
     expect(parent.encryptedPhone).toBe('ENC_13800000001');
     expect(store.parents).toHaveLength(1);
     expect(audit.byAction('parent.register').filter((e) => e.outcome === 'success')).toHaveLength(1);

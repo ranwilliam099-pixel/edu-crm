@@ -27,8 +27,7 @@ const TENANT_A = 'tenant_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const INVOICE_ID = '01HRX5INVOICE0000000000000000A01';
 const CONTRACT_ID = '01HRX5CONTRACT00000000000000A001';
 const USER_FINANCE = 'usrFinance00000000000000000000A1';
-const USER_BOSS = 'usrBoss000000000000000000000000A1';
-const USER_ADMIN = 'usrAdmin0000000000000000000000A1';
+// 5/15 A-1：USER_BOSS / USER_ADMIN 在 invoice 域不再用 — boss/admin 不能创建/读/改发票
 const CAMPUS_A = 'campus_A00000000000000000000000A1';
 
 function jwt(role: TenantRole, sub = USER_FINANCE) {
@@ -128,22 +127,10 @@ describe('InvoiceController (Wave 4A.2-T1)', () => {
       expect(auditCtx.requestId).toBe('req-test-w4a-001');
     });
 
-    it('boss happy path → currentUser.role=boss 传到 service', async () => {
-      service.createInvoice.mockResolvedValueOnce(invoiceFixture());
-      const req = makeReq({ user: jwt('boss', USER_BOSS) });
-      await controller.create(validBody(), req);
-      const [, currentUser] = service.createInvoice.mock.calls[0];
-      expect(currentUser.role).toBe('boss');
-      expect(currentUser.sub).toBe(USER_BOSS);
-    });
-
-    it('admin happy path → currentUser.role=admin 传到 service', async () => {
-      service.createInvoice.mockResolvedValueOnce(invoiceFixture());
-      const req = makeReq({ user: jwt('admin', USER_ADMIN) });
-      await controller.create(validBody(), req);
-      const [, currentUser] = service.createInvoice.mock.calls[0];
-      expect(currentUser.role).toBe('admin');
-    });
+    // 5/15 A-1 拍板：boss/admin 不直接调 create — 由 RbacGuard 在 controller 前抛 403
+    // 此处不再保留 boss/admin happy-path（spec 直调 controller 绕过 guard，但 @Roles 已禁止）
+    // 真实路径行为由 batch-b-peripheral.spec.ts (RbacGuard.canActivate boss/admin → ForbiddenException) 覆盖
+    // 此 controller-spec 只保留 finance happy-path 验业务调用契约
 
     // ---- 入参校验（在 controller 层 fail-fast）-----
     it('tenantSchema 缺失 → BadRequest', async () => {
@@ -342,7 +329,7 @@ describe('InvoiceController (Wave 4A.2-T1)', () => {
       service.findById.mockResolvedValueOnce(invoiceFixture());
       const r = await controller.detail(INVOICE_ID, TENANT_A);
       expect(r).toEqual(invoiceFixture());
-      expect((r as Invoice).receivePhone).toBe('13800001234'); // finance/boss/admin 全权
+      expect((r as Invoice).receivePhone).toBe('13800001234'); // 5/15 A-1：仅 finance 可读完整 PII
       expect(service.findById).toHaveBeenCalledWith(TENANT_A, INVOICE_ID);
     });
 
@@ -360,22 +347,23 @@ describe('InvoiceController (Wave 4A.2-T1)', () => {
     // @Roles 装饰器使用 ROLES_METADATA_KEY = 'rbac_roles'（见 guards/rbac.decorator.ts）
     const ROLES_KEY = 'rbac_roles';
 
-    it('create 方法 @Roles 含 finance + boss + admin', () => {
+    // 2026-05-15 A-1 修订：finance.invoice.create=[finance]（不含 boss/admin）
+    it('create 方法 @Roles 严格等于 [finance]（5/15 A-1 拍板）', () => {
       const roles = Reflect.getMetadata(ROLES_KEY, InvoiceController.prototype.create);
-      expect(roles).toEqual(expect.arrayContaining(['finance', 'boss', 'admin']));
+      expect(roles).toEqual(['finance']);
     });
 
-    it('listPending 方法 @Roles 含 finance + boss + admin', () => {
+    it('listPending 方法 @Roles 严格等于 [finance]（5/15 A-1 拍板）', () => {
       const roles = Reflect.getMetadata(ROLES_KEY, InvoiceController.prototype.listPending);
-      expect(roles).toEqual(expect.arrayContaining(['finance', 'boss', 'admin']));
+      expect(roles).toEqual(['finance']);
     });
 
-    it('detail 方法 @Roles 含 finance + boss + admin', () => {
+    it('detail 方法 @Roles 严格等于 [finance]（5/15 A-1 拍板）', () => {
       const roles = Reflect.getMetadata(ROLES_KEY, InvoiceController.prototype.detail);
-      expect(roles).toEqual(expect.arrayContaining(['finance', 'boss', 'admin']));
+      expect(roles).toEqual(['finance']);
     });
 
-    it('@Roles 不包含 sales / teacher / academic / parent (拍板拒绝角色)', () => {
+    it('@Roles 不包含 sales / teacher / academic / parent / boss / admin (拍板拒绝角色)', () => {
       const createRoles: string[] =
         Reflect.getMetadata(ROLES_KEY, InvoiceController.prototype.create) || [];
       expect(createRoles).not.toContain('sales');
@@ -386,6 +374,9 @@ describe('InvoiceController (Wave 4A.2-T1)', () => {
       // 5/15 A-2：sales_director 应用层已删 → 不应在任何 @Roles 装饰器里出现
       expect(createRoles).not.toContain('sales_director');
       expect(createRoles).not.toContain('hr');
+      // 5/15 A-1：boss/admin 也不在 invoice.create.allow（红冲走 delete 路径）
+      expect(createRoles).not.toContain('boss');
+      expect(createRoles).not.toContain('admin');
     });
   });
 

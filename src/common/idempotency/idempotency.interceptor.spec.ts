@@ -1,6 +1,6 @@
-import { BadRequestException, CallHandler, ExecutionContext } from '@nestjs/common';
+import { BadRequestException, CallHandler, ExecutionContext, Logger } from '@nestjs/common';
 import { firstValueFrom, of } from 'rxjs';
-import { IdempotencyInterceptor } from './idempotency.interceptor';
+import { IdempotencyInterceptor, sanitizeRedisError } from './idempotency.interceptor';
 import { RedisService } from '../../modules/redis/redis.service';
 
 describe('IdempotencyInterceptor', () => {
@@ -266,6 +266,109 @@ describe('IdempotencyInterceptor', () => {
         (await interceptor.intercept(ctx, next as unknown as CallHandler)) as never,
       );
       expect(out).toEqual({ id: 'new' });
+    });
+  });
+
+  // ============================================================
+  // P1-5 round 2 加强：Redis 错误 message 必须 sanitize 防 password 泄漏
+  // ============================================================
+
+  describe('sanitizeRedisError() 单元', () => {
+    it('redis://user:password@host 必须脱敏为 redis://***@host', () => {
+      const err = new Error('connect ETIMEDOUT redis://default:s3cretP4ss@redis.prod:6379');
+      const sanitized = sanitizeRedisError(err);
+      expect(sanitized).not.toContain('s3cretP4ss');
+      expect(sanitized).toContain('redis://***@redis.prod:6379');
+    });
+
+    it('rediss://（TLS）+ 用户名:密码 → 同样脱敏', () => {
+      const err = new Error('Auth failed at rediss://admin:topSecret@rds.example.com:6380/0');
+      const sanitized = sanitizeRedisError(err);
+      expect(sanitized).not.toContain('topSecret');
+      expect(sanitized).not.toContain('admin:topSecret');
+      expect(sanitized).toContain('rediss://***@rds.example.com:6380/0');
+    });
+
+    it('redis://:password@host (无用户名仅密码) → 脱敏', () => {
+      const err = new Error('NOAUTH redis://:onlyPassword@1.2.3.4:6379');
+      const sanitized = sanitizeRedisError(err);
+      expect(sanitized).not.toContain('onlyPassword');
+      expect(sanitized).toContain('redis://***@1.2.3.4:6379');
+    });
+
+    it('多个 redis URL → 全部脱敏', () => {
+      const err = new Error('master redis://a:p1@h1 / replica rediss://b:p2@h2');
+      const sanitized = sanitizeRedisError(err);
+      expect(sanitized).not.toContain('p1');
+      expect(sanitized).not.toContain('p2');
+      // 两个 URL 都被 ***@ 替换
+      expect(sanitized.match(/\*\*\*@/g)).toHaveLength(2);
+    });
+
+    it('普通错误 message（无 URL）→ 原样输出', () => {
+      const err = new Error('ECONNREFUSED 127.0.0.1:6379');
+      expect(sanitizeRedisError(err)).toBe('ECONNREFUSED 127.0.0.1:6379');
+    });
+
+    it('非 Error 对象（字符串 / 对象 / null）→ fallback 安全字符串', () => {
+      expect(sanitizeRedisError('redis://x:p@y')).toBe('redis://***@y');
+      expect(sanitizeRedisError({ message: 'redis://a:b@c' })).toBe('redis://***@c');
+      expect(sanitizeRedisError(null)).toBe('unknown error');
+      expect(sanitizeRedisError(undefined)).toBe('unknown error');
+    });
+  });
+
+  describe('safeGet/safeSet 日志含敏感凭据时 → sanitized 后输出', () => {
+    let warnSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    it('safeGet Redis 错误含 password → 日志输出脱敏后字符串（不含明文密码）', async () => {
+      const err = new Error('connect failed redis://default:LeakedPw123@10.0.0.5:6379');
+      redis.get.mockRejectedValueOnce(err);
+      next.handle.mockReturnValue(of({ ok: true }));
+      const ctx = makeCtx({
+        method: 'POST',
+        headers: { 'idempotency-key': 'idem-key-12345678' },
+        user: { id: 'sales-1' },
+      });
+      await firstValueFrom(
+        (await interceptor.intercept(ctx, next as unknown as CallHandler)) as never,
+      );
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const loggedMessage = warnSpy.mock.calls[0][0] as string;
+      expect(loggedMessage).toContain('idem safeGet failed');
+      expect(loggedMessage).not.toContain('LeakedPw123'); // 关键断言：密码不能出现在日志
+      expect(loggedMessage).toContain('***@10.0.0.5:6379');
+    });
+
+    it('safeSet Redis 错误含 password → 日志脱敏', async () => {
+      redis.get.mockResolvedValueOnce(null);
+      const err = new Error('SET timeout rediss://user:AnotherSecret@redis.cn:6380');
+      redis.set.mockRejectedValueOnce(err);
+      next.handle.mockReturnValue(of({ id: 'new' }));
+      const ctx = makeCtx({
+        method: 'POST',
+        headers: { 'idempotency-key': 'idem-key-12345678' },
+        user: { id: 'sales-1' },
+      });
+      await firstValueFrom(
+        (await interceptor.intercept(ctx, next as unknown as CallHandler)) as never,
+      );
+      // warn 至少 1 次（safeSet 调用）
+      const setWarnCall = warnSpy.mock.calls.find((c) =>
+        (c[0] as string).includes('idem safeSet failed'),
+      );
+      expect(setWarnCall).toBeDefined();
+      const loggedMessage = setWarnCall![0] as string;
+      expect(loggedMessage).not.toContain('AnotherSecret');
+      expect(loggedMessage).toContain('***@redis.cn:6380');
     });
   });
 

@@ -72,6 +72,66 @@ function mkMismatchRequest(user: JwtPayload | undefined): ExecutionContext {
   } as any;
 }
 
+/**
+ * P1-2 round 2 加强：3 个补充攻击向量
+ *   - query.tenantId mismatch     → TenantScopeGuard guard 第 3 段拦
+ *   - query.tenantSchema mismatch → TenantScopeGuard guard 第 4 段拦
+ *   - x-tenant-schema header mismatch → TenantScopeGuard guard 第 5 段拦
+ * 平台角色 (platform_admin/finance_admin) 期望放行；普通角色期望 ForbiddenException
+ */
+const TENANT_OTHER_ID = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMNXX'; // 与 SELF tenantId 不同
+
+function mkMismatchQueryTenantId(user: JwtPayload | undefined): ExecutionContext {
+  return {
+    switchToHttp: () => ({
+      getRequest: () => ({
+        user,
+        body: {},
+        query: { tenantId: TENANT_OTHER_ID },
+        headers: {},
+        method: 'GET',
+        url: '/api/db/test-endpoint',
+      }),
+    }),
+    getHandler: () => undefined,
+    getClass: () => undefined,
+  } as any;
+}
+
+function mkMismatchQueryTenantSchema(user: JwtPayload | undefined): ExecutionContext {
+  return {
+    switchToHttp: () => ({
+      getRequest: () => ({
+        user,
+        body: {},
+        query: { tenantSchema: TENANT_OTHER_SCHEMA },
+        headers: {},
+        method: 'GET',
+        url: '/api/db/test-endpoint',
+      }),
+    }),
+    getHandler: () => undefined,
+    getClass: () => undefined,
+  } as any;
+}
+
+function mkMismatchHeader(user: JwtPayload | undefined): ExecutionContext {
+  return {
+    switchToHttp: () => ({
+      getRequest: () => ({
+        user,
+        body: {},
+        query: {},
+        headers: { 'x-tenant-schema': TENANT_OTHER_SCHEMA },
+        method: 'GET',
+        url: '/api/db/test-endpoint',
+      }),
+    }),
+    getHandler: () => undefined,
+    getClass: () => undefined,
+  } as any;
+}
+
 describe('[RBAC L9 Batch C] 跨 tenant 强制 403 — 18 对象 × 13 角色 = 234 case', () => {
   let guard: TenantScopeGuard;
 
@@ -871,6 +931,77 @@ describe('[RBAC L9 Batch C] 跨 tenant 强制 403 — 18 对象 × 13 角色 = 2
     it('finance_admin (平台角色) → canActivate 返 true (isPlatformRole 豁免)', () => {
       const result = guard.canActivate(mkMismatchRequest(mkSelfUser('finance_admin')));
       expect(result).toBe(true);
+    });
+  });
+
+  // ============================================================
+  // P1-2 round 2: 3 个补充攻击向量 (query.tenantId / query.tenantSchema / x-tenant-schema)
+  // 验证 TenantScopeGuard 在所有 4 个 mismatch 通道都拦攻击
+  // ============================================================
+
+  describe('攻击向量 2: query.tenantId mismatch', () => {
+    it('普通角色 (admin) → ForbiddenException (跨 tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchQueryTenantId(mkSelfUser('admin')))).toThrow(ForbiddenException);
+    });
+
+    it('普通角色 (sales) → ForbiddenException', () => {
+      expect(() => guard.canActivate(mkMismatchQueryTenantId(mkSelfUser('sales')))).toThrow(ForbiddenException);
+    });
+
+    it('普通角色 (parent) → ForbiddenException', () => {
+      expect(() => guard.canActivate(mkMismatchQueryTenantId(mkSelfUser('parent')))).toThrow(ForbiddenException);
+    });
+
+    it('平台角色 (platform_admin) → 放行 (isPlatformRole 豁免)', () => {
+      expect(guard.canActivate(mkMismatchQueryTenantId(mkSelfUser('platform_admin')))).toBe(true);
+    });
+
+    it('平台角色 (finance_admin) → 放行', () => {
+      expect(guard.canActivate(mkMismatchQueryTenantId(mkSelfUser('finance_admin')))).toBe(true);
+    });
+  });
+
+  describe('攻击向量 3: query.tenantSchema mismatch', () => {
+    it('普通角色 (admin) → ForbiddenException', () => {
+      expect(() => guard.canActivate(mkMismatchQueryTenantSchema(mkSelfUser('admin')))).toThrow(ForbiddenException);
+    });
+
+    it('普通角色 (academic) → ForbiddenException', () => {
+      expect(() => guard.canActivate(mkMismatchQueryTenantSchema(mkSelfUser('academic')))).toThrow(ForbiddenException);
+    });
+
+    it('普通角色 (finance) → ForbiddenException', () => {
+      expect(() => guard.canActivate(mkMismatchQueryTenantSchema(mkSelfUser('finance')))).toThrow(ForbiddenException);
+    });
+
+    it('平台角色 (platform_admin) → 放行', () => {
+      expect(guard.canActivate(mkMismatchQueryTenantSchema(mkSelfUser('platform_admin')))).toBe(true);
+    });
+
+    it('平台角色 (finance_admin) → 放行', () => {
+      expect(guard.canActivate(mkMismatchQueryTenantSchema(mkSelfUser('finance_admin')))).toBe(true);
+    });
+  });
+
+  describe('攻击向量 4: x-tenant-schema header mismatch', () => {
+    it('普通角色 (boss) → ForbiddenException', () => {
+      expect(() => guard.canActivate(mkMismatchHeader(mkSelfUser('boss')))).toThrow(ForbiddenException);
+    });
+
+    it('普通角色 (teacher) → ForbiddenException', () => {
+      expect(() => guard.canActivate(mkMismatchHeader(mkSelfUser('teacher')))).toThrow(ForbiddenException);
+    });
+
+    it('普通角色 (parent) → ForbiddenException', () => {
+      expect(() => guard.canActivate(mkMismatchHeader(mkSelfUser('parent')))).toThrow(ForbiddenException);
+    });
+
+    it('平台角色 (platform_admin) → 放行', () => {
+      expect(guard.canActivate(mkMismatchHeader(mkSelfUser('platform_admin')))).toBe(true);
+    });
+
+    it('平台角色 (finance_admin) → 放行', () => {
+      expect(guard.canActivate(mkMismatchHeader(mkSelfUser('finance_admin')))).toBe(true);
     });
   });
 
