@@ -1,0 +1,160 @@
+{
+  "$schema": "./manifest.schema.json",
+  "version": "1.0.0",
+  "generatedAt": "2026-05-19",
+  "source": "docs/SSOT-拍板权威.md §1 角色 + §4 字段矩阵 + §6 操作权限矩阵",
+  "doc": "Manifest 是 RBAC generator 的输入：9 角色 × 18 对象 × 4 CRUD = 期望 allow/deny 单元格。任何代码改 @Roles → 必同步改本 manifest → 重跑 generator → diff PR。Manifest 与代码不一致 = 真 bug 揭露。",
+  "roles": {
+    "_doc": "SSOT §1 9 角色清单（8 业务 + 1 平台）+ 4 个代码现实辅助角色（marketing/hr/sales_manager/academic_admin 来自 TenantRole / SSOT §1 sales_manager 在 §6 矩阵）",
+    "ssot": [
+      "admin",
+      "boss",
+      "sales",
+      "sales_manager",
+      "academic",
+      "teacher",
+      "finance",
+      "parent",
+      "platform_admin"
+    ],
+    "auxiliary": [
+      "marketing",
+      "hr",
+      "academic_admin",
+      "finance_admin"
+    ]
+  },
+  "objects": {
+    "_doc": "SSOT §4 字段矩阵 5 核心对象 + §5 18 对象打包。Batch A = 核心 5（customer/student/contract/teacher/parent）",
+    "batchA": [
+      "customer",
+      "student",
+      "contract",
+      "teacher",
+      "parent"
+    ]
+  },
+  "actions": ["create", "read", "update", "delete"],
+  "matrix": {
+    "_doc": "每个对象一个 sub-object，按 4 CRUD 列允许/拒绝角色。SSOT §6 + §4 + 代码 controller @Roles 综合 ground truth。",
+
+    "customer": {
+      "_ssot": "§4.4 + §6 customer.create=[sales, sales_manager, boss, admin]",
+      "create": {
+        "allow": ["sales", "sales_manager", "boss", "admin"],
+        "deny": ["academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "read": {
+        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "finance"],
+        "_note": "sales 仅看 owner=self / 池; academic 看本校已成交; finance 仅作账金额; SSOT §4.4 customer.联系人=销 owner=me ✅ / 务 本校已成交 ✅ / 老校 ✅ / 财 ❌; customer.购业 财 ✅作账",
+        "deny": ["teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+      },
+      "update": {
+        "allow": ["sales", "sales_manager", "boss", "admin"],
+        "_note": "owner 字段仅 owner 自己改 / sales_manager 调拨; SSOT §4.4 销 ✅ owner=me / 老校 ✅",
+        "deny": ["academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "delete": {
+        "allow": ["admin", "boss"],
+        "_note": "客户软删 archive 仅老校 admin/boss; 销售自己不删客户 (历史保留)",
+        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      }
+    },
+
+    "student": {
+      "_ssot": "§4.1 student OOUX 中心对象 + §6 student.transferSales=[admin,boss,sales,sales_manager] + student.transferTeacher=[admin,boss]",
+      "create": {
+        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin"],
+        "_note": "试听后由教务/老板/admin 显式 customer.promote-student; sales 在客户详情建学生 (§4.1 销 ✅ 自己客户)",
+        "deny": ["teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+      },
+      "read": {
+        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "teacher", "parent"],
+        "_note": "sales 自己客户 ✅; teacher 主带 ✅ (controller 层 ownership 校验, 非 @Roles 层); parent C 端独立 ✅ (走 ParentJwt aud)",
+        "deny": ["finance", "platform_admin", "finance_admin", "marketing", "hr"]
+      },
+      "update": {
+        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin"],
+        "_note": "§4.1 销 ✅ 自己客户 / 务 ✅ 本校 / 老校 ✅",
+        "deny": ["teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+      },
+      "delete": {
+        "allow": ["admin", "boss"],
+        "_note": "学员归档仅 admin/boss (F4 拍板)",
+        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      }
+    },
+
+    "contract": {
+      "_ssot": "§4.5 + §6 contract.create=[sales, sales_manager, boss, admin] (5/15 Wave 11 修订 去除 academic)",
+      "create": {
+        "allow": ["sales", "sales_manager", "boss", "admin"],
+        "_note": "5/15 Wave 11 修订：教务续费走 OOUX 通知销售路径; finance 不签合同",
+        "deny": ["academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "read": {
+        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "finance", "parent"],
+        "_note": "§4.5 销 ✅ 自己 / 务 ✅ 本校 / 老校 ✅ / 财 ✅作账 / 家 ✅自己; teacher 仅看主带学员剩余课时不看金额; teacher 不看合同对象本身",
+        "deny": ["teacher", "platform_admin", "finance_admin", "marketing", "hr"]
+      },
+      "update": {
+        "allow": ["sales", "sales_manager", "boss", "admin"],
+        "_note": "§4.5 销 ✅ 自己续费机会 / 老校 ✅ 接手",
+        "deny": ["academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "delete": {
+        "allow": ["admin", "boss"],
+        "_note": "合同退费/作废仅 admin/boss; finance 处理退费但不删合同",
+        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      }
+    },
+
+    "teacher": {
+      "_ssot": "§4.3 teacher 23 字段 + §6 teacher.basic.edit=[admin,boss]",
+      "create": {
+        "allow": ["admin", "boss"],
+        "_note": "§12.4 admin 唯一创建 B 端子账户 (boss 也不能, SSOT §12.4 拍板; 但 user.controller 现实 @Roles('admin','boss') — Sprint Y backlog 收敛); 本 manifest 暂含 boss 因 user.controller 现状",
+        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "read": {
+        "allow": ["admin", "boss", "academic", "academic_admin", "teacher", "sales", "sales_manager", "parent"],
+        "_note": "§4.3 师自 ✅ / 务 👁 不改 / 老校 ✅ / 同校师 👁 透明 / 家 走 showcase / 销 走 showcase / sales_manager 视作 sales 主管同看; finance 不看老师档案 (薪资全删后无需要)",
+        "deny": ["finance", "platform_admin", "finance_admin", "marketing", "hr"]
+      },
+      "update": {
+        "allow": ["admin", "boss", "teacher"],
+        "_note": "teacher self-edit 自己档案 (C2-1); §4.3 师自 ✅ 全编辑 / 老校 ✅; 教务不改 (§4.3 务 👁 不改); admin/boss 改任何老师",
+        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "delete": {
+        "allow": ["admin", "boss"],
+        "_note": "V27 离职链路: deactivated_at + 数据交接; 仅 admin/boss",
+        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      }
+    },
+
+    "parent": {
+      "_ssot": "§12.5 教务/销售/admin/boss 在学员页绑定 + §6 parent C 端跨机构共享订阅",
+      "create": {
+        "allow": ["sales", "sales_manager", "academic", "academic_admin", "admin", "boss"],
+        "_note": "§12.5 教务/销售在学员页绑定家长 (T-PARENT-BIND-BY-STAFF); admin/boss 兜底",
+        "deny": ["teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+      },
+      "read": {
+        "allow": ["sales", "sales_manager", "academic", "academic_admin", "admin", "boss", "parent"],
+        "_note": "B 端业务人员在学员页看家长卡; parent 自己 ✅ (C 端 ParentJwt); teacher 不看家长详情 (PII 隔离)",
+        "deny": ["teacher", "finance", "platform_admin", "finance_admin", "marketing", "hr"]
+      },
+      "update": {
+        "allow": ["sales", "sales_manager", "academic", "academic_admin", "admin", "boss"],
+        "_note": "binding 撤绑 (T-PARENT-UNBIND); parent 自己改不在本端点 (走 C 端 /parents/me)",
+        "deny": ["teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+      },
+      "delete": {
+        "allow": ["admin", "boss"],
+        "_note": "parents.status='停用' 软删仅 admin/boss; 解绑 ≠ 删除 (§12.6 失效逻辑)",
+        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      }
+    }
+  }
+}
