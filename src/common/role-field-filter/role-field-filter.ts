@@ -325,9 +325,11 @@ export function maskContract<T extends Contract>(
       return masked;
 
     case 'academic':
-      // 教务 👁 仅付费状态：金额细节 ❌
+      // 教务 👁 仅付费状态：金额细节 ❌（Day 5 三审 Finding 1 修：加 giftHours）
+      //   SSOT §4.5 拍板「价格 👁 仅付费状态」→ 赠课数是价格构成（折扣的间接路径），academic 不看
       masked.standardPrice = 0;
       masked.discountAmount = 0;
+      masked.giftHours = 0; // Day 6 leader 拍板：academic 不看赠课（避免反推折扣）
       // totalAmount 保留（拍板「续费话术依据」），但 academic 不看具体折扣构成
       return masked;
 

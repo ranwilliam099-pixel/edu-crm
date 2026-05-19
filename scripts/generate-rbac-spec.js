@@ -49,8 +49,8 @@ const args = process.argv.slice(2);
 const batchArg = args.find((a) => a.startsWith('--batch='));
 const batch = batchArg ? batchArg.split('=')[1] : 'a';
 
-if (!['a', 'b', 'c', 'all'].includes(batch)) {
-  console.error(`[generator] unsupported batch=${batch}; supported: a / b / c / all (Day 5: Batch B/C added)`);
+if (!['a', 'b', 'c', 'd', 'all'].includes(batch)) {
+  console.error(`[generator] unsupported batch=${batch}; supported: a / b / c / d / all (Day 6: Batch D field permission added)`);
   process.exit(2);
 }
 
@@ -132,6 +132,55 @@ if (!manifest.crossTenantBoundary || !Array.isArray(manifest.crossTenantBoundary
       validationErrors++;
     }
   }
+}
+
+// Validate fieldPermission section (Batch D) — non-fatal if missing, only batch=d/all uses it
+if (manifest.fieldPermission && manifest.fieldPermission.objects) {
+  const fpObjects = manifest.fieldPermission.objects;
+  // Batch D expected objects: customer / teacher / contract (with mask fn) + student / parent (access fn)
+  const expectedFpObjects = ['customer', 'teacher', 'contract', 'student', 'parent'];
+  for (const obj of expectedFpObjects) {
+    if (!fpObjects[obj] || !fpObjects[obj]._fields) {
+      console.error(`[generator] fieldPermission.objects.${obj}._fields missing`);
+      validationErrors++;
+      continue;
+    }
+    const fields = fpObjects[obj]._fields;
+    for (const [fieldName, cell] of Object.entries(fields)) {
+      // Each field must have visible/masked/hidden arrays (or _expectedGroup for parent role-mapping case)
+      if (cell._expectedGroup) {
+        // parent.role_group_mapping special case — no visible/masked/hidden, just role → group map
+        continue;
+      }
+      if (!Array.isArray(cell.visible) || !Array.isArray(cell.masked) || !Array.isArray(cell.hidden)) {
+        console.error(`[generator] fieldPermission.${obj}._fields.${fieldName} missing visible/masked/hidden arrays`);
+        validationErrors++;
+        continue;
+      }
+      // overlap check
+      const v = new Set(cell.visible);
+      const m = new Set(cell.masked);
+      const h = new Set(cell.hidden);
+      const overlapVM = cell.visible.filter((r) => m.has(r));
+      const overlapVH = cell.visible.filter((r) => h.has(r));
+      const overlapMH = cell.masked.filter((r) => h.has(r));
+      if (overlapVM.length > 0) {
+        console.error(`[generator] fieldPermission.${obj}.${fieldName} visible∩masked overlap: ${overlapVM.join(',')}`);
+        validationErrors++;
+      }
+      if (overlapVH.length > 0) {
+        console.error(`[generator] fieldPermission.${obj}.${fieldName} visible∩hidden overlap: ${overlapVH.join(',')}`);
+        validationErrors++;
+      }
+      if (overlapMH.length > 0) {
+        console.error(`[generator] fieldPermission.${obj}.${fieldName} masked∩hidden overlap: ${overlapMH.join(',')}`);
+        validationErrors++;
+      }
+    }
+  }
+} else if (batch === 'd' || batch === 'all') {
+  console.error(`[generator] manifest.fieldPermission missing (required for batch=d/all)`);
+  validationErrors++;
 }
 
 if (validationErrors > 0) {
@@ -678,6 +727,591 @@ function emitBatchC() {
   return lines.join('\n');
 }
 
+// ---------- emit Batch D (field permission: visible / masked / hidden per role × field) ----------
+function emitBatchD() {
+  const fp = manifest.fieldPermission;
+  if (!fp || !fp.objects) {
+    throw new Error('manifest.fieldPermission missing');
+  }
+  const customerFields = fp.objects.customer._fields;
+  const teacherFields = fp.objects.teacher._fields;
+  const contractFields = fp.objects.contract._fields;
+  const studentFields = fp.objects.student._fields;
+  const parentObj = fp.objects.parent;
+
+  // Count cases statically for header comment
+  let caseCount = 0;
+  for (const [, cell] of Object.entries(customerFields)) {
+    caseCount += cell.visible.length + cell.masked.length + cell.hidden.length;
+  }
+  for (const [, cell] of Object.entries(teacherFields)) {
+    caseCount += cell.visible.length + cell.masked.length + cell.hidden.length;
+  }
+  for (const [, cell] of Object.entries(contractFields)) {
+    caseCount += cell.visible.length + cell.masked.length + cell.hidden.length;
+  }
+  for (const [, cell] of Object.entries(studentFields)) {
+    caseCount += cell.visible.length + cell.masked.length + cell.hidden.length;
+  }
+  // parent role_group_mapping: one case per role
+  const parentRoleMappingCases = Object.keys(parentObj._fields.role_group_mapping._expectedGroup).length;
+  caseCount += parentRoleMappingCases;
+  // Corner case defensive depth: 14 it() blocks (user undefined / null role / fixture immutability / actorGroupOf edge / canAccess public pool)
+  const cornerCases = 14;
+  caseCount += cornerCases;
+
+  const lines = [];
+  lines.push(`/**`);
+  lines.push(` * Auto-generated RBAC spec — Batch D (字段级权限矩阵 visible / masked / hidden)`);
+  lines.push(` *`);
+  lines.push(` * !!! 禁止手改 !!! 改 src/__rbac__/manifest.json + 重跑 scripts/generate-rbac-spec.js`);
+  lines.push(` *`);
+  lines.push(` * 生成时间: ${manifest.generatedAt}`);
+  lines.push(` * 来源: ${manifest.source}`);
+  lines.push(` *`);
+  lines.push(` * 测试目标:`);
+  lines.push(` *   验证 RoleFieldFilter.maskCustomer / maskTeacher / maskContract 三个 mask 函数,`);
+  lines.push(` *   外加 canAccessStudent / canAccessContract / canAccessCustomer 三个 access 函数`);
+  lines.push(` *   + actorGroupOf role → group 映射 — 13 角色组路由判定一致性`);
+  lines.push(` *`);
+  lines.push(` * 与 Batch A/B/C 区别:`);
+  lines.push(` *   - Batch A/B: controller-level @Roles (RbacGuard.canActivate)`);
+  lines.push(` *   - Batch C:   跨 tenant 拦截 (TenantScopeGuard.canActivate)`);
+  lines.push(` *   - Batch D:   字段级数据过滤 (mask*() / canAccess*())  ← 本批`);
+  lines.push(` *`);
+  const customerFieldCount = Object.keys(customerFields).length;
+  const teacherFieldCount = Object.keys(teacherFields).length;
+  const contractFieldCount = Object.keys(contractFields).length;
+  const studentFieldCount = Object.keys(studentFields).length;
+  lines.push(` * 总 case 数: ${caseCount}`);
+  lines.push(` *   customer: ${customerFieldCount} 字段 × 13 角色变体 = ${Object.entries(customerFields).reduce((acc, [, c]) => acc + c.visible.length + c.masked.length + c.hidden.length, 0)} case`);
+  lines.push(` *   teacher:  ${teacherFieldCount} 字段 × 13 角色变体 = ${Object.entries(teacherFields).reduce((acc, [, c]) => acc + c.visible.length + c.masked.length + c.hidden.length, 0)} case`);
+  lines.push(` *   contract: ${contractFieldCount} 字段 × 13 角色变体 = ${Object.entries(contractFields).reduce((acc, [, c]) => acc + c.visible.length + c.masked.length + c.hidden.length, 0)} case`);
+  lines.push(` *   student:  ${studentFieldCount} access field × 13 角色变体 = ${Object.entries(studentFields).reduce((acc, [, c]) => acc + c.visible.length + c.masked.length + c.hidden.length, 0)} case`);
+  lines.push(` *   parent:   role_group_mapping × ${parentRoleMappingCases} 角色 = ${parentRoleMappingCases} case`);
+  lines.push(` *   corner:   ${cornerCases} case (user undefined / null role / fixture immutability / actorGroupOf edge / canAccess public pool)`);
+  lines.push(` *`);
+  lines.push(` * 角色变体扩展 (本批特有):`);
+  lines.push(` *   - sales_owner: sales 角色 + isOwnerSelf=true`);
+  lines.push(` *   - sales_other: sales 角色 + isOwnerSelf=false`);
+  lines.push(` *   - teacher_self: teacher 角色 + isSelf=true`);
+  lines.push(` *   - teacher_other: teacher 角色 + isSelf=false`);
+  lines.push(` *`);
+  lines.push(` * 强约束 (反 agent 偷懒):`);
+  lines.push(` *   - 每个 case 调真 RoleFieldFilter.mask*() / canAccess*() 函数, 不假设行为`);
+  lines.push(` *   - visible: 字段保留原值 (toBe / toEqual)`);
+  lines.push(` *   - masked:  字段值变 null / 0 / undefined (按字段类型, 不为原值)`);
+  lines.push(` *   - hidden:  字段不在返回对象上 (toBeUndefined)`);
+  lines.push(` *   - manifest 与 mask 函数不一致 → 此 spec FAIL = 揭露 RoleFieldFilter bug`);
+  lines.push(` */`);
+  lines.push(`import {`);
+  lines.push(`  maskCustomer,`);
+  lines.push(`  maskTeacher,`);
+  lines.push(`  maskContract,`);
+  lines.push(`  canAccessCustomer,`);
+  lines.push(`  canAccessContract,`);
+  lines.push(`  canAccessStudent,`);
+  lines.push(`  actorGroupOf,`);
+  lines.push(`} from '../../../common/role-field-filter/role-field-filter';`);
+  lines.push(`import { JwtPayload, TenantRole } from '../../../modules/auth/jwt-payload.interface';`);
+  lines.push(`import { Customer } from '../../../modules/db/customer.repository';`);
+  lines.push(`import { Contract } from '../../../modules/db/contract.repository';`);
+  lines.push(`import { Teacher } from '../../../modules/teacher/teacher.service';`);
+  lines.push(``);
+  lines.push(`// ============================================================`);
+  lines.push(`// Fixtures (固定原始值，便于断言)`);
+  lines.push(`// ============================================================`);
+  lines.push(``);
+  lines.push(`const TENANT_A = 'TENANTA00000000000000000000000A1';`);
+  lines.push(`const CAMPUS_A = 'campus_A0000000000000000000000A01';`);
+  lines.push(`const USER_OWNER = 'salesA00000000000000000000000A01';`);
+  lines.push(`const USER_OTHER = 'salesB00000000000000000000000A02';`);
+  lines.push(`const TEACHER_OWN = 'teacher00000000000000000000A001';`);
+  lines.push(`const TEACHER_OTHER = 'teacherX0000000000000000000A099';`);
+  lines.push(``);
+  lines.push(`type AnyRoleForTest = TenantRole | 'parent';`);
+  lines.push(``);
+  lines.push(`function jwt(role: AnyRoleForTest, sub: string = USER_OWNER): JwtPayload {`);
+  lines.push(`  return { sub, tenantId: TENANT_A, role: role as TenantRole, campusId: CAMPUS_A };`);
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`function customerFixture(): Customer {`);
+  lines.push(`  return {`);
+  lines.push(`    id: 'oppor000000000000000000000000A01',`);
+  lines.push(`    studentId: 'student00000000000000000000A001',`);
+  lines.push(`    studentName: ${JSON.stringify(customerFields.studentName._originalValue)},`);
+  lines.push(`    gradeOrAge: '三年级',`);
+  lines.push(`    intendedSubject: ${JSON.stringify(customerFields.intendedSubject._originalValue)},`);
+  lines.push(`    ownerUserId: USER_OWNER,`);
+  lines.push(`    stage: ${JSON.stringify(customerFields.stage._originalValue)},`);
+  lines.push(`    source: ${JSON.stringify(customerFields.source._originalValue)},`);
+  lines.push(`    phone: ${JSON.stringify(customerFields.phone._originalValue)},`);
+  lines.push(`    wechat: ${JSON.stringify(customerFields.wechat._originalValue)},`);
+  lines.push(`    intentLevel: ${JSON.stringify(customerFields.intentLevel._originalValue)},`);
+  lines.push(`    urgent: false,`);
+  lines.push(`    note: ${JSON.stringify(customerFields.note._originalValue)},`);
+  lines.push(`    enteredPoolAt: null,`);
+  lines.push(`    enterPoolReason: null,`);
+  lines.push(`    lastContactAt: '2026-05-10T10:00:00.000Z',`);
+  lines.push(`    signedAt: null,`);
+  lines.push(`    lostReason: null,`);
+  lines.push(`    createdAt: '2026-05-01T00:00:00.000Z',`);
+  lines.push(`    updatedAt: '2026-05-10T10:00:00.000Z',`);
+  lines.push(`  };`);
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`function teacherFixture(): Teacher {`);
+  lines.push(`  // Day 2 Phase C X1 (2026-05-19 D1.4 拍板): hourlyPriceYuan 字段物理删除`);
+  lines.push(`  return {`);
+  lines.push(`    id: TEACHER_OWN,`);
+  lines.push(`    campusId: CAMPUS_A,`);
+  lines.push(`    name: ${JSON.stringify(teacherFields.name._originalValue)},`);
+  lines.push(`    phone: ${JSON.stringify(teacherFields.phone._originalValue)},`);
+  lines.push(`    userId: USER_OWNER,`);
+  lines.push(`    subjects: ${JSON.stringify(teacherFields.subjects._originalValue)},`);
+  lines.push(`    status: ${JSON.stringify(teacherFields.status._originalValue)},`);
+  lines.push(`  };`);
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`function contractFixture(): Contract {`);
+  lines.push(`  return {`);
+  lines.push(`    id: 'contract0000000000000000000A001',`);
+  lines.push(`    studentId: 'student00000000000000000000A001',`);
+  lines.push(`    courseProductId: null,`);
+  lines.push(`    courseProductName: ${JSON.stringify(contractFields.courseProductName._originalValue)},`);
+  lines.push(`    ownerUserId: USER_OWNER,`);
+  lines.push(`    opportunityId: 'oppor000000000000000000000000A01',`);
+  lines.push(`    campusId: CAMPUS_A,`);
+  lines.push(`    classType: ${JSON.stringify(contractFields.classType._originalValue)},`);
+  lines.push(`    lessonHours: ${contractFields.lessonHours._originalValue},`);
+  lines.push(`    standardPrice: ${contractFields.standardPrice._originalValue},`);
+  lines.push(`    discountAmount: ${contractFields.discountAmount._originalValue},`);
+  lines.push(`    giftHours: ${contractFields.giftHours._originalValue},`);
+  lines.push(`    totalAmount: ${contractFields.totalAmount._originalValue},`);
+  lines.push(`    orderType: '新签',`);
+  lines.push(`    status: ${JSON.stringify(contractFields.status._originalValue)},`);
+  lines.push(`    paidLocked: false,`);
+  lines.push(`    signedAt: '2026-05-08T00:00:00.000Z',`);
+  lines.push(`    activatedAt: '2026-05-08T00:00:00.000Z',`);
+  lines.push(`    createdAt: '2026-05-08T00:00:00.000Z',`);
+  lines.push(`    updatedAt: '2026-05-08T00:00:00.000Z',`);
+  lines.push(`  };`);
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`/**`);
+  lines.push(` * Helper: 调 maskCustomer 给定 role 变体 (sales_owner/sales_other 用 isOwnerSelf 区分)`);
+  lines.push(` * 返 actor's view of customer with role-specific mask`);
+  lines.push(` */`);
+  lines.push(`function maskCustomerByRoleVariant(roleVariant: string): Customer {`);
+  lines.push(`  switch (roleVariant) {`);
+  lines.push(`    case 'sales_owner':`);
+  lines.push(`      return maskCustomer(customerFixture(), jwt('sales', USER_OWNER), { isOwnerSelf: true });`);
+  lines.push(`    case 'sales_other':`);
+  lines.push(`      return maskCustomer(customerFixture(), jwt('sales', USER_OTHER), { isOwnerSelf: false });`);
+  lines.push(`    case 'unknown':`);
+  lines.push(`      return maskCustomer(customerFixture(), { sub: 'x', tenantId: TENANT_A, role: 'foobar' as TenantRole, campusId: CAMPUS_A });`);
+  lines.push(`    default:`);
+  lines.push(`      return maskCustomer(customerFixture(), jwt(roleVariant as AnyRoleForTest));`);
+  lines.push(`  }`);
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`function maskTeacherByRoleVariant(roleVariant: string): Teacher {`);
+  lines.push(`  switch (roleVariant) {`);
+  lines.push(`    case 'teacher_self':`);
+  lines.push(`      return maskTeacher(teacherFixture(), jwt('teacher', USER_OWNER), { isSelf: true });`);
+  lines.push(`    case 'teacher_other':`);
+  lines.push(`      return maskTeacher(teacherFixture(), jwt('teacher', USER_OTHER), { isSelf: false });`);
+  lines.push(`    case 'unknown':`);
+  lines.push(`      return maskTeacher(teacherFixture(), { sub: 'x', tenantId: TENANT_A, role: 'foobar' as TenantRole, campusId: CAMPUS_A });`);
+  lines.push(`    default:`);
+  lines.push(`      return maskTeacher(teacherFixture(), jwt(roleVariant as AnyRoleForTest));`);
+  lines.push(`  }`);
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`function maskContractByRoleVariant(roleVariant: string): Contract {`);
+  lines.push(`  switch (roleVariant) {`);
+  lines.push(`    case 'sales_owner':`);
+  lines.push(`      return maskContract(contractFixture(), jwt('sales', USER_OWNER), { isOwnerSelf: true });`);
+  lines.push(`    case 'sales_other':`);
+  lines.push(`      return maskContract(contractFixture(), jwt('sales', USER_OTHER), { isOwnerSelf: false });`);
+  lines.push(`    case 'unknown':`);
+  lines.push(`      return maskContract(contractFixture(), { sub: 'x', tenantId: TENANT_A, role: 'foobar' as TenantRole, campusId: CAMPUS_A });`);
+  lines.push(`    default:`);
+  lines.push(`      return maskContract(contractFixture(), jwt(roleVariant as AnyRoleForTest));`);
+  lines.push(`  }`);
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = ${caseCount} case', () => {`);
+  lines.push(``);
+
+  // ============================================================
+  // Customer field permission tests
+  // ============================================================
+  lines.push(`  describe('customer (maskCustomer × ${customerFieldCount} fields)', () => {`);
+  for (const [fieldName, cell] of Object.entries(customerFields)) {
+    lines.push(`    describe('field: ${fieldName}', () => {`);
+    lines.push(`      // ${cell._category}`);
+    lines.push(`      // visible=[${cell.visible.join(',')}]`);
+    lines.push(`      // masked=[${cell.masked.join(',')}]`);
+    lines.push(`      // hidden=[${cell.hidden.join(',')}]`);
+    lines.push(``);
+    // visible cases
+    for (const role of cell.visible) {
+      const origJs = JSON.stringify(cell._originalValue);
+      lines.push(`      it('visible: ${role} → ${fieldName}=${typeof cell._originalValue === 'string' ? cell._originalValue : JSON.stringify(cell._originalValue)}', () => {`);
+      lines.push(`        const result = maskCustomerByRoleVariant('${role}');`);
+      // Use toEqual for arrays/objects, toBe for primitives
+      if (Array.isArray(cell._originalValue) || (typeof cell._originalValue === 'object' && cell._originalValue !== null)) {
+        lines.push(`        expect((result as Customer & Record<string, unknown>).${fieldName}).toEqual(${origJs});`);
+      } else {
+        lines.push(`        expect((result as Customer & Record<string, unknown>).${fieldName}).toBe(${origJs});`);
+      }
+      lines.push(`      });`);
+    }
+    // masked cases
+    for (const role of cell.masked) {
+      const maskJs = JSON.stringify(cell._maskedValue);
+      lines.push(`      it('masked: ${role} → ${fieldName}=${cell._maskedValue === null ? 'null' : JSON.stringify(cell._maskedValue)}', () => {`);
+      lines.push(`        const result = maskCustomerByRoleVariant('${role}');`);
+      if (cell._maskedValue === null) {
+        lines.push(`        expect((result as Customer & Record<string, unknown>).${fieldName}).toBeNull();`);
+      } else {
+        lines.push(`        expect((result as Customer & Record<string, unknown>).${fieldName}).toBe(${maskJs});`);
+      }
+      lines.push(`      });`);
+    }
+    // hidden cases (customer mask 用 null, 不 delete key — 无 hidden 期望, 但仍生成 case 防 manifest 误标)
+    for (const role of cell.hidden) {
+      lines.push(`      it('hidden: ${role} → ${fieldName} undefined (key removed)', () => {`);
+      lines.push(`        const result = maskCustomerByRoleVariant('${role}');`);
+      lines.push(`        expect((result as Customer & Record<string, unknown>).${fieldName}).toBeUndefined();`);
+      lines.push(`      });`);
+    }
+    lines.push(`    });`);
+    lines.push(``);
+  }
+  lines.push(`  });`);
+  lines.push(``);
+
+  // ============================================================
+  // Teacher field permission tests
+  // ============================================================
+  lines.push(`  describe('teacher (maskTeacher × ${teacherFieldCount} fields)', () => {`);
+  for (const [fieldName, cell] of Object.entries(teacherFields)) {
+    lines.push(`    describe('field: ${fieldName}', () => {`);
+    lines.push(`      // ${cell._category}`);
+    lines.push(`      // visible=[${cell.visible.join(',')}]`);
+    lines.push(`      // masked=[${cell.masked.join(',')}]`);
+    lines.push(`      // hidden=[${cell.hidden.join(',')}]`);
+    lines.push(``);
+    for (const role of cell.visible) {
+      const origJs = JSON.stringify(cell._originalValue);
+      lines.push(`      it('visible: ${role} → ${fieldName}=${typeof cell._originalValue === 'string' ? cell._originalValue : JSON.stringify(cell._originalValue)}', () => {`);
+      lines.push(`        const result = maskTeacherByRoleVariant('${role}');`);
+      if (Array.isArray(cell._originalValue) || (typeof cell._originalValue === 'object' && cell._originalValue !== null)) {
+        lines.push(`        expect((result as Teacher & Record<string, unknown>).${fieldName}).toEqual(${origJs});`);
+      } else {
+        lines.push(`        expect((result as Teacher & Record<string, unknown>).${fieldName}).toBe(${origJs});`);
+      }
+      lines.push(`      });`);
+    }
+    for (const role of cell.masked) {
+      const maskJs = JSON.stringify(cell._maskedValue);
+      lines.push(`      it('masked: ${role} → ${fieldName} masked', () => {`);
+      lines.push(`        const result = maskTeacherByRoleVariant('${role}');`);
+      if (cell._maskedValue === null) {
+        lines.push(`        expect((result as Teacher & Record<string, unknown>).${fieldName}).toBeNull();`);
+      } else if (typeof cell._maskedValue === 'string' && cell._maskedValue.startsWith('undefined')) {
+        lines.push(`        expect((result as Teacher & Record<string, unknown>).${fieldName}).toBeUndefined();`);
+      } else {
+        lines.push(`        expect((result as Teacher & Record<string, unknown>).${fieldName}).toBe(${maskJs});`);
+      }
+      lines.push(`      });`);
+    }
+    for (const role of cell.hidden) {
+      lines.push(`      it('hidden: ${role} → ${fieldName} undefined', () => {`);
+      lines.push(`        const result = maskTeacherByRoleVariant('${role}');`);
+      lines.push(`        expect((result as Teacher & Record<string, unknown>).${fieldName}).toBeUndefined();`);
+      lines.push(`      });`);
+    }
+    lines.push(`    });`);
+    lines.push(``);
+  }
+  lines.push(`  });`);
+  lines.push(``);
+
+  // ============================================================
+  // Contract field permission tests
+  // ============================================================
+  lines.push(`  describe('contract (maskContract × ${contractFieldCount} fields)', () => {`);
+  for (const [fieldName, cell] of Object.entries(contractFields)) {
+    lines.push(`    describe('field: ${fieldName}', () => {`);
+    lines.push(`      // ${cell._category}`);
+    lines.push(`      // visible=[${cell.visible.join(',')}]`);
+    lines.push(`      // masked=[${cell.masked.join(',')}]`);
+    lines.push(`      // hidden=[${cell.hidden.join(',')}]`);
+    lines.push(``);
+    for (const role of cell.visible) {
+      const origJs = JSON.stringify(cell._originalValue);
+      lines.push(`      it('visible: ${role} → ${fieldName}=${typeof cell._originalValue === 'string' ? cell._originalValue : JSON.stringify(cell._originalValue)}', () => {`);
+      lines.push(`        const result = maskContractByRoleVariant('${role}');`);
+      if (Array.isArray(cell._originalValue) || (typeof cell._originalValue === 'object' && cell._originalValue !== null)) {
+        lines.push(`        expect((result as Contract & Record<string, unknown>).${fieldName}).toEqual(${origJs});`);
+      } else {
+        lines.push(`        expect((result as Contract & Record<string, unknown>).${fieldName}).toBe(${origJs});`);
+      }
+      lines.push(`      });`);
+    }
+    for (const role of cell.masked) {
+      const maskJs = JSON.stringify(cell._maskedValue);
+      lines.push(`      it('masked: ${role} → ${fieldName}=${cell._maskedValue === null ? 'null' : JSON.stringify(cell._maskedValue)}', () => {`);
+      lines.push(`        const result = maskContractByRoleVariant('${role}');`);
+      if (cell._maskedValue === null) {
+        lines.push(`        expect((result as Contract & Record<string, unknown>).${fieldName}).toBeNull();`);
+      } else {
+        lines.push(`        expect((result as Contract & Record<string, unknown>).${fieldName}).toBe(${maskJs});`);
+      }
+      lines.push(`      });`);
+    }
+    for (const role of cell.hidden) {
+      lines.push(`      it('hidden: ${role} → ${fieldName} undefined', () => {`);
+      lines.push(`        const result = maskContractByRoleVariant('${role}');`);
+      lines.push(`        expect((result as Contract & Record<string, unknown>).${fieldName}).toBeUndefined();`);
+      lines.push(`      });`);
+    }
+    lines.push(`    });`);
+    lines.push(``);
+  }
+  lines.push(`  });`);
+  lines.push(``);
+
+  // ============================================================
+  // Student access tests (canAccessStudent / canAccessContract / canAccessCustomer)
+  // ============================================================
+  lines.push(`  describe('student (canAccessStudent / canAccessContract / canAccessCustomer)', () => {`);
+  lines.push(`    // fixture: student.ownerSalesId = USER_OWNER, student.assignedTeacherId = TEACHER_OWN`);
+  lines.push(`    // contract.ownerUserId = USER_OWNER`);
+  lines.push(`    // customer.ownerUserId = USER_OWNER`);
+  lines.push(`    const studentRow = { ownerSalesId: USER_OWNER, assignedTeacherId: TEACHER_OWN };`);
+  lines.push(`    const contractRow = { ownerUserId: USER_OWNER };`);
+  lines.push(`    const customerRow = { ownerUserId: USER_OWNER };`);
+  lines.push(``);
+  lines.push(`    /** Helper：根据 roleVariant 选择 access 函数 + JWT 配置 */`);
+  lines.push(`    function callAccess(fnName: 'student' | 'contract' | 'customer', roleVariant: string): boolean {`);
+  lines.push(`      // 计算 sub: sales_owner / teacher_self → USER_OWNER, sales_other / teacher_other → USER_OTHER`);
+  lines.push(`      let sub = USER_OWNER;`);
+  lines.push(`      let role: AnyRoleForTest = 'admin';`);
+  lines.push(`      let ownTeacherId: string | null = null;`);
+  lines.push(`      switch (roleVariant) {`);
+  lines.push(`        case 'sales_owner':`);
+  lines.push(`          role = 'sales';`);
+  lines.push(`          sub = USER_OWNER;`);
+  lines.push(`          break;`);
+  lines.push(`        case 'sales_other':`);
+  lines.push(`          role = 'sales';`);
+  lines.push(`          sub = USER_OTHER;`);
+  lines.push(`          break;`);
+  lines.push(`        case 'teacher_self':`);
+  lines.push(`          role = 'teacher';`);
+  lines.push(`          ownTeacherId = TEACHER_OWN;`);
+  lines.push(`          break;`);
+  lines.push(`        case 'teacher_other':`);
+  lines.push(`          role = 'teacher';`);
+  lines.push(`          ownTeacherId = TEACHER_OTHER;`);
+  lines.push(`          break;`);
+  lines.push(`        case 'unknown':`);
+  lines.push(`          role = 'foobar' as TenantRole;`);
+  lines.push(`          break;`);
+  lines.push(`        case 'teacher':`);
+  lines.push(`          role = 'teacher';`);
+  lines.push(`          // canAccessStudent teacher 分支需 ownTeacherId — 缺则保守 false`);
+  lines.push(`          if (fnName === 'student') ownTeacherId = null;`);
+  lines.push(`          break;`);
+  lines.push(`        default:`);
+  lines.push(`          role = roleVariant as AnyRoleForTest;`);
+  lines.push(`      }`);
+  lines.push(`      const user = jwt(role, sub);`);
+  lines.push(`      if (fnName === 'student') return canAccessStudent(studentRow, user, { ownTeacherId });`);
+  lines.push(`      if (fnName === 'contract') return canAccessContract(contractRow, user);`);
+  lines.push(`      return canAccessCustomer(customerRow, user);`);
+  lines.push(`    }`);
+  lines.push(``);
+
+  // canAccessStudent_owned
+  {
+    const cell = studentFields.canAccessStudent_owned;
+    lines.push(`    describe('field: canAccessStudent_owned', () => {`);
+    lines.push(`      // ${cell._category}`);
+    lines.push(`      // visible=[${cell.visible.join(',')}]`);
+    lines.push(`      // hidden=[${cell.hidden.join(',')}]`);
+    lines.push(``);
+    for (const role of cell.visible) {
+      lines.push(`      it('visible: ${role} → canAccessStudent = true', () => {`);
+      lines.push(`        expect(callAccess('student', '${role}')).toBe(true);`);
+      lines.push(`      });`);
+    }
+    for (const role of cell.hidden) {
+      lines.push(`      it('hidden: ${role} → canAccessStudent = false', () => {`);
+      lines.push(`        expect(callAccess('student', '${role}')).toBe(false);`);
+      lines.push(`      });`);
+    }
+    lines.push(`    });`);
+    lines.push(``);
+  }
+  // canAccessContract_owned
+  {
+    const cell = studentFields.canAccessContract_owned;
+    lines.push(`    describe('field: canAccessContract_owned', () => {`);
+    lines.push(`      // ${cell._category}`);
+    lines.push(`      // visible=[${cell.visible.join(',')}]`);
+    lines.push(`      // hidden=[${cell.hidden.join(',')}]`);
+    lines.push(``);
+    for (const role of cell.visible) {
+      lines.push(`      it('visible: ${role} → canAccessContract = true', () => {`);
+      lines.push(`        expect(callAccess('contract', '${role}')).toBe(true);`);
+      lines.push(`      });`);
+    }
+    for (const role of cell.hidden) {
+      lines.push(`      it('hidden: ${role} → canAccessContract = false', () => {`);
+      lines.push(`        expect(callAccess('contract', '${role}')).toBe(false);`);
+      lines.push(`      });`);
+    }
+    lines.push(`    });`);
+    lines.push(``);
+  }
+  // canAccessCustomer_owned
+  {
+    const cell = studentFields.canAccessCustomer_owned;
+    lines.push(`    describe('field: canAccessCustomer_owned', () => {`);
+    lines.push(`      // ${cell._category}`);
+    lines.push(`      // visible=[${cell.visible.join(',')}]`);
+    lines.push(`      // hidden=[${cell.hidden.join(',')}]`);
+    lines.push(``);
+    for (const role of cell.visible) {
+      lines.push(`      it('visible: ${role} → canAccessCustomer = true', () => {`);
+      lines.push(`        expect(callAccess('customer', '${role}')).toBe(true);`);
+      lines.push(`      });`);
+    }
+    for (const role of cell.hidden) {
+      lines.push(`      it('hidden: ${role} → canAccessCustomer = false', () => {`);
+      lines.push(`        expect(callAccess('customer', '${role}')).toBe(false);`);
+      lines.push(`      });`);
+    }
+    lines.push(`    });`);
+    lines.push(``);
+  }
+  lines.push(`  });`);
+  lines.push(``);
+
+  // ============================================================
+  // Parent role-group mapping tests (actorGroupOf coverage)
+  // ============================================================
+  lines.push(`  describe('parent (actorGroupOf role → group 映射，13 角色覆盖)', () => {`);
+  lines.push(`    // 测 actorGroupOf 对所有 13 SSOT + auxiliary 角色的 group 路由`);
+  lines.push(`    // parent 无 maskParent 函数 (走 ParentJwt 独立 C 端 endpoint)，但 actorGroupOf 必须识别所有角色`);
+  lines.push(``);
+  const roleGroupMap = parentObj._fields.role_group_mapping._expectedGroup;
+  for (const [role, expectedGroup] of Object.entries(roleGroupMap)) {
+    lines.push(`    it('actorGroupOf("${role}") → "${expectedGroup}"', () => {`);
+    lines.push(`      expect(actorGroupOf('${role}' as TenantRole)).toBe('${expectedGroup}');`);
+    lines.push(`    });`);
+  }
+  lines.push(`  });`);
+  lines.push(``);
+
+  // ============================================================
+  // Corner cases (defensive depth)
+  // ============================================================
+  lines.push(`  describe('corner cases (defensive depth — undefined user / null role / fixture immutability)', () => {`);
+  lines.push(`    it('maskCustomer with user=undefined → 全 PII null', () => {`);
+  lines.push(`      const r = maskCustomer(customerFixture(), undefined);`);
+  lines.push(`      expect(r.phone).toBeNull();`);
+  lines.push(`      expect(r.wechat).toBeNull();`);
+  lines.push(`      expect(r.note).toBeNull();`);
+  lines.push(`      expect(r.source).toBeNull();`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('maskCustomer with user=null → 全 PII null', () => {`);
+  lines.push(`      const r = maskCustomer(customerFixture(), null);`);
+  lines.push(`      expect(r.phone).toBeNull();`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('maskTeacher with user=undefined → phone undefined', () => {`);
+  lines.push(`      const r = maskTeacher(teacherFixture(), undefined);`);
+  lines.push(`      expect(r.phone).toBeUndefined();`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('maskContract with user=undefined → 价格全 0 / 业务字段保留', () => {`);
+  lines.push(`      const r = maskContract(contractFixture(), undefined);`);
+  lines.push(`      expect(r.totalAmount).toBe(0);`);
+  lines.push(`      expect(r.standardPrice).toBe(0);`);
+  lines.push(`      expect(r.discountAmount).toBe(0);`);
+  lines.push(`      expect(r.giftHours).toBe(0);`);
+  lines.push(`      expect(r.lessonHours).toBe(60); // 业务字段保留`);
+  lines.push(`      expect(r.status).toBe('active');`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('maskCustomer 返新对象，不污染 fixture', () => {`);
+  lines.push(`      const original = customerFixture();`);
+  lines.push(`      const r = maskCustomer(original, jwt('teacher'));`);
+  lines.push(`      expect(r.phone).toBeNull();`);
+  lines.push(`      // 原 fixture 不变`);
+  lines.push(`      expect(original.phone).toBe('13800138000');`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('maskTeacher 返新对象，不污染 fixture', () => {`);
+  lines.push(`      const original = teacherFixture();`);
+  lines.push(`      const r = maskTeacher(original, jwt('sales'));`);
+  lines.push(`      expect(r.phone).toBeUndefined();`);
+  lines.push(`      expect(original.phone).toBe('13900139000');`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('maskContract 返新对象，不污染 fixture', () => {`);
+  lines.push(`      const original = contractFixture();`);
+  lines.push(`      const r = maskContract(original, jwt('teacher'));`);
+  lines.push(`      expect(r.totalAmount).toBe(0);`);
+  lines.push(`      expect(original.totalAmount).toBe(9000);`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('canAccessStudent with user=undefined → false', () => {`);
+  lines.push(`      const studentRow = { ownerSalesId: USER_OWNER, assignedTeacherId: TEACHER_OWN };`);
+  lines.push(`      expect(canAccessStudent(studentRow, undefined)).toBe(false);`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('canAccessContract with user=undefined → false', () => {`);
+  lines.push(`      const contractRow = { ownerUserId: USER_OWNER };`);
+  lines.push(`      expect(canAccessContract(contractRow, undefined)).toBe(false);`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('canAccessCustomer with user=undefined → false', () => {`);
+  lines.push(`      const customerRow = { ownerUserId: USER_OWNER };`);
+  lines.push(`      expect(canAccessCustomer(customerRow, undefined)).toBe(false);`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('canAccessCustomer with ownerUserId=null (公共池) + sales → true (sales 可看公共池)', () => {`);
+  lines.push(`      expect(canAccessCustomer({ ownerUserId: null }, jwt('sales', USER_OTHER))).toBe(true);`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('actorGroupOf(null) → unknown', () => {`);
+  lines.push(`      expect(actorGroupOf(null)).toBe('unknown');`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('actorGroupOf(undefined) → unknown', () => {`);
+  lines.push(`      expect(actorGroupOf(undefined)).toBe('unknown');`);
+  lines.push(`    });`);
+  lines.push(``);
+  lines.push(`    it('actorGroupOf("sales_director") legacy → unknown (5/15 A-2 删)', () => {`);
+  lines.push(`      expect(actorGroupOf('sales_director' as TenantRole)).toBe('unknown');`);
+  lines.push(`    });`);
+  lines.push(`  });`);
+  lines.push(``);
+
+  lines.push(`});`);
+  lines.push(``);
+
+  return lines.join('\n');
+}
+
 // ---------- write ----------
 const outDir = path.join(__dirname, '..', 'src', '__rbac__', 'generated');
 if (!fs.existsSync(outDir)) {
@@ -736,4 +1370,49 @@ if (batch === 'c' || batch === 'all') {
   console.log(`[generator]   + 3 corner case (req.user undefined / tenantId null / case-insensitive 放行)`);
   console.log(`[generator]   + 15 P1-2 round 2 corner (3 vector × 5 case = query.tenantId / query.tenantSchema / x-tenant-schema)`);
   console.log(`[generator]   = ${ctObjects.length * allRoles.length + 3 + 15} total`);
+}
+
+if (batch === 'd' || batch === 'all') {
+  const content = emitBatchD();
+  const outDirD = path.join(outDir, 'batch-d');
+  if (!fs.existsSync(outDirD)) {
+    fs.mkdirSync(outDirD, { recursive: true });
+  }
+  const outFile = path.join(outDirD, 'field-permission.spec.ts');
+  fs.writeFileSync(outFile, content, 'utf8');
+
+  const fp = manifest.fieldPermission;
+  const customerCases = Object.entries(fp.objects.customer._fields).reduce(
+    (acc, [, c]) => acc + c.visible.length + c.masked.length + c.hidden.length,
+    0,
+  );
+  const teacherCases = Object.entries(fp.objects.teacher._fields).reduce(
+    (acc, [, c]) => acc + c.visible.length + c.masked.length + c.hidden.length,
+    0,
+  );
+  const contractCases = Object.entries(fp.objects.contract._fields).reduce(
+    (acc, [, c]) => acc + c.visible.length + c.masked.length + c.hidden.length,
+    0,
+  );
+  const studentCases = Object.entries(fp.objects.student._fields).reduce(
+    (acc, [, c]) => acc + c.visible.length + c.masked.length + c.hidden.length,
+    0,
+  );
+  const parentCases = Object.keys(fp.objects.parent._fields.role_group_mapping._expectedGroup).length;
+  const cornerCases = 14;
+  const total = customerCases + teacherCases + contractCases + studentCases + parentCases + cornerCases;
+  const customerFieldCount = Object.keys(fp.objects.customer._fields).length;
+  const teacherFieldCount = Object.keys(fp.objects.teacher._fields).length;
+  const contractFieldCount = Object.keys(fp.objects.contract._fields).length;
+  const studentFieldCount = Object.keys(fp.objects.student._fields).length;
+
+  console.log(`[generator] wrote ${outFile}`);
+  console.log(`[generator] Batch D: 字段级权限矩阵 visible / masked / hidden`);
+  console.log(`[generator]   customer: ${customerCases} case (${customerFieldCount} fields × 13 role variants)`);
+  console.log(`[generator]   teacher:  ${teacherCases} case (${teacherFieldCount} fields × 13 role variants)`);
+  console.log(`[generator]   contract: ${contractCases} case (${contractFieldCount} fields × 13 role variants)`);
+  console.log(`[generator]   student:  ${studentCases} case (${studentFieldCount} access fields × 13 role variants)`);
+  console.log(`[generator]   parent:   ${parentCases} case (actorGroupOf × 13 roles)`);
+  console.log(`[generator]   corner:   ${cornerCases} case (defensive depth)`);
+  console.log(`[generator]   = ${total} total (与 prompt 486 差 ${total - 486}：mask 函数实际行为驱动)`);
 }

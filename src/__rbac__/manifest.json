@@ -493,6 +493,327 @@
     }
   },
 
+  "fieldPermission": {
+    "_doc": "Batch D 字段级权限矩阵：每对象 × 每关键字段 × 每角色 → visible / masked / hidden 三态。直接验证 RoleFieldFilter mask 函数行为（src/common/role-field-filter/role-field-filter.ts）。\n\n字段语义：\n  - visible: mask 后字段值原样保留（toEqual 原值）\n  - masked: mask 后字段值变为 0 / null / 部分隐藏（toEqual mask 后预期值，不为原值且不为 hidden）\n  - hidden: mask 后字段从对象中消失（toBeUndefined / 字段不在 key 列表）\n\n本批与 Batch A/B/C 区别：\n  - Batch A/B 测 RbacGuard.canActivate（controller-level @Roles 通过 / 拒绝）\n  - Batch C 测 TenantScopeGuard.canActivate（跨 tenant 拦截）\n  - Batch D 测 RoleFieldFilter.mask*() / canAccess*()（字段级数据过滤）\n\nrole 扩展（角色变体）：\n  - sales_owner: sales 角色 + isOwnerSelf=true (自己客户/合同)\n  - sales_other: sales 角色 + isOwnerSelf=false (别人客户/合同)\n  - teacher_self: teacher 角色 + isSelf=true (老师看自己档案)\n  - teacher_other: teacher 角色 + isSelf=false (老师看别人档案)\n  - 其他 9 SSOT + 4 auxiliary 角色照常\n\nstudent / parent 用 canAccessStudent / 不存在 maskParent → 用 canAccess* 做二态（access / deny）测试。",
+    "_implementation": "role-field-filter.ts L66-94 actorGroupOf（角色 → group 映射）+ L132-183 maskCustomer + L219-268 maskTeacher + L302-359 maskContract + L374-409 canAccessCustomer + L414-442 canAccessContract + L449-480 canAccessStudent",
+    "objects": {
+      "customer": {
+        "_ssot": "§4.4 customer 30 字段 → 抽取 8 关键字段（PII 3 + business 3 + reference 2）",
+        "_maskFn": "maskCustomer(customer, user, { isOwnerSelf })",
+        "_fields": {
+          "phone": {
+            "_category": "PII 一级隐私（拍板 customer §4.4 联系人）",
+            "_originalValue": "13800138000",
+            "_maskedValue": null,
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "academic", "academic_admin"],
+            "masked": ["sales_other", "marketing", "finance", "teacher", "hr", "parent", "unknown"],
+            "hidden": []
+          },
+          "wechat": {
+            "_category": "PII 一级隐私（拍板 customer §4.4 联系人）",
+            "_originalValue": "wx_parent_abc",
+            "_maskedValue": null,
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "academic", "academic_admin"],
+            "masked": ["sales_other", "marketing", "finance", "teacher", "hr", "parent", "unknown"],
+            "hidden": []
+          },
+          "source": {
+            "_category": "业务（销售渠道，仅销售看 / 教务不看）",
+            "_originalValue": "抖音",
+            "_maskedValue": null,
+            "visible": ["admin", "boss", "sales_manager", "sales_owner"],
+            "masked": ["academic", "academic_admin", "sales_other", "marketing", "finance", "teacher", "hr", "parent", "unknown"],
+            "hidden": []
+          },
+          "note": {
+            "_category": "业务（销售跟进备注）",
+            "_originalValue": "内部跟进备注",
+            "_maskedValue": null,
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "academic", "academic_admin"],
+            "masked": ["sales_other", "marketing", "finance", "teacher", "hr", "parent", "unknown"],
+            "hidden": []
+          },
+          "stage": {
+            "_category": "业务参考（state machine，所有角色保留）",
+            "_originalValue": "初步接触",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "studentName": {
+            "_category": "业务参考（学员姓名，所有角色保留）",
+            "_originalValue": "小明",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "intendedSubject": {
+            "_category": "业务参考（意向学科，所有角色保留）",
+            "_originalValue": "英语",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "intentLevel": {
+            "_category": "业务参考（意向等级，所有角色保留 — 不在 mask 字段列表）",
+            "_originalValue": "高",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "gradeOrAge": {
+            "_category": "业务参考（年级/年龄，所有角色保留）",
+            "_originalValue": "三年级",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "lastContactAt": {
+            "_category": "业务参考（最近联系时间，所有角色保留 — 不在 mask 字段列表）",
+            "_originalValue": "2026-05-10T10:00:00.000Z",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "id": {
+            "_category": "业务参考（customer id 主键 ULID，所有角色保留）",
+            "_originalValue": "oppor000000000000000000000000A01",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "studentId": {
+            "_category": "业务参考（关联 student id，所有角色保留）",
+            "_originalValue": "student00000000000000000000A001",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          }
+        }
+      },
+      "teacher": {
+        "_ssot": "§4.3 teacher 23 字段 → 抽取 6 关键字段（PII 1 + business 3 + status 1 + X1 deleted 1）",
+        "_maskFn": "maskTeacher(teacher, user, { isSelf })",
+        "_fields": {
+          "phone": {
+            "_category": "PII 一级隐私（拍板 teacher §4.3 仅 self/老板/校长/教务/hr 可见）",
+            "_originalValue": "13900139000",
+            "_maskedValue": "undefined (via assign)",
+            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "hr"],
+            "masked": [],
+            "hidden": ["teacher_other", "sales", "marketing", "finance", "parent", "unknown"]
+          },
+          "name": {
+            "_category": "业务（公开姓名，所有角色保留）",
+            "_originalValue": "王老师",
+            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "subjects": {
+            "_category": "业务（教学学科，所有角色保留）",
+            "_originalValue": ["数学", "物理"],
+            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "status": {
+            "_category": "业务（在职状态，所有角色保留）",
+            "_originalValue": "在职",
+            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "campusId": {
+            "_category": "业务（所属校区，所有角色保留）",
+            "_originalValue": "campus_A0000000000000000000000A01",
+            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "hourlyPriceYuan": {
+            "_category": "X1 物理删除（V50 DROP COLUMN）— 所有角色一律 hidden",
+            "_originalValue": "n/a — field deleted",
+            "_note": "Day 2 D1.4 X1 拍板物理删除 hourly_price_yuan；Teacher interface 已删字段。本 spec 验「字段永不出现」。",
+            "visible": [],
+            "masked": [],
+            "hidden": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"]
+          },
+          "id": {
+            "_category": "业务参考（teacher id 主键 ULID，所有角色保留）",
+            "_originalValue": "teacher00000000000000000000A001",
+            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "userId": {
+            "_category": "业务参考（teacher.user_id 关联 users.id，所有角色保留 — 不在 mask 列表）",
+            "_originalValue": "salesA00000000000000000000000A01",
+            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "bio": {
+            "_category": "X1-related 业务字段（介绍，可选；所有角色对存在的 bio 一致可读 — 不在 mask 列表，hidden for fixture 无此字段）",
+            "_originalValue": "n/a — fixture 无此字段",
+            "_note": "Teacher fixture 不设 bio （optional），所有角色访问均得 undefined。本字段验「optional 字段不存在时 mask 行为」=「字段不出现 = 全 hidden」。",
+            "visible": [],
+            "masked": [],
+            "hidden": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"]
+          }
+        }
+      },
+      "contract": {
+        "_ssot": "§4.5 contract 14 字段 → 抽取 8 关键字段（财务 4 + business 2 + status 1 + reference 1）",
+        "_maskFn": "maskContract(contract, user, { isOwnerSelf })",
+        "_fields": {
+          "totalAmount": {
+            "_category": "财务二级隐私（拍板 contract §4.5 教务保留续费话术依据 / 老师不看价格）",
+            "_originalValue": 9000,
+            "_maskedValue": 0,
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "academic", "academic_admin", "parent"],
+            "masked": ["sales_other", "marketing", "teacher", "hr", "unknown"],
+            "hidden": []
+          },
+          "standardPrice": {
+            "_category": "财务（原价，academic 不看细节 / parent 可看用于折扣对比）",
+            "_originalValue": 9999,
+            "_maskedValue": 0,
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "parent"],
+            "masked": ["academic", "academic_admin", "sales_other", "marketing", "teacher", "hr", "unknown"],
+            "hidden": []
+          },
+          "discountAmount": {
+            "_category": "财务（折扣，parent 也不看）",
+            "_originalValue": 999,
+            "_maskedValue": 0,
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner"],
+            "masked": ["academic", "academic_admin", "sales_other", "marketing", "teacher", "parent", "hr", "unknown"],
+            "hidden": []
+          },
+          "giftHours": {
+            "_category": "财务（赠课，academic + parent 都不看）",
+            "_originalValue": 5,
+            "_maskedValue": 0,
+            "_leaderDecision": "Day 6 leader 拍板（最严）: academic/academic_admin 不看赠课（避免反推折扣构成）— SSOT §4.5 academic '价格 👁 仅付费状态' 严格解读包含赠课。已改 role-field-filter.ts:331 加 masked.giftHours = 0。",
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner"],
+            "masked": ["sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "hidden": []
+          },
+          "lessonHours": {
+            "_category": "业务（课时数，所有角色保留 — 教学执行需要）",
+            "_originalValue": 60,
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "classType": {
+            "_category": "业务（班型 1v1/班课，所有角色保留 — 排课/反馈需要）",
+            "_originalValue": "一对一",
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "status": {
+            "_category": "业务（active/expired，所有角色保留）",
+            "_originalValue": "active",
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "courseProductName": {
+            "_category": "业务参考（产品名称，所有角色保留）",
+            "_originalValue": "一对一英语",
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "signedAt": {
+            "_category": "业务参考（签约时间，所有角色保留 — 不在 mask 列表）",
+            "_originalValue": "2026-05-08T00:00:00.000Z",
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "orderType": {
+            "_category": "业务参考（新签/续签/转介，所有角色保留 — 不在 mask 列表）",
+            "_originalValue": "新签",
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "campusId": {
+            "_category": "业务参考（所属校区，所有角色保留）",
+            "_originalValue": "campus_A0000000000000000000000A01",
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "masked": [],
+            "hidden": []
+          },
+          "paidLocked": {
+            "_category": "业务参考（已锁定支付状态 bool，所有角色保留 — 不在 mask 列表）",
+            "_originalValue": false,
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "masked": [],
+            "hidden": []
+          }
+        }
+      },
+      "student": {
+        "_ssot": "§4.1 student OOUX 中心 → 无 maskStudent 函数，用 canAccessStudent 做 access/deny 二态测试 + canAccessCustomer 做 customer 关联访问测试",
+        "_accessFn": "canAccessStudent(student, user, { ownTeacherId }) + canAccessContract(contract, user) + canAccessCustomer(customer, user)",
+        "_note": "Student 不在 mask 函数列表（无 maskStudent），本对象测访问控制：scope filter 先于 field filter。\n  - sales: 仅 owner_sales_id=me 可看\n  - teacher: 仅 assigned_teacher_id=ownTeacherId 可看\n  - academic / admin / boss / finance: 本校全部可看\n  - parent: 走 C 端独立 endpoint，本 helper 拒绝",
+        "_fields": {
+          "canAccessStudent_owned": {
+            "_category": "scope filter — student.ownerSalesId = USER_OWNER, student.assignedTeacherId = TEACHER_OWN",
+            "_note": "fixture: 学生归 USER_OWNER 销售 + TEACHER_OWN 老师；测试每角色的访问决策。marketing → sales group + sub=USER_OWNER 默认匹配 ownerSalesId → access=true（与 sales_owner 等效）。",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "marketing", "academic", "academic_admin", "finance", "teacher_self"],
+            "masked": [],
+            "hidden": ["sales_other", "teacher_other", "parent", "hr", "unknown"]
+          },
+          "canAccessContract_owned": {
+            "_category": "scope filter — contract.ownerUserId = USER_OWNER",
+            "_note": "fixture: 合同归 USER_OWNER 销售；测试每角色的访问决策；academic/teacher/finance/parent 默认 true（controller 层校验）；marketing → sales group + sub=USER_OWNER 默认匹配 ownerUserId → access=true。",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "marketing", "academic", "academic_admin", "finance", "teacher", "parent"],
+            "masked": [],
+            "hidden": ["sales_other", "hr", "unknown"]
+          },
+          "canAccessCustomer_owned": {
+            "_category": "scope filter — customer.ownerUserId = USER_OWNER",
+            "_note": "fixture: 客户归 USER_OWNER 销售；测试每角色的访问决策；marketing → sales group + sub=USER_OWNER 默认匹配 ownerUserId → access=true。",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "marketing", "academic", "academic_admin", "finance"],
+            "masked": [],
+            "hidden": ["sales_other", "teacher", "parent", "hr", "unknown"]
+          }
+        }
+      },
+      "parent": {
+        "_ssot": "§4.4 parent 联系人 → 无 maskParent 函数，但本批仍验 B 端角色对 parent 数据的可见性边界（用 maskCustomer mirror 验通用 PII 路径，因为 parent 数据用 customer 同 schema 表的子集）",
+        "_accessFn": "(无 canAccessParent — parent 走 ParentJwt 独立流程，B 端访问 parent 数据均通过 customer / student 路径)",
+        "_note": "Parent 对象无字段 mask 函数；用 actorGroupOf 反向验角色识别正确性（确保 9 SSOT + 4 auxiliary 13 角色全识别到正确 group）",
+        "_fields": {
+          "role_group_mapping": {
+            "_category": "actorGroupOf role → group 映射（roleFieldFilter 路由依据）",
+            "_expectedGroup": {
+              "admin": "admin",
+              "boss": "admin",
+              "sales_manager": "admin",
+              "sales": "sales",
+              "marketing": "sales",
+              "academic": "academic",
+              "academic_admin": "academic",
+              "teacher": "teacher",
+              "finance": "finance",
+              "hr": "hr",
+              "parent": "parent",
+              "platform_admin": "unknown",
+              "finance_admin": "unknown"
+            }
+          }
+        }
+      }
+    }
+  },
+
   "crossTenantBoundary": {
     "_doc": "Batch C 跨 tenant 强制 403：每对象每角色 × mismatch tenantSchema 都必须被 TenantScopeGuard 拦截。9 SSOT 角色 × 18 对象（5 核心 + 13 外围）= 162 case（manifest 角色全 13 时实际 13 × 18 = 234 case 含 4 auxiliary 角色 / platform_admin 早期豁免）。",
     "_design": {
