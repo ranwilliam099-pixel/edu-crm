@@ -37,7 +37,7 @@ PG_DB="${PG_DB:-edu}"
 PG_USER_OS="${PG_USER_OS:-postgres}"   # OS 层用户（sudo -u）
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIGRATION_FILE="${REPO_ROOT}/migrations/V51__add_audit_log_id_uuid_to_varchar_to_students_teachers_users.sql"
+MIGRATION_FILE="${REPO_ROOT}/migrations/V51__audit_log_id_uuid_to_varchar.sql"
 
 # ===== 参数解析 =====
 APPLY=false
@@ -76,7 +76,7 @@ fi
 # ===== Banner =====
 echo ""
 echo "==============================================="
-echo "  V51 audit_log_id_uuid_to_varchar backfill (students/teachers/users)"
+echo "  V51 audit_log UUID → VARCHAR(32) backfill"
 echo "==============================================="
 echo ""
 if [ "$APPLY" = false ]; then
