@@ -118,13 +118,13 @@ export class UserController {
       throw new BadRequestException('name too long (max 32 chars)');
     }
     // D2 + SSOT §12.4 — 不允许再创建 admin (admin 唯一, 是机构注册者)
+    // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」— 删 'hr' 角色
     const validSubRoles = [
       'sales',
       'sales_manager',
       'marketing',
       'finance',
       'boss',
-      'hr',
       'teacher',
       'academic',
       'academic_admin',
@@ -217,7 +217,8 @@ export class UserController {
 
   @Get('inactive-with-pending')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss', 'hr')
+  // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async listInactive(
     @Query('tenantSchema') tenantSchema: string,
@@ -234,7 +235,8 @@ export class UserController {
    */
   @Get('list')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss', 'hr')
+  // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async listActive(
     @Query('tenantSchema') tenantSchema: string,
@@ -269,7 +271,8 @@ export class UserController {
 
   @Get(':id')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss', 'hr')
+  // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async detail(
     @Param('id') id: string,
@@ -292,7 +295,8 @@ export class UserController {
    */
   @Post(':userId/deactivate')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss', 'hr')
+  // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async deactivate(
     @Param('userId') userId: string,

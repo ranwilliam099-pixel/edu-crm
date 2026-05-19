@@ -246,13 +246,12 @@ export class StudentController {
 
   @Post('list')
   @UseGuards(RbacGuard)
+  // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」+ 5/15 A-2「删 sales_director」
   @Roles(
     'sales',
     'sales_manager',
-    // 5/15 A-2：删 'sales_director'
     'boss',
     'admin',
-    'hr',
     'teacher',
     'academic',
     'academic_admin',
@@ -467,7 +466,8 @@ export class StudentController {
 
   @Post(':id/transfer-teacher')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss', 'hr')
+  // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async transferTeacher(
     @Param('id') id: string,

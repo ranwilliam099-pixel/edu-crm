@@ -538,69 +538,13 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
     );
   });
 
-  // ============================================================
-  // create() → audit_log 'contract.create'
-  // ============================================================
-  describe('create() — audit contract.create', () => {
-    it('销售签约 → audit_log 调 1 次, action="contract.create", 金额完整入 audit', async () => {
-      const created = contractFixture({ ownerUserId: SALES_A });
-      repo.create.mockResolvedValueOnce(created);
-
-      await controller.create(
-        {
-          tenantId: TENANT_A,
-          tenantSchema: TENANT_SCHEMA,
-          id: CONTRACT_ID,
-          studentId: STUDENT_ID,
-          courseProductName: '一对一英语',
-          lessonHours: 60,
-          standardPrice: 9999,
-          discountAmount: 999,
-          giftHours: 5,
-          totalAmount: 9000,
-        },
-        req(jwt('sales', SALES_A)),
-      );
-
-      expect(auditLog.log).toHaveBeenCalledTimes(1);
-      const [schema, entry] = auditLog.log.mock.calls[0];
-      expect(schema).toBe(TENANT_SCHEMA);
-      expect(entry.action).toBe('contract.create');
-      expect(entry.targetType).toBe('contract');
-      expect(entry.targetId).toBe(CONTRACT_ID);
-      expect(entry.before).toBeNull();
-      expect(entry.actorUserId).toBe(SALES_A);
-      expect(entry.actorRole).toBe('sales');
-      // 金额详情入 audit（财务/审计场景必需，不脱敏）
-      expect(entry.after.totalAmount).toBe(9000);
-      expect(entry.after.standardPrice).toBe(9999);
-      expect(entry.after.discountAmount).toBe(999);
-      expect(entry.after.giftHours).toBe(5);
-      expect(entry.after.studentId).toBe(STUDENT_ID);
-      expect(entry.after.ownerUserId).toBe(SALES_A);
-    });
-
-    it('audit_log.log 抛错 → 不阻塞主业务（fail-open）', async () => {
-      repo.create.mockResolvedValueOnce(contractFixture());
-      auditLog.log.mockRejectedValueOnce(new Error('audit fail'));
-
-      const r = await controller.create(
-        {
-          tenantId: TENANT_A,
-          tenantSchema: TENANT_SCHEMA,
-          id: CONTRACT_ID,
-          studentId: STUDENT_ID,
-          courseProductName: '一对一英语',
-          lessonHours: 60,
-          standardPrice: 9999,
-          totalAmount: 9000,
-        },
-        req(jwt('sales', SALES_A)),
-      );
-      expect(r.id).toBe(CONTRACT_ID);
-      expect(auditLog.log).toHaveBeenCalledTimes(1);
-    });
-  });
+  // Day 2 BLOCKER 5 (2026-05-19): 删 POST /api/db/contracts 独立端点
+  //   SSOT §2 全局规则 1「OOUX 中心化：contract 是 student 的子对象」
+  //   - 原 controller.create() endpoint 已删除（contract.controller.ts L329 @Post() 移除）
+  //   - 唯一合法路径：POST /api/db/students/:id/contracts（student.controller.ts createContract）
+  //   - 该路径的 audit_log + 金额完整入 audit 覆盖在 student.controller.spec.ts:
+  //       describe('createContract() OOUX — audit contract.create') (~L657-)
+  //   - 因此本 spec 移除 controller.create() 测试避免引用已删除方法（TS 编译错）
 
   // ============================================================
   // detail() 拒绝路径 → audit_log 'contract.access-denied'

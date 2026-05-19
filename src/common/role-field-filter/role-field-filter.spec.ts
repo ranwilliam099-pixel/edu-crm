@@ -4,7 +4,7 @@
  * 覆盖：
  *   - actorGroupOf：11 role → 8 group
  *   - maskCustomer：5 group × phone/wechat/note/source 字段
- *   - maskTeacher：5 group × phone/hourlyPriceYuan 字段
+ *   - maskTeacher：5 group × phone 字段（Day 2 X1：hourlyPriceYuan 物理删除）
  *   - maskContract：5 group × standardPrice/discountAmount/totalAmount/giftHours
  *   - canAccessCustomer / canAccessContract / canAccessStudent 范围过滤
  *
@@ -71,6 +71,7 @@ function customerFixture(overrides: Partial<Customer> = {}): Customer {
 }
 
 function teacherFixture(overrides: Partial<Teacher> = {}): Teacher {
+  // Day 2 Phase C X1 (2026-05-19 D1.4): hourlyPriceYuan 字段物理删除（V50 DROP COLUMN）
   return {
     id: TEACHER_OWN,
     campusId: CAMPUS_A,
@@ -78,7 +79,6 @@ function teacherFixture(overrides: Partial<Teacher> = {}): Teacher {
     phone: '13900139000',
     userId: USER_OWNER,
     subjects: ['数学', '物理'],
-    hourlyPriceYuan: 200,
     status: '在职',
     ...overrides,
   } as Teacher;
@@ -282,46 +282,48 @@ describe('maskCustomer', () => {
 // ============================================================
 
 describe('maskTeacher', () => {
+  // Day 2 Phase C X1 (2026-05-19 D1.4 拍板): hourlyPriceYuan 字段物理删除
+  //   原 spec 同 case 验证 phone + hourlyPriceYuan，X1 后仅验 phone
+  //   X1「老师页面零财务字段」— V50 migration DROP COLUMN teachers.hourly_price_yuan
+
   describe('admin / boss → 全字段', () => {
-    it('admin 看到 phone + hourlyPriceYuan', () => {
+    it('admin 看到 phone', () => {
       const r = maskTeacher(teacherFixture(), jwt('admin'));
       expect(r.phone).toBe('13900139000');
-      expect(r.hourlyPriceYuan).toBe(200);
+      // X1 拍板：hourlyPriceYuan 字段不应存在
+      expect((r as Teacher & { hourlyPriceYuan?: number }).hourlyPriceYuan).toBeUndefined();
     });
   });
 
   describe('teacher isSelf=true → 全字段', () => {
-    it('老师看自己档案 → phone/price 都可见', () => {
+    it('老师看自己档案 → phone 可见', () => {
       const r = maskTeacher(teacherFixture(), jwt('teacher'), { isSelf: true });
       expect(r.phone).toBe('13900139000');
-      expect(r.hourlyPriceYuan).toBe(200);
+      expect((r as Teacher & { hourlyPriceYuan?: number }).hourlyPriceYuan).toBeUndefined();
     });
   });
 
-  describe('teacher 同校互看 → phone/price 不可见', () => {
+  describe('teacher 同校互看 → phone 不可见', () => {
     it('老师看别人档案 isSelf=false → phone undefined', () => {
       const r = maskTeacher(teacherFixture(), jwt('teacher'), { isSelf: false });
       expect(r.phone).toBeUndefined();
-      expect(r.hourlyPriceYuan).toBeUndefined();
       // 但 name / subjects / status 保留
       expect(r.name).toBe('王老师');
       expect(r.subjects).toEqual(['数学', '物理']);
     });
   });
 
-  describe('academic → phone ✅ price ✅', () => {
-    it('教务双层 👁 看 phone/price', () => {
+  describe('academic → phone ✅', () => {
+    it('教务双层 👁 看 phone', () => {
       const r = maskTeacher(teacherFixture(), jwt('academic'));
       expect(r.phone).toBe('13900139000');
-      expect(r.hourlyPriceYuan).toBe(200);
     });
   });
 
-  describe('sales / parent → phone ❌ price ❌', () => {
+  describe('sales / parent → phone ❌', () => {
     it('销售推荐老师场景 phone 不可见', () => {
       const r = maskTeacher(teacherFixture(), jwt('sales'));
       expect(r.phone).toBeUndefined();
-      expect(r.hourlyPriceYuan).toBeUndefined();
       // 但 name / subjects 保留（销售给客户介绍老师需要）
       expect(r.name).toBe('王老师');
     });
@@ -329,23 +331,20 @@ describe('maskTeacher', () => {
     it('家长选老师场景 phone 不可见', () => {
       const r = maskTeacher(teacherFixture(), jwt('parent' as TenantRole));
       expect(r.phone).toBeUndefined();
-      expect(r.hourlyPriceYuan).toBeUndefined();
     });
   });
 
-  describe('finance → phone ❌ price ✅', () => {
-    it('财务作账：phone 不可见，price 可见', () => {
+  describe('finance → phone ❌', () => {
+    it('财务作账：phone 不可见（薪资全删 V38 + 零财务字段 X1）', () => {
       const r = maskTeacher(teacherFixture(), jwt('finance'));
       expect(r.phone).toBeUndefined();
-      expect(r.hourlyPriceYuan).toBe(200);
     });
   });
 
-  describe('hr → 全字段（薪资场景历史，V38 后薪资已删）', () => {
-    it('hr 跨校管理员工 → phone/price 都可见', () => {
+  describe('hr role mapping（SSOT §1 5/14 Wave 1 删，仅历史 JWT 兜底）', () => {
+    it('hr → phone 可见（兜底分支保留）', () => {
       const r = maskTeacher(teacherFixture(), jwt('hr'));
       expect(r.phone).toBe('13900139000');
-      expect(r.hourlyPriceYuan).toBe(200);
     });
   });
 

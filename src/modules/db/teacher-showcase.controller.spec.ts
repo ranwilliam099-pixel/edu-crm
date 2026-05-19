@@ -42,13 +42,13 @@ describe('TeacherShowcaseController (C.2)', () => {
     isColdStart: false,
   };
 
+  // Day 2 Phase C X1 (2026-05-19 D1.4 拍板): hourlyPriceYuan 字段物理删除（V50 DROP COLUMN）
   const baseTeacher = {
     id: TEACHER_A,
     campusId: 'campus_A_00000000000000000000A001',
     name: '王老师',
     phone: '13800000000',
     subjects: ['数学'],
-    hourlyPriceYuan: 200,
     status: '在职',
   };
 

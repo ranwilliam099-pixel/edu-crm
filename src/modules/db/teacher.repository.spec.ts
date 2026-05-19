@@ -176,15 +176,13 @@ describe('TeacherRepository (V28 archive + V34 字段加密双写双读)', () =>
       ).rejects.toThrow(/校长.*同校区老师/);
     });
 
-    it('hr → 任意 campus 老师：✓', async () => {
+    // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」
+    //   原 spec 验证 hr 可归档；删除 hr 角色后 hr 应抛 BadRequestException
+    it('hr → 任意 campus 老师：✗ 无权（SSOT §1 hr 5/14 Wave 1 删）', async () => {
       pg.tenantQuery.mockResolvedValueOnce([teacherRow({ campus_id: CAMPUS_OTHER })]);
-      pg.tenantQuery.mockResolvedValueOnce([]);
-      txClient.query
-        .mockResolvedValueOnce({ rowCount: 1, rows: [teacherRow({ status: '归档' })] })
-        .mockResolvedValueOnce({ rowCount: 0, rows: [] });
       await expect(
         repo.archive(TENANT, TEACHER_A, 'hr01', { role: 'hr', campusId: null }),
-      ).resolves.toBeDefined();
+      ).rejects.toThrow(/hr.*无老师归档权限/);
     });
 
     it('sales → 任意：✗ 无权', async () => {

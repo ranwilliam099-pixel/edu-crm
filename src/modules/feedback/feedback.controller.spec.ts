@@ -48,6 +48,7 @@ describe('FeedbackController — Sprint B self-check', () => {
     generatedAt: new Date(),
   };
 
+  // Day 2 Phase C X1 (2026-05-19 D1.4 拍板): hourlyPriceYuan 字段物理删除（V50 DROP COLUMN）
   const baseTeacherT1 = {
     id: TEACHER_T1,
     campusId: 'campus_a_00000000000000000000A001',
@@ -55,7 +56,6 @@ describe('FeedbackController — Sprint B self-check', () => {
     phone: undefined,
     userId: USER_U1,
     subjects: ['数学'],
-    hourlyPriceYuan: 200,
     status: '在职' as const,
   };
 
@@ -66,7 +66,6 @@ describe('FeedbackController — Sprint B self-check', () => {
     phone: undefined,
     userId: USER_U2,
     subjects: ['英语'],
-    hourlyPriceYuan: 200,
     status: '在职' as const,
   };
 

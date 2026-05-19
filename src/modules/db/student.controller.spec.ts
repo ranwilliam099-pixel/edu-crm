@@ -621,7 +621,9 @@ describe('StudentController (Sprint B.5 audit_log)', () => {
   // transferTeacher() → audit_log 'student.transfer-teacher'
   // ============================================================
   describe('transferTeacher() — audit student.transfer-teacher', () => {
-    it('hr 把学生主带老师转给 TEACHER_B → audit before/after', async () => {
+    // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」
+    //   原 spec 用 hr 验证转交；hr 角色删除后改用 boss（@Roles('admin', 'boss')）
+    it('boss 把学生主带老师转给 TEACHER_B → audit before/after', async () => {
       const transferResult: StudentTransferResult = {
         studentId: STUDENT_ID,
         fromUserId: TEACHER_ID_A,
@@ -638,7 +640,7 @@ describe('StudentController (Sprint B.5 audit_log)', () => {
           tenantSchema: TENANT_SCHEMA,
           toTeacherId: TEACHER_ID_B,
         },
-        req(jwt('hr')),
+        req(jwt('boss')),
       );
 
       expect(auditLog.log).toHaveBeenCalledTimes(1);
@@ -647,7 +649,7 @@ describe('StudentController (Sprint B.5 audit_log)', () => {
       expect(entry.before).toEqual({ assignedTeacherId: TEACHER_ID_A });
       expect(entry.after.assignedTeacherId).toBe(TEACHER_ID_B);
       expect(entry.after.field).toBe('assigned_teacher_id');
-      expect(entry.actorRole).toBe('hr');
+      expect(entry.actorRole).toBe('boss');
     });
   });
 

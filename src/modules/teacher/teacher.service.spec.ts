@@ -27,6 +27,8 @@ describe('TeacherService - V7 BE-V7-1 PD §2 + 用户拍板条目 29/31', () => 
 
   describe('createTeacher - 创建合法', () => {
     it('全职老师（有 user_id）→ 合法', () => {
+      // Day 2 Phase C X1 (2026-05-19 D1.4 拍板): hourlyPriceYuan 字段物理删除
+      //   不再传入 / 不再返回 — 老师页面零财务字段
       const dto: CreateTeacherDto = {
         id: ULID32_T1,
         campusId: ULID32_C1,
@@ -34,7 +36,6 @@ describe('TeacherService - V7 BE-V7-1 PD §2 + 用户拍板条目 29/31', () => 
         phone: '13800001111',
         userId: ULID32_U1,
         subjects: ['数学', '物理'],
-        hourlyPriceYuan: 200,
         operator: ULID32_OP,
       };
       const teacher = service.createTeacher(dto);
@@ -42,6 +43,8 @@ describe('TeacherService - V7 BE-V7-1 PD §2 + 用户拍板条目 29/31', () => 
       expect(teacher.userId).toBe(ULID32_U1);
       expect(service.hasLoginAccount(teacher)).toBe(true);
       expect(service.isPureArchive(teacher)).toBe(false);
+      // 验证 X1 拍板：返回对象不含 hourlyPriceYuan（防回归）
+      expect((teacher as Teacher & { hourlyPriceYuan?: number }).hourlyPriceYuan).toBeUndefined();
     });
 
     it('纯档案老师（无 user_id）→ 合法（条目 31 #2）', () => {
@@ -113,10 +116,19 @@ describe('TeacherService - V7 BE-V7-1 PD §2 + 用户拍板条目 29/31', () => 
       ).toThrow(BadRequestException);
     });
 
-    it('hourlyPriceYuan 负数 → BadRequestException', () => {
-      expect(() =>
-        service.createTeacher({ ...baseDto, hourlyPriceYuan: -10 }),
-      ).toThrow(BadRequestException);
+    // Day 2 Phase C X1 (2026-05-19 D1.4 拍板): hourlyPriceYuan 字段物理删除
+    //   原 test「hourlyPriceYuan 负数 → BadRequestException」已不适用（字段不存在）
+    //   X1 拍板「老师页面零财务字段」— V50 DROP COLUMN teachers.hourly_price_yuan
+    //   课时单价从 contract.coursePrice / lessonHours 派生
+    it('TypeScript 类型守门：传 hourlyPriceYuan 会被 DTO interface 拒绝（编译期）', () => {
+      // 运行时校验：即便强转绕过 TS（旧调用方），service 不再校验 / 不再返回该字段
+      const result = service.createTeacher({
+        ...baseDto,
+        // 通过 cast 绕开 TS interface 模拟旧调用方
+        hourlyPriceYuan: -10,
+      } as unknown as CreateTeacherDto);
+      // service 不再 throw（字段已移出 interface） + 返回对象不含此字段
+      expect((result as Teacher & { hourlyPriceYuan?: number }).hourlyPriceYuan).toBeUndefined();
     });
 
     it('未知 status → BadRequestException', () => {

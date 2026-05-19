@@ -7,8 +7,13 @@
  *   - 任一字段命中 87014 risky → BadRequest CONTENT_RISKY，不进 provision.provisionTenant
  *   - review / 网络异常 → fail-open，注册继续
  *   - 不返微信内部 errcode（A05 内部 ID 暴露规避）
+ *
+ * Day 2 BLOCKER 1 + 2 (2026-05-19): 生产门卫 + SQL injection 防御
+ *   - DELETE /api/public/onboarding/tenants/:id 生产环境 403
+ *   - GET /api/public/onboarding/tenants 生产环境 403
+ *   - DELETE tenantId 字符集白名单（防 SQL injection）
  */
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import {
   OnboardingController,
   OnboardingDbController,
@@ -251,6 +256,89 @@ describe('OnboardingController (Sprint E.x F-08 msgSecCheck)', () => {
       // 应在调 security 之前抛错（短路）
       expect(security.serverSideCheckContent).not.toHaveBeenCalled();
       expect(provision.provisionTenant).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // Day 2 BLOCKER 1 + 2 (2026-05-19): 生产门卫 + SQL injection 防御
+  // ============================================================
+  describe('listTenants() / deleteTenant() — 生产门卫 + 字符集校验', () => {
+    // beforeEach/afterEach: restore NODE_ENV between tests (jest worker shared)
+    const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
+    afterEach(() => {
+      if (ORIGINAL_NODE_ENV === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = ORIGINAL_NODE_ENV;
+      }
+    });
+
+    it('listTenants 生产环境 → 403 ForbiddenException (Security C-1 + Prod P1-1)', async () => {
+      process.env.NODE_ENV = 'production';
+      await expect(controller.listTenants()).rejects.toThrow(ForbiddenException);
+      // 真实 service 不应被调用
+      expect(provision.listTenants).not.toHaveBeenCalled();
+    });
+
+    it('listTenants 测试环境 → 放行（CI / docker-compose 仍可用）', async () => {
+      process.env.NODE_ENV = 'test';
+      provision.listTenants.mockResolvedValueOnce([]);
+      await expect(controller.listTenants()).resolves.toEqual([]);
+      expect(provision.listTenants).toHaveBeenCalledTimes(1);
+    });
+
+    it('listTenants 开发环境 → 放行', async () => {
+      process.env.NODE_ENV = 'development';
+      provision.listTenants.mockResolvedValueOnce([]);
+      await expect(controller.listTenants()).resolves.toEqual([]);
+      expect(provision.listTenants).toHaveBeenCalledTimes(1);
+    });
+
+    it('deleteTenant 生产环境 → 403 ForbiddenException (Security C-1 + Prod P1-1)', async () => {
+      process.env.NODE_ENV = 'production';
+      await expect(controller.deleteTenant(VALID_TENANT_ID)).rejects.toThrow(
+        ForbiddenException,
+      );
+      // 真实 service 不应被调用（绝不允许生产 DROP）
+      expect(provision.deleteTenant).not.toHaveBeenCalled();
+    });
+
+    it('deleteTenant 测试环境 + 合法 tenantId → 调 service', async () => {
+      process.env.NODE_ENV = 'test';
+      provision.deleteTenant.mockResolvedValueOnce(undefined);
+      const res = await controller.deleteTenant(VALID_TENANT_ID);
+      expect(res).toEqual({ ok: true });
+      expect(provision.deleteTenant).toHaveBeenCalledWith(VALID_TENANT_ID);
+    });
+
+    it('deleteTenant 非生产 + tenantId 含 SQL injection 字符 → 400 (Security C-2)', async () => {
+      process.env.NODE_ENV = 'test';
+      // 32-char 但含分号 + 空格（典型 multi-statement injection 载荷）
+      const malicious = ";drop table public.tenants; --xx";
+      expect(malicious.length).toBe(32); // 长度 32 但字符集非 alphanum
+      await expect(controller.deleteTenant(malicious)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(provision.deleteTenant).not.toHaveBeenCalled();
+    });
+
+    it('deleteTenant 非生产 + tenantId 长度不对 → 400 (Security C-2)', async () => {
+      process.env.NODE_ENV = 'test';
+      await expect(controller.deleteTenant('short')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(provision.deleteTenant).not.toHaveBeenCalled();
+    });
+
+    it('deleteTenant 非生产 + tenantId 含特殊字符 -_ → 400 (Security C-2 严格 alphanum)', async () => {
+      process.env.NODE_ENV = 'test';
+      // 32 字符但含连字符（ULID 不应含 -）
+      const withHyphen = 'tenantE000000000000000000000-F08';
+      expect(withHyphen.length).toBe(32);
+      await expect(controller.deleteTenant(withHyphen)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(provision.deleteTenant).not.toHaveBeenCalled();
     });
   });
 });

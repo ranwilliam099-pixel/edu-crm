@@ -1589,20 +1589,6 @@
         ]
       }
     },
-    "/api/db/contracts": {
-      "post": {
-        "operationId": "ContractController_create",
-        "parameters": [],
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "Contract"
-        ]
-      }
-    },
     "/api/db/contracts/{id}/activate": {
       "post": {
         "operationId": "ContractController_activate",

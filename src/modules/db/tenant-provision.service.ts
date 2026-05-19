@@ -168,6 +168,16 @@ export class TenantProvisionService {
     if (!input.tenantId || input.tenantId.length !== 32) {
       throw new BadRequestException('tenantId must be 32-char ULID');
     }
+    // Day 2 Security C-2 (2026-05-19): SQL injection 防御 — tenantId 字符集白名单
+    //   原仅校验 length 不校验字符集，攻击者可传 `;drop table public.tenants; --x`（32 chars）
+    //   → tenantSchema = `tenant_${tenantId.toLowerCase()}` 拼入 CREATE SCHEMA / DROP SCHEMA 裸 SQL
+    //   → multi-statement injection 可 DROP public schema
+    //   防御：严格 32-char alphanumeric（ULID Crockford Base32 = [0-9A-HJKMNP-TV-Z]+，宽松到 [A-Za-z0-9]）
+    if (!/^[A-Za-z0-9]{32}$/.test(input.tenantId)) {
+      throw new BadRequestException(
+        'tenantId must be 32-char alphanumeric (ULID Crockford Base32)',
+      );
+    }
     if (!input.name) {
       throw new BadRequestException('name required');
     }
@@ -515,8 +525,18 @@ export class TenantProvisionService {
 
   /**
    * 删除租户（仅测试用）
+   *
+   * Day 2 Security C-2 (2026-05-19): SQL injection 防御 — tenantId 字符集白名单
+   *   - DROP SCHEMA + DELETE 裸 SQL 拼入 tenantSchema，必须严格校验字符集
+   *   - 即便 controller 层已有 production gate + charset check，service 层兜底
+   *     防内部其他模块（如 cleanup cron / e2e helper）跨过 controller 直接调本方法
    */
   async deleteTenant(tenantId: string): Promise<void> {
+    if (!tenantId || !/^[A-Za-z0-9]{32}$/.test(tenantId)) {
+      throw new BadRequestException(
+        'tenantId must be 32-char alphanumeric (ULID Crockford Base32)',
+      );
+    }
     const tenantSchema = `tenant_${tenantId.toLowerCase()}`;
     await this.pg.query(`DROP SCHEMA IF EXISTS ${tenantSchema} CASCADE`);
     await this.pg.query(`DELETE FROM public.tenants WHERE id = $1`, [tenantId]);

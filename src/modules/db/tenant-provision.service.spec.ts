@@ -326,6 +326,51 @@ describe('TenantProvisionService (Day 2 Phase A P0-1 fix)', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    // Day 2 BLOCKER 2 (2026-05-19): tenantId SQL injection 防御 — 字符集白名单
+    it('tenantId 长度=32 但含 SQL injection 字符 → 400 (Security C-2)', async () => {
+      // 典型 multi-statement injection 载荷: `;drop table ...` (32 chars)
+      const malicious = ';drop table public.tenants; --xx';
+      expect(malicious.length).toBe(32);
+      await expect(
+        service.provisionTenant({
+          tenantId: malicious,
+          name: 'demo-x',
+          sku: 'trial',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('tenantId 长度=32 含连字符 → 400 (Security C-2 严格 alphanum)', async () => {
+      const withHyphen = 'tenantE000000000000000000000-F08';
+      expect(withHyphen.length).toBe(32);
+      await expect(
+        service.provisionTenant({
+          tenantId: withHyphen,
+          name: 'demo-x',
+          sku: 'trial',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('deleteTenant tenantId 含 SQL injection 字符 → 400 (Security C-2)', async () => {
+      const malicious = ';drop table public.tenants; --xx';
+      expect(malicious.length).toBe(32);
+      await expect(service.deleteTenant(malicious)).rejects.toThrow(
+        BadRequestException,
+      );
+      // 危险路径 DROP SCHEMA 不应执行
+      const dropCall = pg.query.mock.calls.find(
+        (c: any[]) => typeof c[0] === 'string' && c[0].includes('DROP SCHEMA'),
+      );
+      expect(dropCall).toBeUndefined();
+    });
+
+    it('deleteTenant tenantId 长度不对 → 400 (Security C-2)', async () => {
+      await expect(service.deleteTenant('short')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
     it('name 缺 → 400', async () => {
       await expect(
         service.provisionTenant({

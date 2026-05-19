@@ -26,8 +26,9 @@ export interface Teacher {
   userId?: string;
   subjects: ReadonlyArray<string>;
   bio?: string;
-  /** 课时单价（机构对老师的定价，元） — V39 renamed from hourlyRateYuan */
-  hourlyPriceYuan?: number;
+  // Day 2 Phase C X1 (2026-05-19 用户拍板 D1.4): hourlyPriceYuan 物理删除
+  //   拍板「老师页面零财务字段」— V50 migration DROP COLUMN teachers.hourly_price_yuan
+  //   课时单价从 contract.coursePrice / lessonHours 派生
   status: TeacherStatus;
 }
 
@@ -59,9 +60,7 @@ export class TeacherService {
     if (dto.userId !== undefined && dto.userId.length !== 32) {
       throw new BadRequestException('userId (if provided) must be 32-char ULID');
     }
-    if (dto.hourlyPriceYuan !== undefined && dto.hourlyPriceYuan < 0) {
-      throw new BadRequestException('hourlyPriceYuan must be >= 0');
-    }
+    // Day 2 Phase C X1 (2026-05-19): hourlyPriceYuan validation 已删（字段物理删除）
     if (!dto.operator || dto.operator.length !== 32) {
       throw new BadRequestException('operator must be 32-char ULID');
     }
@@ -83,7 +82,7 @@ export class TeacherService {
       userId: dto.userId,
       subjects: dto.subjects ?? [],
       bio: dto.bio,
-      hourlyPriceYuan: dto.hourlyPriceYuan,
+      // Day 2 Phase C X1 (2026-05-19): hourlyPriceYuan 物理删除 — 不再返回
       status,
     };
   }

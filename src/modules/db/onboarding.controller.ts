@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Post,
   Get,
   Delete,
@@ -170,20 +171,49 @@ export class OnboardingController {
   }
 
   /**
-   * GET /api/public/onboarding/tenants — 列出已开通租户
+   * GET /api/public/onboarding/tenants — 列出已开通租户（仅测试用）
+   *
+   * Day 2 Security C-1 + Prod P1-1 (2026-05-19): 生产环境硬门卫
+   *   - 攻击者可 curl 直接列所有 tenant，泄漏租户清单 + 攻击面枚举
+   *   - 生产环境 NODE_ENV='production' → 403 ForbiddenException
+   *   - 测试/开发环境放行（CI / docker-compose / e2e 仍可用）
    */
   @Get('onboarding/tenants')
   @HttpCode(HttpStatus.OK)
   async listTenants() {
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException(
+        'GET /api/public/onboarding/tenants is disabled in production (test-only endpoint)',
+      );
+    }
     return this.provision.listTenants();
   }
 
   /**
    * DELETE /api/public/onboarding/tenants/:id — 删除租户（仅测试用）
+   *
+   * Day 2 Security C-1 + Prod P1-1 (2026-05-19): 生产环境硬门卫
+   *   - 该 endpoint 完全无鉴权，攻击者可 curl 直接 DROP 任意 tenant CASCADE
+   *   - 64 生产 tenant 全炸风险（不可逆破坏）
+   *   - 生产环境 NODE_ENV='production' → 403 ForbiddenException
+   *   - 测试/开发环境放行（CI cleanup / docker-compose teardown）
+   *
+   * Day 2 Security C-2 (2026-05-19): tenantId 字符集白名单防 SQL injection
+   *   - 兜底防御（即便 service 层有校验，controller 层先 reject 减少深度调用）
    */
   @Delete('onboarding/tenants/:id')
   @HttpCode(HttpStatus.OK)
   async deleteTenant(@Param('id') id: string): Promise<{ ok: true }> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException(
+        'DELETE /api/public/onboarding/tenants/:id is disabled in production (test-only endpoint)',
+      );
+    }
+    if (!id || !/^[A-Za-z0-9]{32}$/.test(id)) {
+      throw new BadRequestException(
+        'tenantId must be 32-char alphanumeric (ULID Crockford Base32)',
+      );
+    }
     await this.provision.deleteTenant(id);
     return { ok: true };
   }

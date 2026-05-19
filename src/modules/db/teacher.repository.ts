@@ -217,8 +217,9 @@ export class TeacherRepository {
       throw new BadRequestException(`teacher ${teacherId} 已归档`);
     }
     // V28 R2 RBAC 边界（用户 2026-05-07「老板也可以同样处理校长」+ 边界精化）
-    // - admin / hr：任意校区老师
+    // - admin：任意校区老师
     // - boss：仅同校老师
+    // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」— 删 'hr' 白名单分支
     if (operatorContext) {
       const role = operatorContext.role;
       const campusId = operatorContext.campusId;
@@ -227,7 +228,7 @@ export class TeacherRepository {
           `校长（boss）仅能归档同校区老师（operator=${campusId} / target=${target.campusId}）`,
         );
       }
-      if (role && role !== 'admin' && role !== 'boss' && role !== 'hr') {
+      if (role && role !== 'admin' && role !== 'boss') {
         throw new BadRequestException(`role=${role} 无老师归档权限`);
       }
     }

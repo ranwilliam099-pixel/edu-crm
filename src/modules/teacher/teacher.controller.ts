@@ -108,7 +108,7 @@ export class TeacherController {
    */
   @Post()
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss', 'hr')
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.CREATED)
   createTeacher(@Body() dto: CreateTeacherDto): Teacher {
     return this.service.createTeacher(dto);
@@ -119,7 +119,7 @@ export class TeacherController {
    */
   @Post(':id/status')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss', 'hr')
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   changeStatus(
     @Param('id') _id: string,
@@ -149,7 +149,7 @@ export class TeacherController {
    */
   @Post('db')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss', 'hr')
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.CREATED)
   async createTeacherInDb(
     @Body() body: CreateTeacherDto & { tenantSchema: string },
@@ -174,7 +174,7 @@ export class TeacherController {
           phoneMask: this.maskPhoneForAudit(result.phone),
           userId: result.userId ?? null,
           subjects: result.subjects,
-          hourlyPriceYuan: result.hourlyPriceYuan ?? null,
+          // Day 2 Phase C X1 (2026-05-19): hourlyPriceYuan 物理删除 — audit 不再记录
           status: result.status,
         },
       });
@@ -188,7 +188,8 @@ export class TeacherController {
    */
   @Post('db/list')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'boss', 'hr', 'sales_manager') // 5/15 A-2：删 'sales_director'
+  // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」+ 5/15 A-2「删 sales_director」
+  @Roles('admin', 'boss', 'sales_manager')
   @HttpCode(HttpStatus.OK)
   async listFromDb(@Body() body: { tenantSchema: string }): Promise<Teacher[]> {
     return this.service.listFromDb(body.tenantSchema);
@@ -225,7 +226,7 @@ export class TeacherController {
    */
   @Post('db/:id/archive')
   @UseGuards(TenantScopeGuard, RbacGuard)
-  @Roles('admin', 'boss', 'hr')
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async archive(
     @Param('id') id: string,

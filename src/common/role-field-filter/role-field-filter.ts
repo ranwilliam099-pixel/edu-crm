@@ -191,25 +191,27 @@ export function maskCustomer<T extends Customer>(
  *
  * | 字段              | 师自己 | 务 | 老校 | 家 | 销 | 同校师 |
  * | phone             | ✅      | 👁 | ✅    | ❌ | ❌  | 👁     |
- * | hourlyPriceYuan   | ✅      | ✅ | ✅    | ❌ | ❌  | ❌     |
  *
  * 实现策略：
  *   - admin / boss / academic：✅ phone 可见
  *   - teacher 看自己：✅；看别人：phone 不可见
- *   - sales / parent / hr / finance：phone 不可见（拍板「看不到手机/身份证」）
+ *   - sales / parent / finance：phone 不可见（拍板「看不到手机/身份证」）
  *
  * 注：showcase 路径返回的「teacher」对象已是聚合裁剪过的（仅 id/name/subjects/avatar/bio），
  *     无 phone；本 helper 主要给「老师档案」detail 路径使用（V35+ 老师档案 controller）。
  *     当前 showcase endpoint 不返 phone，本 helper 仍提供保底语义。
  *
- * V38 hourlyPriceYuan 已删（薪资全删），但接口保留容错。
+ * Day 2 Phase C X1 (2026-05-19 D1.4 拍板): hourlyPriceYuan 字段物理删除
+ *   - V50 migration DROP COLUMN teachers.hourly_price_yuan
+ *   - Teacher interface 也删字段，mask 函数不再处理（字段不存在 = 永远不出现）
+ *   - 拍板「老师页面零财务字段，物理 > 逻辑」
  */
 export interface TeacherMaskOptions {
   /**
    * 是否是当前用户的老师档案本人（teacher.userId === req.user.sub）
    *
-   * - true：保留全字段（phone / hourlyPriceYuan）
-   * - false：按 group 规则裁剪
+   * - true：保留全字段（phone）
+   * - false：按 group 规则裁剪 phone
    */
   isSelf?: boolean;
 }
@@ -233,29 +235,27 @@ export function maskTeacher<T extends Teacher>(
       return masked;
 
     case 'academic':
-      // 教务双层 👁：phone / hourlyPriceYuan 可见（拍板「不改但可看」）
+      // 教务双层 👁：phone 可见（拍板「不改但可看」）
       return masked;
 
     case 'teacher':
       // 同校老师互看 👁：phone 不可见（拍板「除手机身份证」）
       masked.phone = undefined;
-      // 同校老师不看他人薪资定价
-      masked.hourlyPriceYuan = undefined;
       return masked;
 
     case 'sales':
-      // 销售推荐老师场景：phone ❌（拍板「看不到手机/身份证」），price 也 ❌
+      // 销售推荐老师场景：phone ❌（拍板「看不到手机/身份证」）
       masked.phone = undefined;
-      masked.hourlyPriceYuan = undefined;
       return masked;
 
     case 'finance':
-      // 财务看老师档案：phone ❌（仅看薪资项已删）；保留 price 字段供作账参考
+      // 财务看老师档案：phone ❌（仅看薪资项已删 V37/V38；X1 后零财务字段）
       masked.phone = undefined;
       return masked;
 
     case 'hr':
-      // HR 跨校管理员工 → phone ✅ 看，price ✅ 看（薪资场景仅 V38 前；V38 后已删）
+      // HR 跨校管理员工 → phone ✅ 看
+      // 注：5/14 Wave 1 SSOT §1 已删 hr 角色，此分支保留兜底（旧 JWT / 历史调用方）
       return masked;
 
     case 'parent':
@@ -263,7 +263,6 @@ export function maskTeacher<T extends Teacher>(
     default:
       // 家长 / 未识别 → 全部敏感 null
       masked.phone = undefined;
-      masked.hourlyPriceYuan = undefined;
       return masked;
   }
 }

@@ -34,8 +34,9 @@ export interface CreateTeacherDto {
   /** 教师简介 */
   readonly bio?: string;
 
-  /** 课时单价（机构对老师的定价，单位元）— V39 renamed from hourlyRateYuan，语义解耦自「工资」 */
-  readonly hourlyPriceYuan?: number;
+  // Day 2 Phase C X1 (2026-05-19 用户拍板 D1.4): hourlyPriceYuan 物理删除
+  //   拍板「老师页面零财务字段」— V50 migration 已 DROP COLUMN teachers.hourly_price_yuan
+  //   课时单价从 contract.coursePrice / lessonHours 派生，不再由 teacher 档案携带
 
   /** 状态，默认 '在职' */
   readonly status?: TeacherStatus;

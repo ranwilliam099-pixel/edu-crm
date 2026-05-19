@@ -326,99 +326,17 @@ export class ContractController {
     return { items: items_masked };
   }
 
-  @Post()
-  @Roles('sales', 'sales_manager', 'boss', 'admin')
-  @HttpCode(HttpStatus.CREATED)
-  async create(
-    @Body()
-    body: {
-      tenantId: string;
-      tenantSchema: string;
-      id: string;
-      studentId: string;
-      // V29 销售自填：courseProductId 与 courseProductName 二选一（至少一个）
-      courseProductId?: string;
-      courseProductName?: string;
-      opportunityId?: string;
-      campusId?: string;
-      classType?: string;
-      lessonHours: number;
-      standardPrice: number;
-      discountAmount?: number;
-      giftHours?: number;
-      totalAmount: number;
-      orderType?: OrderType;
-      signedAt?: string;
-      note?: string;
-    },
-    @Req() req: AuthenticatedRequest,
-  ): Promise<Contract> {
-    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
-    if (!body.studentId) throw new BadRequestException('studentId required');
-    if (!body.courseProductId && !body.courseProductName) {
-      throw new BadRequestException(
-        'courseProductId 与 courseProductName 至少传一个（销售自填或选既有产品）',
-      );
-    }
-    if (typeof body.totalAmount !== 'number') {
-      throw new BadRequestException('totalAmount required');
-    }
-    const ownerUserId = req.user?.sub;
-    if (!ownerUserId) throw new BadRequestException('user sub required');
-    // V26 校区归属：跨校 role（admin/hr，5/15 A-2 删 sales_director）允许 body.campusId 显式传，
-    // 单校 role 从 jwt.campusId 自动填，前端不需要传。
-    const campusId = body.campusId || req.user?.campusId || null;
-    const result = await this.repo.create(body.tenantSchema, {
-      id: body.id,
-      studentId: body.studentId,
-      courseProductId: body.courseProductId,
-      courseProductName: body.courseProductName,
-      ownerUserId,
-      opportunityId: body.opportunityId,
-      campusId,
-      classType: body.classType,
-      lessonHours: body.lessonHours,
-      standardPrice: body.standardPrice,
-      discountAmount: body.discountAmount,
-      giftHours: body.giftHours,
-      totalAmount: body.totalAmount,
-      orderType: body.orderType,
-      signedAt: body.signedAt,
-      note: body.note,
-    });
-
-    // Sprint B.5: audit_log contract.create
-    //   金额字段不脱敏：合同变更追溯需要 totalAmount/standardPrice/discountAmount/giftHours
-    //   完整快照（财务/审计场景必需）
-    await this.tryAudit(body.tenantSchema, {
-      actorUserId: ownerUserId,
-      ...this.auditCtx(req),
-      action: 'contract.create',
-      targetType: 'contract',
-      targetId: result.id,
-      before: null,
-      after: {
-        id: result.id,
-        studentId: result.studentId,
-        ownerUserId: result.ownerUserId,
-        opportunityId: result.opportunityId,
-        campusId: result.campusId,
-        courseProductId: result.courseProductId,
-        courseProductName: result.courseProductName,
-        classType: result.classType,
-        lessonHours: result.lessonHours,
-        standardPrice: result.standardPrice,
-        discountAmount: result.discountAmount,
-        giftHours: result.giftHours,
-        totalAmount: result.totalAmount,
-        orderType: result.orderType,
-        status: result.status,
-        signedAt: result.signedAt,
-      },
-    });
-
-    return result;
-  }
+  // Day 2 BLOCKER 5 (2026-05-19): 删 POST /api/db/contracts 独立端点
+  //   SSOT §2 全局规则 1「OOUX 中心化：contract 是 student 的子对象」
+  //   - 拍板「从 student/detail 一站式发起 action」— contract 必须从 student 子路径创建
+  //   - 旧路径 POST /api/db/contracts 违反 OOUX 资源归属语义
+  //   - 唯一合法路径：POST /api/db/students/:id/contracts（student.controller.ts:324）
+  //   - 前端 miniprogram/pages/b/sales-contract/new/new.js:294 已迁移到子资源路径
+  //
+  // 验证：grep miniprogram/ 无非子路径调用本端点
+  //   miniprogram/pages/b/sales-contract/new/new.js:294 用 /db/students/:id/contracts ✅
+  //   miniprogram/pages/b/student/detail/detail.js:345 用 /db/contracts/by-student/:id (GET) ✅
+  //   miniprogram/utils/openapi-schema.json:1592 旧 baseline，需重 gen
 
   @Post(':id/activate')
   @Roles('sales', 'sales_manager', 'boss', 'admin')

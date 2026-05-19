@@ -47,6 +47,7 @@ describe('TeacherController (Sprint B.5 audit_log)', () => {
   }
 
   function teacherFixture(overrides: Partial<Teacher> = {}): Teacher {
+    // Day 2 Phase C X1 (2026-05-19 D1.4 拍板): hourlyPriceYuan 字段物理删除（V50 DROP COLUMN）
     return {
       id: TEACHER_ID,
       campusId: CAMPUS_A,
@@ -54,7 +55,6 @@ describe('TeacherController (Sprint B.5 audit_log)', () => {
       phone: '13800001111',
       userId: undefined,
       subjects: ['数学', '物理'],
-      hourlyPriceYuan: 200,
       status: '在职',
       ...overrides,
     };
@@ -80,13 +80,13 @@ describe('TeacherController (Sprint B.5 audit_log)', () => {
   describe('createTeacherInDb() — audit teacher.create', () => {
     it('admin 建老师档案 → audit_log 调 1 次, phone 脱敏入 audit', async () => {
       service.createTeacherInDb.mockResolvedValueOnce(teacherFixture());
+      // Day 2 Phase C X1 (2026-05-19 D1.4 拍板): hourlyPriceYuan 字段物理删除
       const dto: CreateTeacherDto = {
         id: TEACHER_ID,
         campusId: CAMPUS_A,
         name: '王老师',
         phone: '13800001111',
         subjects: ['数学', '物理'],
-        hourlyPriceYuan: 200,
         operator: OPERATOR_ID,
       };
       await controller.createTeacherInDb(
@@ -110,6 +110,8 @@ describe('TeacherController (Sprint B.5 audit_log)', () => {
       expect(entry.after.campusId).toBe(CAMPUS_A);
       expect(entry.after.status).toBe('在职');
       expect(entry.after.subjects).toEqual(['数学', '物理']);
+      // X1 拍板：audit after 不含 hourlyPriceYuan（防回归）
+      expect(entry.after.hourlyPriceYuan).toBeUndefined();
     });
 
     it('phone 缺失 → phoneMask=null（无 PII，不抛错）', async () => {
@@ -180,7 +182,11 @@ describe('TeacherController (Sprint B.5 audit_log)', () => {
       expect(entry.actorRole).toBe('admin');
     });
 
-    it('hr 注销老师 + 无接棒人 → studentsReassigned 仍写入', async () => {
+    // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」
+    //   原 spec 验证 hr 可注销老师；hr 角色删除后该路径在 controller 层 @Roles 拦截
+    //   audit_log normalizeActorRole 仍兜底（'hr' → 'hr' 写入但 RBAC 拦截）
+    //   改用 boss 角色覆盖「无接棒人 + studentsReassigned=0」场景对称性
+    it('boss 注销老师 + 无接棒人 → studentsReassigned 仍写入', async () => {
       const result: TeacherArchiveResult = {
         teacher: teacherFixture({ status: '归档' }),
         transferToTeacherId: null,
@@ -192,11 +198,11 @@ describe('TeacherController (Sprint B.5 audit_log)', () => {
       await controller.archive(
         TEACHER_ID,
         { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA },
-        req(jwt('hr', ADMIN_SUB)),
+        req(jwt('boss', ADMIN_SUB)),
       );
 
       const entry = auditLog.log.mock.calls[0][1];
-      expect(entry.actorRole).toBe('hr');
+      expect(entry.actorRole).toBe('boss');
       expect(entry.after.transferToTeacherId).toBeNull();
       expect(entry.after.studentsReassigned).toBe(0);
     });

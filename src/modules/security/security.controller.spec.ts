@@ -82,10 +82,16 @@ describe('SecurityController', () => {
       expect(res.ok).toBe(true);
     });
 
-    it('openid 缺 → 400', async () => {
-      await expect(
-        controller.msgCheck({ content: 'hi' }),
-      ).rejects.toThrow(BadRequestException);
+    // Day 2 BLOCKER 6 (2026-05-19): commit f232ec0 (5/14 round 25) 改 controller L116-119
+    //   让 openid 可选 — B 端员工 (customer/staff create) 无 openid 走 v1 server-mode msgSecCheck
+    //   原 spec 「openid 缺 → 400」断言失效（pre-existing fail），应改为「openid 缺 → 走 v1 透传」
+    //   v1 server-mode 微信 API 接受空 openid（B 端场景内容审查）
+    it('openid 缺 → 走 v1 server-mode（B 端员工无 openid 场景）', async () => {
+      security.msgSecCheck.mockResolvedValueOnce({ ok: true, suggest: 'pass' });
+      const res = await controller.msgCheck({ content: 'hi' });
+      expect(res).toEqual({ ok: true, suggest: 'pass' });
+      // openid 传空字符串给 service（service 据此走 v1 server-side check）
+      expect(security.msgSecCheck).toHaveBeenCalledWith('hi', '', 1);
     });
 
     it('openid 格式不合法（短）→ 400', async () => {
