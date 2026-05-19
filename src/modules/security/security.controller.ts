@@ -113,16 +113,20 @@ export class SecurityController {
         `content length must be 1-${MSG_MAX_LENGTH} chars`,
       );
     }
-    if (!openid || typeof openid !== 'string' || !OPENID_PATTERN.test(openid)) {
+    // Sprint X.2 round 25 (2026-05-19): openid 改可选, B 端员工无 openid 走 v1 server-mode
+    //   原硬要 openid 让 B 端 customer/staff 创建时 msgSecCheck 永 400 → 内容安全审查失效 (合规风险)
+    //   修: 无 openid 时空字符串传给 service, service 走 v1 server-side check (microsoft msgsec v1 支持无 openid)
+    //   有 openid 时仍校验格式 (防 garbage 注入微信 API)
+    if (openid && (typeof openid !== 'string' || !OPENID_PATTERN.test(openid))) {
       throw new BadRequestException(
-        'openid is required (20-64 chars, A-Za-z0-9_-)',
+        'openid format invalid (20-64 chars, A-Za-z0-9_-) — 可不传 (B 端员工)',
       );
     }
     if (typeof scene !== 'number' || !VALID_SCENES.has(scene)) {
       throw new BadRequestException('scene must be one of 1/2/3/4');
     }
 
-    return this.security.msgSecCheck(content, openid, scene as MsgSecScene);
+    return this.security.msgSecCheck(content, openid || '', scene as MsgSecScene);
   }
 
   /**

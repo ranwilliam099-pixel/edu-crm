@@ -84,12 +84,12 @@ export class SecurityService {
     const url = `https://api.weixin.qq.com/wxa/msg_sec_check?access_token=${encodeURIComponent(
       accessToken,
     )}`;
-    const body = {
-      version: 2,
-      scene,
-      content,
-      openid,
-    };
+    // Sprint X.2 round 25 (2026-05-19): openid 空走 v1 (B 端员工无 openid 场景, customer/staff 创建)
+    //   v2 协议强制 openid (用户级风控), v1 server-side check 不需要 openid (功能弱但兼容 B 端)
+    //   有 openid 走 v2 (用户级精准风控), 无 openid 走 v1 (服务端兜底审查)
+    const body: Record<string, unknown> = openid
+      ? { version: 2, scene, content, openid }
+      : { version: 1, content };
 
     let data: WxMsgSecCheckResponse;
     try {
