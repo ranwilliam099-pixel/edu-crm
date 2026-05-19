@@ -843,7 +843,7 @@ describe('[RBAC L9 Batch A] 核心 5 对象 × 4 CRUD × 13 角色 = 260 case', 
     describe('create', () => {
       // manifest: allow=[admin,boss]
       // manifest: deny=[sales,sales_manager,academic,teacher,finance,parent,platform_admin,finance_admin,marketing,hr,academic_admin]
-      // note: §12.4 admin 唯一创建 B 端子账户 (boss 也不能, SSOT §12.4 拍板; 但 user.controller 现实 @Roles('admin','boss') — Sprint Y backlog 收敛); 本 manifest 暂含 boss 因 user.controller 现状
+      // note: §12.4 修订 (Sprint X.2 round 12 2026-05-18 用户拍板): admin 跨校 + boss 本校区创建员工（不可创建另一 boss/admin/平台管理）
 
       it('allow admin → canActivate 返 true', () => {
         (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
