@@ -24,6 +24,10 @@
 - 同步改前端（如 endpoint / DTO 变化）
 - 跑完整 12 层测试金字塔
 
+> ⚠️ **auto-gen 文件禁手改**：`src/__rbac__/generated/` 目录全部由 `scripts/generate-rbac-spec.js` 生成。
+> RBAC 矩阵改动必须改 `src/__rbac__/manifest.json` + 重跑 `node scripts/generate-rbac-spec.js --batch=<a|b|c|d>`，
+> 禁止直接 edit auto-gen spec 文件。
+
 ### Phase 3: 自测（leader 跑，不是 agent）
 
 ```

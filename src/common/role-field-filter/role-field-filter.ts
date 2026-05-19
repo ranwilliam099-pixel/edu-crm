@@ -471,8 +471,12 @@ export function canAccessStudent(
       if (!options.ownTeacherId) return false;
       return student.assignedTeacherId === options.ownTeacherId;
     case 'finance':
-      // 财务作账：本校全部
-      return true;
+      // SSOT §4.1 student 字段矩阵列头「销 / 师 / 务 / 老校 / 家」— **finance 完全不在任何列**
+      //   student 是教学线对象，finance 仅在 §6 finance.invoice.* 对发票对象有权限
+      //   2026-05-19 Day 6 round 2 BLOCKER B1 修：原 return true 违反拍板 → 返 false
+      //   双层防御：所有 student endpoint @Roles 已不含 finance（student.controller 写 endpoint 全 deny finance）
+      //   本 helper 兜底防御 — 即使有遗漏 @Roles 的 endpoint 也保守拒绝
+      return false;
     case 'parent':
       // 家长走 c 端独立 endpoint（c/student-profile），不走本判定
       return false;

@@ -404,6 +404,7 @@ describe('maskContract', () => {
       const r = maskContract(contractFixture(), jwt('academic'));
       expect(r.standardPrice).toBe(0); // 价格细节不看
       expect(r.discountAmount).toBe(0); // 折扣不看
+      expect(r.giftHours).toBe(0); // Day 6 leader 拍板（最严）：academic 不看赠课
       expect(r.totalAmount).toBe(9000); // 总价保留（续费话术依据）
       // status / classType / signedAt 保留
       expect(r.status).toBe('active');
@@ -594,8 +595,10 @@ describe('canAccessStudent', () => {
     expect(canAccessStudent(s, jwt('academic'))).toBe(true);
   });
 
-  it('finance → 全部可看（作账）', () => {
-    expect(canAccessStudent(s, jwt('finance'))).toBe(true);
+  it('finance → 拒绝（SSOT §4.1 student 列头不含 finance，2026-05-19 Day 6 BLOCKER B1 修）', () => {
+    // student 是教学线对象，finance 仅在 §6 finance.invoice.* 有权限
+    // 双层防御：student.controller @Roles 全 deny finance；本 helper 兜底返 false
+    expect(canAccessStudent(s, jwt('finance'))).toBe(false);
   });
 
   it('parent → 拒绝（c 端独立流程）', () => {

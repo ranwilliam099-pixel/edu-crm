@@ -2215,8 +2215,8 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
 
     describe('field: canAccessStudent_owned', () => {
       // scope filter — student.ownerSalesId = USER_OWNER, student.assignedTeacherId = TEACHER_OWN
-      // visible=[admin,boss,sales_manager,sales_owner,marketing,academic,academic_admin,finance,teacher_self]
-      // hidden=[sales_other,teacher_other,parent,hr,unknown]
+      // visible=[admin,boss,sales_manager,sales_owner,marketing,academic,academic_admin,teacher_self]
+      // hidden=[sales_other,teacher_other,finance,parent,hr,unknown]
 
       it('visible: admin → canAccessStudent = true', () => {
         expect(callAccess('student', 'admin')).toBe(true);
@@ -2239,9 +2239,6 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
       it('visible: academic_admin → canAccessStudent = true', () => {
         expect(callAccess('student', 'academic_admin')).toBe(true);
       });
-      it('visible: finance → canAccessStudent = true', () => {
-        expect(callAccess('student', 'finance')).toBe(true);
-      });
       it('visible: teacher_self → canAccessStudent = true', () => {
         expect(callAccess('student', 'teacher_self')).toBe(true);
       });
@@ -2250,6 +2247,9 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
       });
       it('hidden: teacher_other → canAccessStudent = false', () => {
         expect(callAccess('student', 'teacher_other')).toBe(false);
+      });
+      it('hidden: finance → canAccessStudent = false', () => {
+        expect(callAccess('student', 'finance')).toBe(false);
       });
       it('hidden: parent → canAccessStudent = false', () => {
         expect(callAccess('student', 'parent')).toBe(false);

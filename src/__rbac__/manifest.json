@@ -765,10 +765,10 @@
         "_fields": {
           "canAccessStudent_owned": {
             "_category": "scope filter — student.ownerSalesId = USER_OWNER, student.assignedTeacherId = TEACHER_OWN",
-            "_note": "fixture: 学生归 USER_OWNER 销售 + TEACHER_OWN 老师；测试每角色的访问决策。marketing → sales group + sub=USER_OWNER 默认匹配 ownerSalesId → access=true（与 sales_owner 等效）。",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "marketing", "academic", "academic_admin", "finance", "teacher_self"],
+            "_note": "fixture: 学生归 USER_OWNER 销售 + TEACHER_OWN 老师；测试每角色的访问决策。marketing → sales group + sub=USER_OWNER 默认匹配 ownerSalesId → access=true（与 sales_owner 等效）。\n\n2026-05-19 Day 6 round 2 BLOCKER B1 修：finance 从 visible 移到 hidden。SSOT §4.1 student 列头「销/师/务/老校/家」不含 finance — student 是教学线对象，finance 仅在 §6 finance.invoice.* 有权限。双层防御对齐 student.controller @Roles 全 deny finance。",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "marketing", "academic", "academic_admin", "teacher_self"],
             "masked": [],
-            "hidden": ["sales_other", "teacher_other", "parent", "hr", "unknown"]
+            "hidden": ["sales_other", "teacher_other", "finance", "parent", "hr", "unknown"]
           },
           "canAccessContract_owned": {
             "_category": "scope filter — contract.ownerUserId = USER_OWNER",
