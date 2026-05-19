@@ -74,7 +74,7 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
     await runInPublic(async (c) => {
       await c.query(
         `INSERT INTO public.tenants (id, name, plan_tier, status, subscription_status, max_campuses, created_at)
-         VALUES ($1, $2, 'standard_1999', '正常', 'trial', 3, NOW())
+         VALUES ($1, $2, 'growth', '已付费', 'trial', 3, NOW())
          ON CONFLICT (id) DO NOTHING`,
         [testTenantId.padEnd(32, '0').slice(0, 32), 'demo-parent-spec'],
       );
@@ -103,7 +103,7 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
       id: parentId,
       phone,
       name: '张三家长',
-      status: '正常',
+      status: '启用',
     } as any);
 
     expect(result.id).toBe(parentId);
@@ -145,7 +145,7 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
     await runInPublic(async (c) => {
       await c.query(
         `INSERT INTO public.parents (id, phone, name, status, phone_hash, phone_encrypted)
-         VALUES ($1, $2, $3, '正常', NULL, NULL)`,
+         VALUES ($1, $2, $3, '启用', NULL, NULL)`,
         [parentId, phone, '老旧数据家长'],
       );
     });
@@ -166,7 +166,7 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
       id: parentId,
       phone: '13999990003',
       name: '版本1',
-      status: '正常',
+      status: '启用',
     } as any);
 
     // UPSERT 改 name
@@ -174,7 +174,7 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
       id: parentId,
       phone: '13999990003',
       name: '版本2',
-      status: '正常',
+      status: '启用',
     } as any);
     expect(v2.name).toBe('版本2');
   });
@@ -185,12 +185,12 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
   it('UNIQUE(phone) — 不同 id 同 phone 必失败 23505', async () => {
     const phone = '13999990004';
     const p1 = testUlid();
-    await repo.insertParent({ id: p1, phone, name: '第1个', status: '正常' } as any);
+    await repo.insertParent({ id: p1, phone, name: '第1个', status: '启用' } as any);
 
     const p2 = testUlid();
     // INSERT 第 2 个时虽 ON CONFLICT (id) 不冲突，但 UNIQUE(phone) 会冲突
     await expect(
-      repo.insertParent({ id: p2, phone, name: '第2个', status: '正常' } as any),
+      repo.insertParent({ id: p2, phone, name: '第2个', status: '启用' } as any),
     ).rejects.toThrow(/23505|duplicate|unique/i);
   });
 
@@ -208,7 +208,7 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
         id: pid,
         phone: `13999991${String(i).padStart(3, '0')}`,
         name: `家长-${i}`,
-        status: '正常',
+        status: '启用',
       } as any);
       await repo.insertBinding({
         id: testUlid(),
@@ -228,7 +228,7 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
       id: p4,
       phone: '13999991999',
       name: '第4家长',
-      status: '正常',
+      status: '启用',
     } as any);
     await expect(
       repo.insertBinding({
@@ -257,7 +257,7 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
       id: p1,
       phone: '13999992001',
       name: '父1',
-      status: '正常',
+      status: '启用',
     } as any);
     await repo.insertBinding({
       id: testUlid(),
@@ -274,7 +274,7 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
       id: p2,
       phone: '13999992002',
       name: '父2',
-      status: '正常',
+      status: '启用',
     } as any);
     await repo.insertBinding({
       id: testUlid(),
@@ -315,7 +315,7 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
       id: p,
       phone: '13999993001',
       name: '过滤测试父',
-      status: '正常',
+      status: '启用',
     } as any);
 
     // 先 INSERT active binding
@@ -356,7 +356,7 @@ describe('ParentRepository [integration, real PG, V10 + V40]', () => {
       id: p,
       phone: '13999994001',
       name: '解绑测试父',
-      status: '正常',
+      status: '启用',
     } as any);
     const bId = testUlid();
     await repo.insertBinding({

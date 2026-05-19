@@ -163,8 +163,8 @@ describe('HomeworkRepository [integration, real PG, V13]', () => {
       id: draftId,
       scheduleId: null,
       teacherId,
-      title: 'draft 作业',
-      status: 'draft',
+      title: 'archived 作业',
+      status: 'archived', // V13 仅允许 published/archived（spec 原 'draft' 与 schema 不匹配）
       recipientStudentIds: [studentA],
       createdAt: new Date(),
     } as any);

@@ -60,10 +60,10 @@ describe('AuditLogRepository [integration, real PG, V33]', () => {
   };
 
   // 用真 UUID — audit_log.actor_user_id / target_id 是 UUID 类型
-  const actorUserId = randomUUID();
-  const otherActorUserId = randomUUID();
-  const targetCustomerId = randomUUID();
-  const targetContractId = randomUUID();
+  const actorUserId = testUlid(); // V51
+  const otherActorUserId = testUlid();
+  const targetCustomerId = testUlid();
+  const targetContractId = testUlid();
 
   beforeAll(async () => {
     pool = getTestPool();

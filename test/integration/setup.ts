@@ -73,6 +73,7 @@ export const PUBLIC_MIGRATIONS = [
   'V43__create_refresh_tokens.sql',
   'V45__add_subscription_status_to_tenants.sql',
   'V47__parents_status_chinese.sql',
+  'V40__parents_phone_hash_and_encrypted.sql',
   'V49__expand_subscription_status_check.sql',
 ];
 
@@ -119,6 +120,7 @@ export const TENANT_MIGRATIONS = [
   'V48__add_teacher_academic_roles_to_users_check.sql',
   'V41__customers_primary_mobile_hash_and_encrypted.sql',
   'V50__drop_teachers_hourly_price.sql',
+  'V51__audit_log_id_uuid_to_varchar.sql',
 ];
 
 // ----------------------------------------------------------------

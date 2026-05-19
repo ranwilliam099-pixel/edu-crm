@@ -91,7 +91,7 @@ describe('MonthlyReportRepository [integration, real PG, V9 + V36 双轨]', () =
     const cust = await seedCustomer(schema, campusId, adminId);
     studentId = (await seedStudent(schema, cust.id)).id;
 
-    operatorUuid = randomUUID();
+    operatorUuid = testUlid(); // V51: audit_log.actor_user_id VARCHAR(32) ULID 兼容
   }, 30000);
 
   afterAll(async () => {
