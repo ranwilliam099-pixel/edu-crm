@@ -1,0 +1,126 @@
+name: Schema Drift Check
+
+# L6 Schema Drift CI — Day 3 leader 自补
+# 每次 PR + push 到 main 时跑 verify-tenants-match-reference.sh
+# 防 V41 类事故（5/19 事故根因：50 tenant 缺 customers.primary_mobile_hash 列）
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'migrations/**'
+      - 'src/modules/db/**'
+      - 'src/modules/db/tenant-provision.service.ts'
+      - 'baseline/**'
+  push:
+    branches: [main]
+    paths:
+      - 'baseline/**'
+
+jobs:
+  baseline-integrity:
+    name: baseline/ SHA-256 完整性校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 校验 baseline/reference-schema-*.sql.sha256
+        run: |
+          set -euo pipefail
+          cd baseline
+          for sha_file in *.sha256; do
+            if [ ! -f "$sha_file" ]; then
+              echo "SKIP: no sha256 files"
+              continue
+            fi
+            echo "[CHECK] $sha_file"
+            shasum -a 256 -c "$sha_file" || (
+              echo "::error::baseline integrity check failed: $sha_file"
+              exit 1
+            )
+          done
+
+  schema-drift-staging:
+    name: 对 staging PG 验证 schema drift
+    runs-on: ubuntu-latest
+    if: ${{ secrets.STAGING_SSH_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 配置 SSH 到 staging
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/staging
+          chmod 600 ~/.ssh/staging
+          cat >> ~/.ssh/config <<EOF
+          Host staging-pg
+            HostName ${{ secrets.STAGING_HOST }}
+            User ${{ secrets.STAGING_USER }}
+            Port ${{ secrets.STAGING_PORT || '22' }}
+            IdentityFile ~/.ssh/staging
+            StrictHostKeyChecking accept-new
+          EOF
+
+      - name: 跑 verify-tenants-match-reference.sh
+        run: |
+          # 找最新 baseline manifest
+          LATEST_MANIFEST=$(ls baseline/reference-schema-V*.manifest.json | sort | tail -1)
+          echo "Using baseline: $LATEST_MANIFEST"
+
+          # 改脚本中 ssh pdfserver → ssh staging-pg
+          # 或用 PDFSERVER_OVERRIDE env
+          export PDFSERVER_OVERRIDE=staging-pg
+          bash scripts/verify-tenants-match-reference.sh \
+            --baseline="$LATEST_MANIFEST" \
+            --report-out=/tmp/verify-report.json
+
+          # 期望: 全 PASS
+          # 实际生产 deploy 前必跑 — 任 1 FAIL 阻断 deploy
+
+      - name: 上传 verify report 作为 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: schema-verify-report
+          path: /tmp/verify-report.json
+
+  migration-baseline-sync:
+    name: 新 migration 必须更新 baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 检测 migrations/ 改动是否同步 baseline/
+        run: |
+          set -euo pipefail
+          # 比对 PR 改动
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA=${{ github.event.pull_request.base.sha }}
+            HEAD_SHA=${{ github.event.pull_request.head.sha }}
+          else
+            BASE_SHA=HEAD~1
+            HEAD_SHA=HEAD
+          fi
+
+          MIG_CHANGED=$(git diff --name-only $BASE_SHA $HEAD_SHA migrations/ | grep -c '\.sql$' || true)
+          BASELINE_CHANGED=$(git diff --name-only $BASE_SHA $HEAD_SHA baseline/reference-schema-*.manifest.json | wc -l)
+
+          echo "Migration files changed: $MIG_CHANGED"
+          echo "Baseline manifest changed: $BASELINE_CHANGED"
+
+          if [ "$MIG_CHANGED" -gt 0 ] && [ "$BASELINE_CHANGED" -eq 0 ]; then
+            echo "::error::新 migration 没更新 baseline manifest"
+            echo "::error::请跑：pnpm openapi:gen + bash scripts/snapshot-reference-schema.sh --tenant-id=<demo-empty>"
+            exit 1
+          fi
+
+          echo "[OK] migration ↔ baseline 同步检查通过"
+
+  lint-test-quality:
+    name: 测试代码质量 lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 跑 scripts/lint-test-quality.sh
+        run: bash scripts/lint-test-quality.sh
