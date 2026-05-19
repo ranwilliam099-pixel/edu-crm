@@ -2,7 +2,7 @@
  * jest.integration.config.js — Day 2 Phase B.L2 integration test 独立 Jest 配置
  *
  * 与 package.json#jest（单测 mock PG）严格分离：
- *   - testRegex 改 *.integration.spec.ts（与 src/**/*.spec.ts 单测不冲突）
+ *   - testRegex 改 .integration.spec.ts（与 src 内部 .spec.ts 单测不冲突）
  *   - rootDir = . （不在 src 下，避免与单测共用 testRegex）
  *   - testTimeout 30s（docker startup + migrations 跑全 28 个 tenant + 5s buffer）
  *   - maxWorkers = 1（PG pool 5 connections + 各 spec 自建 schema，避免连接饥饿）

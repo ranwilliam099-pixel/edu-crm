@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# sync-deploy.sh — edu-server rsync + npm install + nest build + pm2 reload
+# sync-deploy.sh — edu-server rsync + pnpm install + shared-types build + nest build + pm2 reload
 #
 # 来源：2026-05-13 部署 22 commit + 7 schema migration 实战经验沉淀
 #
@@ -19,7 +19,7 @@
 #   - V40/V41 数据 backfill → ssh pdfserver + npx ts-node scripts/backfill-vXX.ts --apply
 #
 # 实战教训（5/13 deploy 踩过）：
-#   1. rsync 必 exclude pnpm-lock.yaml（否则服务器 npm install 拒，每次要 rm）
+#   1. rsync 同步 pnpm-lock.yaml（服务器用 pnpm，配套 workspace:* @edu/shared-types）
 #   2. rsync 必 exclude dump-* / backups/（防把生产备份覆盖回本地空目录）
 #   3. rsync 必 exclude .claude/（agent 配置不应跨环境同步）
 #   4. nest build 之前先 rm -rf dist/（防旧 dist 残留 stale TS 编译）
@@ -68,8 +68,8 @@ RSYNC_ARGS=(
   --exclude='.env.*'        # .env.backup.* 不覆盖
   --exclude='backups/'
   --exclude='dump-*'         # pg_dump 输出目录不覆盖
-  --exclude='pnpm-lock.yaml' # 服务器用 npm，pnpm-lock 会冲突
-  --exclude='package-lock.json' # 服务器 npm install 生成，本地无，--delete 会误删
+  # 5/19 22:45 切 pnpm（package.json 有 workspace:* @edu/shared-types，npm 拒装 EUNSUPPORTEDPROTOCOL）
+  --exclude='package-lock.json' # 历史残留，pnpm 不需要
   --exclude='*.log'
   --exclude='.DS_Store'
   --exclude='.claude/'       # agent 配置本地专属
@@ -90,16 +90,22 @@ rsync "${RSYNC_ARGS[@]}" "$LOCAL_PATH" "$SSH_HOST:$REMOTE_PATH" | tail -10
 ok "Step 1 rsync 完成"
 echo ""
 
-# ===== Step 2: npm install + nest build =====
-info "Step 2/4: 远端 npm install + nest build"
+# ===== Step 2: pnpm install + shared-types build + nest build =====
+# 5/19 22:45 切 pnpm（D2 Phase B.L3 后 package.json 含 workspace:* @edu/shared-types）
+# 故障复盘：22:39 pm2 reload 后两 worker errored 16x，根因 npm install EUNSUPPORTEDPROTOCOL
+# 跳过 workspace:* 导致 @nestjs/swagger 也没装 → dist/src/main.js MODULE_NOT_FOUND
+info "Step 2/4: 远端 pnpm install + 子包 build + nest build"
 ssh "$SSH_HOST" << REMOTE
 set -e
 cd $REMOTE_PATH
-echo "  [npm install]"
-npm install --no-audit --no-fund 2>&1 | tail -3
+command -v pnpm >/dev/null 2>&1 || { echo "  [install pnpm@9]"; sudo npm install -g pnpm@9 --no-audit --no-fund 2>&1 | tail -2; }
+echo "  [pnpm install]"
+pnpm install --no-frozen-lockfile --prefer-offline 2>&1 | tail -3
+echo "  [build @edu/shared-types]"
+( cd packages/shared-types && pnpm run build 2>&1 | tail -2 )
 echo "  [nest build]"
 rm -rf dist/   # 防旧 dist 残留 stale 编译
-npm run build 2>&1 | tail -3
+pnpm run build 2>&1 | tail -3
 ls -lh dist/src/main.js
 REMOTE
 ok "Step 2 install + build 完成"
@@ -140,7 +146,7 @@ echo ""
 echo "================================================================"
 ok "✅ sync-deploy 全部完成"
 echo "  - 代码已同步到生产"
-echo "  - npm install + build OK"
+echo "  - pnpm install + shared-types build + nest build OK"
 [ "$NO_RELOAD" = false ] && echo "  - pm2 reload OK + 健康检查 200"
 echo ""
 echo "  下一步（按需）："
