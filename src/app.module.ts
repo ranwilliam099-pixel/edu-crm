@@ -34,6 +34,9 @@ import { DbModule } from './modules/db/db.module';
 import { SecurityModule } from './modules/security/security.module';
 import { InvoiceModule } from './modules/invoice/invoice.module';
 import { TenantSubscriptionGuard } from './guards/tenant-subscription.guard';
+import { GlobalExceptionFilter } from './filters/global-exception.filter';
+import { BusinessMetricsInterceptor } from './common/business-metrics/business-metrics.interceptor';
+import { BusinessMetricsModule } from './common/business-metrics/business-metrics.module';
 
 @Module({
   imports: [
@@ -86,6 +89,8 @@ import { TenantSubscriptionGuard } from './guards/tenant-subscription.guard';
     SecurityModule,
     // WAVE-4A(2026-05-14): InvoiceModule B 端 finance 域开票（OOUX invoice 是 contract 子对象）
     InvoiceModule,
+    // L7(2026-05-19 Day 4): 业务关键路径成功率监控 + 5xx 告警
+    BusinessMetricsModule,
   ],
   providers: [
     // SPRINT-E.1(2026-05-13) ThrottlerGuard 全局注册（APP_GUARD），所有路由默认 60/min
@@ -107,6 +112,13 @@ import { TenantSubscriptionGuard } from './guards/tenant-subscription.guard';
     //   - 早退顺序（method=GET / 白名单 4 前缀 / platform role / 无 tenant）保证零开销
     //   - expired tenant → 403 'subscription_expired'，前端 utils/api.js 拦截弹 modal
     { provide: APP_GUARD, useClass: TenantSubscriptionGuard },
+    // L7(2026-05-19 Day 4) v2.0 §3.L7:
+    //   - GlobalExceptionFilter 通过 DI 拿 AlertService（@Optional）→ 5xx Sentry + 钉钉/企微告警
+    //   - main.ts useGlobalFilters(app.get(GlobalExceptionFilter)) 拉单例
+    GlobalExceptionFilter,
+    // L7: BusinessMetricsInterceptor 不在此处全局注册（避免影响所有 endpoint 性能 + 测试复杂度）
+    //   - 3 个关键路径 controller 用 @UseInterceptors(BusinessMetricsInterceptor)
+    //   - 通过 BusinessMetricsModule export 供各 controller 使用
   ],
 })
 export class AppModule {}

@@ -123,7 +123,8 @@ async function bootstrap(): Promise<void> {
   );
 
   // PM-AUTH(2026-04-30) Phase 5.3: 全局异常 filter（错误页 / 异常文案统一响应）
-  app.useGlobalFilters(new GlobalExceptionFilter());
+  // L7(2026-05-19): 通过 app.get 拿 AlertService → 5xx 自动上报 Sentry + 钉钉/企微告警
+  app.useGlobalFilters(app.get(GlobalExceptionFilter));
 
   // PROD-ARCH(2026-05-10) P0-3: 优雅退出（PM2 reload 无停机）
   app.enableShutdownHooks();
