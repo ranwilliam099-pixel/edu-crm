@@ -136,7 +136,7 @@
       "_ssot": "§4.3 teacher 23 字段 + §6 teacher.basic.edit=[admin,boss]",
       "create": {
         "allow": ["admin", "boss"],
-        "_note": "§12.4 admin 唯一创建 B 端子账户 (boss 也不能, SSOT §12.4 拍板; 但 user.controller 现实 @Roles('admin','boss') — Sprint Y backlog 收敛); 本 manifest 暂含 boss 因 user.controller 现状",
+        "_note": "§12.4 修订 (Sprint X.2 round 12 2026-05-18 用户拍板): admin 跨校 + boss 本校区创建员工（不可创建另一 boss/admin/平台管理）",
         "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
       },
       "read": {
@@ -445,10 +445,10 @@
     },
 
     "user": {
-      "_ssot": "§12.4 + user.controller.ts: @Roles('admin','boss') 全部 endpoint（SSOT §12.4 仅 admin 但 user.controller 现状 @Roles('admin','boss')，Sprint Y backlog 收敛）",
+      "_ssot": "§12.4 修订 (Sprint X.2 round 12 2026-05-18 用户拍板): admin 跨校 + boss 本校区 全部 endpoint",
       "create": {
         "allow": ["admin", "boss"],
-        "_note": "user.controller:92 POST @Roles('admin','boss')；SSOT §12.4 拍板 admin 唯一，但代码现状 boss 也开放 — Sprint Y backlog",
+        "_note": "user.controller:92 POST @Roles('admin','boss')，Sprint X.2 round 12 用户拍板修订: admin 跨校 + boss 本校区创建员工（不可创建另一 boss/admin）",
         "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
       },
       "read": {

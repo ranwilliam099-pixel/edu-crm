@@ -2860,7 +2860,7 @@ describe('[RBAC L9 Batch B] 外围 13 对象 × 4 CRUD × 13 角色 = 676 case',
     describe('create', () => {
       // manifest: allow=[admin,boss]
       // manifest: deny=[sales,sales_manager,academic,teacher,finance,parent,platform_admin,finance_admin,marketing,hr,academic_admin]
-      // note: user.controller:92 POST @Roles('admin','boss')；SSOT §12.4 拍板 admin 唯一，但代码现状 boss 也开放 — Sprint Y backlog
+      // note: user.controller:92 POST @Roles('admin','boss')，Sprint X.2 round 12 用户拍板修订: admin 跨校 + boss 本校区创建员工（不可创建另一 boss/admin）
 
       it('allow admin → canActivate 返 true', () => {
         (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);

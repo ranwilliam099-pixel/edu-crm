@@ -72,7 +72,7 @@ export class UserController {
    * Body: { tenantId, tenantSchema, phone, role, name, campusId?, email? }
    * Response: { user: User, initialPassword: string }  ← initialPassword 仅返一次
    *
-   * RBAC: @Roles('admin') 唯一（boss 也不能, SSOT §12.4）
+   * RBAC: @Roles('admin', 'boss') — SSOT §12.4 修订 (Sprint X.2 round 12 2026-05-18 用户拍板)：admin 跨校 + boss 本校区创建员工
    *
    * 跨表 phone 唯一性 pre-check:
    *   - 跨所有 tenant.users + public.parents 反查
