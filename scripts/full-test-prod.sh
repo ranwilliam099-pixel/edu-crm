@@ -13,7 +13,7 @@ export PGPASSWORD='edu_2026_secret_pwd'
 SQL() { psql -h 127.0.0.1 -U eduapp -d edu -tA -c "$1" 2>/dev/null | tr -d '[:space:]'; }
 SQL_LIST() { psql -h 127.0.0.1 -U eduapp -d edu -tA -c "$1" 2>/dev/null; }
 
-TENANT_ID='mxedu_00000000000001777796864574'
+TENANT_ID='00mpc3na8y304umi2jfzjx5xjqavv4wf'  # demo-academic-busy
 BASE='http://127.0.0.1:3001/api'
 
 echo
@@ -76,7 +76,7 @@ if [ "$ERRORS" -eq 0 ]; then ok "近 200 行 stderr：0 个 JS 错误"; else bad
 # ════════════════ 3. 现有关键 endpoint 烟雾 ════════════════
 echo
 echo "${B}─── 3/6 现有关键 endpoint 没破坏 ───${X}"
-TOKEN=$(curl -s -X POST $BASE/public/auth/login -H 'Content-Type: application/json' -d "{\"phone\":\"13800001111\",\"userId\":\"01HX0000000000000000000000U00001\",\"tenantId\":\"$TENANT_ID\",\"role\":\"admin\",\"campusId\":\"camp0000000000000000000000000001\"}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))")
+TOKEN=$(curl -s -X POST $BASE/public/auth/login -H 'Content-Type: application/json' -d "{\"phone\":\"13800001005\",\"password\":\"Demo@12345\",\"tenantId\":\"$TENANT_ID\"}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))")
 H="Authorization: Bearer $TOKEN"
 T="x-tenant-schema: tenant_$TENANT_ID"
 
@@ -91,12 +91,13 @@ probe() {
   if [ "$CODE" = "200" ] || [ "$CODE" = "201" ]; then ok "$label → $CODE"; else bad "$label → $CODE"; fi
 }
 
-probe 'POST /feedback/db/students/x/feedbacks (现有)' POST "$BASE/feedback/db/students/stud0000000000000000000000000001/feedbacks" '{"limit":3}'
+# 5/20 修复：feedback/assessment/teacher 路径已变更（feedback 控制器无前缀 / assessments+teachers 复数）
+probe 'POST /db/students/x/feedbacks       (现有)' POST "$BASE/db/students/stud0000000000000000000000000001/feedbacks" '{"limit":3}'
 probe 'POST /homework/db/teachers/x/assignments  (现有)' POST "$BASE/homework/db/teachers/T0000000000000000000000000000001/assignments" '{"limit":3}'
-probe 'POST /assessment/db/teachers/x/list       (现有)' POST "$BASE/assessment/db/teachers/T0000000000000000000000000000001/list" '{}'
+probe 'POST /assessments/db/teachers/x/list      (现有)' POST "$BASE/assessments/db/teachers/T0000000000000000000000000000001/list" '{}'
 probe 'POST /learning-profile/db/students/x/profile (现有)' POST "$BASE/learning-profile/db/students/stud0000000000000000000000000001/profile" '{}'
 probe 'GET  /db/teachers/x/showcase             (现有)' GET  "$BASE/db/teachers/T0000000000000000000000000000001/showcase" ''
-probe 'POST /teacher/db/list                    (现有)' POST "$BASE/teacher/db/list" "{\"tenantSchema\":\"tenant_$TENANT_ID\"}"
+probe 'POST /teachers/db/list                   (现有)' POST "$BASE/teachers/db/list" "{\"tenantSchema\":\"tenant_$TENANT_ID\"}"
 
 # ════════════════ 4. 新 endpoint 性能 ════════════════
 echo
@@ -127,7 +128,7 @@ perf 'GET  /db/boss/subscription' GET "$BASE/db/boss/subscription?tenantId=$TENA
 echo
 echo "${B}─── 5/6 跨 tenant 隔离 ───${X}"
 ANOTHER=$(SQL_LIST "SELECT id FROM public.tenants WHERE id != '$TENANT_ID' LIMIT 1" | head -1)
-ANOTHER_SCHEMA="tenant_${ANOTHER,,}"
+ANOTHER_SCHEMA="tenant_${ANOTHER}"
 RSP=$(curl -s --max-time 3 -H "$H" -H "x-tenant-schema: $ANOTHER_SCHEMA" "$BASE/db/dashboards/admin")
 if echo "$RSP" | grep -qiE 'unauthorized|forbidden|tenant.*mismatch|wrong.*tenant'; then
   ok "header 切换到别的 tenant：被拦"
@@ -138,7 +139,7 @@ fi
 # ════════════════ 6. 数据真实性 ════════════════
 echo
 echo "${B}─── 6/6 数据真实性 spot check ───${X}"
-SCHEMA="tenant_${TENANT_ID,,}"
+SCHEMA="tenant_${TENANT_ID}"
 NEW_STU=$(SQL "SELECT count(*) FROM ${SCHEMA}.students WHERE student_name LIKE 'smoke%'")
 ok "smoke 留下的 students: $NEW_STU 条"
 NEW_CUS=$(SQL "SELECT count(*) FROM ${SCHEMA}.customers WHERE parent_name LIKE 'smoke%'")
