@@ -1,0 +1,5 @@
+# Phase B.L3 (2026-05-19) pnpm workspace
+# 仅 1 个 child package — @edu/shared-types DTO 单一源
+# 剩余 38 module DTO 渐进补 Day 3-4
+packages:
+  - 'packages/*'

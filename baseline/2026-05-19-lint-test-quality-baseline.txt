@@ -1,0 +1,87 @@
+
+===============================================
+  lint-test-quality.sh — 测试质量门 v2.0 §8.1
+===============================================
+
+[36mINFO[0m    扫描目录: /Users/ranyan/Desktop/edu/edu-server/src
+[36mINFO[0m    spec 总数: 101
+[33mWARN[0m    WARN-ONLY 模式（不阻断，仅出 baseline 报告）
+
+
+[1m== BLOCKER 1: expect(true).toBe(true) 死断言 ==[0m
+[31mBLOCK[0m   发现 1 处 expect(true).toBe(true) 死断言：
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/checkout/wxpay/wxpay-real.client.spec.ts:683:      expect(true).toBe(true);
+
+[1m== BLOCKER 1b: expect(false).toBe(true) / expect(1).toBe(1) 等死断言 ==[0m
+[32mOK[0m      无死断言变体
+
+[1m== BLOCKER 2: // expect(...) 注释式跳过 ==[0m
+[32mOK[0m      无注释式跳过
+
+[1m== BLOCKER 3: toHaveBeenCalled() 正向无参（弱断言） ==[0m
+[31mBLOCK[0m   发现 25 处 toHaveBeenCalled() 无参弱断言（必须用 toHaveBeenCalledWith / toHaveBeenCalledTimes）：
+         /Users/ranyan/Desktop/edu/edu-server/src/common/alert/alert.service.spec.ts:150:      expect(fetchMock).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/common/alert/alert.service.spec.ts:178:      expect(fetchMock).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/common/idempotency/idempotency.interceptor.spec.ts:123:      expect(redis.get).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/common/idempotency/idempotency.interceptor.spec.ts:300:        expect(redis.get).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/redis/redis.service.spec.ts:252:      expect(mockClient.quit).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/checkout/wxpay.controller.spec.ts:410:      expect(callback.handleRefundNotify).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/feedback/feedback.controller.spec.ts:219:      expect(teacherRepo.findByUserId).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/parent/parent.service.spec.ts:366:      expect(repo.insertBinding).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/user-create.controller.spec.ts:293:    expect(refreshToken.revokeAllBySubject).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/user-create.controller.spec.ts:294:    expect(auditLog.log).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/user-create.controller.spec.ts:307:    expect(redis.set).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/user-create.controller.spec.ts:308:    expect(auditLog.log).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/pg-pool.service.spec.ts:46:    expect(releaseSpy).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/pg-pool.service.spec.ts:59:    expect(releaseSpy).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/pg-pool.service.spec.ts:84:    expect(releaseSpy).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/pg-pool.service.spec.ts:95:    expect(releaseSpy).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/parent-binding.controller.spec.ts:147:    expect(parentRepo.insertBinding).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/teacher.repository.spec.ts:279:      expect(warnSpy).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/customer.controller.spec.ts:367:      expect(repo.listFollowLog).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/customer.controller.spec.ts:404:      expect(repo.listFollowLog).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/customer.controller.spec.ts:416:      expect(repo.listFollowLog).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/customer.controller.spec.ts:428:      expect(repo.listFollowLog).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/db/customer.controller.spec.ts:440:      expect(repo.listFollowLog).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/cron/cron-jobs.service.spec.ts:269:      expect(m.upsertSubscription).toHaveBeenCalled();
+         /Users/ranyan/Desktop/edu/edu-server/src/modules/cron/cron-jobs.service.spec.ts:270:      expect(m.insertPaymentOrder).toHaveBeenCalled();
+
+[1m== WARN 1: .toBeDefined() 弱断言（阈值 100） ==[0m
+[32mOK[0m      .toBeDefined() 数量 48 ≤ 100
+
+[1m== WARN 2: it.skip / describe.skip / it.todo / xit ==[0m
+[32mOK[0m      无 skip/todo（clean）
+
+[1m== WARN 3: mockResolvedValue({}) 空对象 mock（阈值 20） ==[0m
+[36mINFO[0m    mockResolvedValue({}) 数量 1 (阈值 20)
+
+[1m== WARN 4: mockResolvedValue(undefined) (阈值 80) ==[0m
+[36mINFO[0m    mockResolvedValue(undefined) 数量 35 (Promise<void> 多为合法用法)
+
+[1m== WARN 5: 空 it body ==[0m
+[32mOK[0m      无空 it body
+
+[1m== INFO 1: jscpd spec 重复度（如未安装则跳过） ==[0m
+[36mINFO[0m    jscpd 未安装（pnpm add -D jscpd 可启用）— 跳过
+
+===============================================
+  Summary
+===============================================
+  [31mBLOCKER[0m: 26
+  [33mWARN[0m:    0
+  [36mINFO[0m:    0
+
+===============================================
+  Detailed counts (machine-readable)
+===============================================
+DEAD_ASSERT_TRUE_TRUE=1
+DEAD_ASSERT_VARIANT=0
+COMMENTED_EXPECT=0
+WEAK_TO_HAVE_BEEN_CALLED=25
+TO_BE_DEFINED=48
+SKIP_OR_TODO=0
+EMPTY_OBJECT_MOCK=1
+UNDEFINED_MOCK=35
+EMPTY_IT_BODY=0
+
+[36mINFO[0m    WARN-ONLY 模式 → exit 0（baseline 报告用途）

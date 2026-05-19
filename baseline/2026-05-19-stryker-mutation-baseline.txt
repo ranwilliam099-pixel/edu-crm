@@ -1,0 +1,41 @@
+Stryker Mutation Testing Baseline — Day 2 Phase B.L1
+=====================================================
+
+Date: 2026-05-19 12:25
+Stryker version: @stryker-mutator/core ^9.6.1
+Node: v22.12.0 (warn: package.json wants >=24.0.0)
+Plugins: @stryker-mutator/jest-runner ^9.6.1 (typescript-checker disabled, see config note)
+
+Small-scope target: src/modules/db/customer.repository.ts (797 LOC)
+Spec used: src/modules/db/customer.repository.spec.ts (420 LOC, mock-based)
+
+Result:
+-------
+- Total mutants: 92 killed + 1 timeout + 99 survived + 63 no-cov = 255
+- Mutation score (total): 36.47%
+- Mutation score (covered only): 48.44%
+- Wall time: 31 seconds
+- Tests run per mutant on average: 1.63
+
+Verdict: BELOW break threshold (40%) — Day 2 baseline exit 1.
+
+Notable survived mutations (sample, mostly null-check assertions):
+  - customer.repository.ts:729  if (decoded !== null && decoded !== undefined)
+    - 4 survived mutations (EqualityOperator / ConditionalExpression / BlockStatement)
+    - root cause: spec mocks return non-null decoded values → null/undefined branches uncovered
+    - fix path: spec 加 null/undefined decoded 分支 case + 双分支 mock 覆盖
+
+Day 2 conclusion:
+  - Stryker config works (loose tsconfig.stryker.json 绕开 instrumented-code 严格 TS 检查)
+  - Customer repo spec 弱断言比 lint 检出更深 — 36.47% 揭示 decrypt fallback / null handling 分支未测
+  - Phase 1 阈值 40% break 抓到了真实缺陷（不是误报）
+
+Next steps (Day 3+):
+  - L1 反偷懒收尾：把 .toBeDefined() (48 处) 改成精确断言（多数为 DI smoke 合法）
+  - L1 全量 Stryker（background 跑 30-60 min，全 src/ 覆盖）
+  - L2 integration spec 接入 → 提升 coverage
+  - L1 mutation score Phase 1 → Phase 2 推进（60% break）
+
+config 文件:
+  - /Users/ranyan/Desktop/edu/edu-server/stryker.conf.js
+  - /Users/ranyan/Desktop/edu/edu-server/tsconfig.stryker.json

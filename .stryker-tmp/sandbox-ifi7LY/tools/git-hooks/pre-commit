@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# pre-commit hook — 后端跨租户隔离守门 + TypeScript 编译快查
+#
+# 安装方式：bash tools/install-hooks.sh
+# 跳过：git commit --no-verify （仅紧急情况）
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# ============================================================
+# 1. 跨租户隔离校验（src/modules/db/**.ts 改动时必跑）
+# ============================================================
+VALIDATE_TENANT="$REPO_ROOT/tools/validate-no-cross-tenant.sh"
+
+if [ -f "$VALIDATE_TENANT" ]; then
+  # 仅在 staged 改动包含 src/modules/db/**.ts 时跑
+  STAGED_DB_FILES=$(git diff --cached --name-only --diff-filter=ACMR | grep -E "^src/modules/db/.*\.ts$" || true)
+
+  if [ -n "$STAGED_DB_FILES" ]; then
+    echo ""
+    echo "🔍 pre-commit: 跑跨租户隔离校验..."
+    bash "$VALIDATE_TENANT" || {
+      echo ""
+      echo "❌ commit 被阻止：跨租户隔离校验失败"
+      echo "   修复后重 commit，或紧急用：git commit --no-verify"
+      exit 1
+    }
+  fi
+fi
+
+# ============================================================
+# 2. TypeScript 编译快查（src/**.ts 改动时跑）
+# ============================================================
+STAGED_TS_FILES=$(git diff --cached --name-only --diff-filter=ACMR | grep -E "^(src|test)/.*\.ts$" || true)
+
+if [ -n "$STAGED_TS_FILES" ]; then
+  echo ""
+  echo "🔍 pre-commit: TypeScript 编译快查..."
+  cd "$REPO_ROOT"
+  if command -v npx >/dev/null 2>&1; then
+    npx tsc --noEmit --project tsconfig.json 2>&1 | head -20 || {
+      echo ""
+      echo "❌ commit 被阻止：TypeScript 编译失败"
+      echo "   修复后重 commit，或紧急用：git commit --no-verify"
+      exit 1
+    }
+  else
+    echo "⚠️  npx 未找到，跳过 TypeScript 编译查"
+  fi
+fi
+
+exit 0
