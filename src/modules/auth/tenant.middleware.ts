@@ -460,7 +460,18 @@ export class TenantMiddleware implements NestMiddleware {
   }
 
   private extractTenantSchema(req: Request): string {
-    const raw = String(req.headers['x-tenant-schema'] || req.body?.tenantSchema || '');
+    // P0 真生产 bug 修 (5/20)：c-side 4 page (c/home, c/messages, c/student-profile,
+    //   c/rate-teacher) 用 query string `?tenantSchema=` 传，middleware 之前只看 header/body
+    //   → 全 401 'invalid tenant schema'。补查 query string 让 c-side 用 GET + query 也能通。
+    // 三处来源（优先级 header > body > query），任一命中即通过。
+    const queryFromUrl = ((): string => {
+      const url = req.originalUrl || req.url || '';
+      const m = url.match(/[?&]tenantSchema=([^&]+)/);
+      return m ? decodeURIComponent(m[1]) : '';
+    })();
+    const raw = String(
+      req.headers['x-tenant-schema'] || req.body?.tenantSchema || queryFromUrl || '',
+    );
     if (!/^tenant_[a-z0-9]+$/.test(raw)) {
       throw new UnauthorizedException('invalid tenant schema');
     }
