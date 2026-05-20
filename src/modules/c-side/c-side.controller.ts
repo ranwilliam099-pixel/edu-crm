@@ -65,7 +65,10 @@ interface ParentRequest {
   method?: string;
 }
 
-const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{32}$/i;
+// P0 真生产 bug 修 (5/20): c-side read 严格 Crockford32 (排除 I/L/O/U) 与
+// student.controller create 校验 (仅 length=32) 不一致 → 历史含 I/L/O/U 的 ID 被拒
+// 修复: 放宽到 alphanumeric (与 create 一致)，PG 参数化查询防 SQL injection
+const ULID_PATTERN = /^[0-9A-Z]{32}$/i;
 
 @Controller('c')
 @UseGuards(ParentSelfGuard)

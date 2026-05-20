@@ -53,7 +53,8 @@ interface ParentRequest {
   method?: string;
 }
 
-const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{32}$/i;
+// P0 真生产 bug 修 (5/20): 一致性 — 同 c-side.controller，放宽到 alphanumeric
+const ULID_PATTERN = /^[0-9A-Z]{32}$/i;
 const TAGS_MAX = 10;
 const TAG_MAX_LEN = 32;
 const CONTENT_MAX_LEN = 2000;
