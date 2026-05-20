@@ -54,7 +54,8 @@
       "course_product",
       "campus",
       "user",
-      "parent_referral"
+      "parent_referral",
+      "kpi"
     ]
   },
   "actions": ["create", "read", "update", "delete"],
@@ -490,6 +491,30 @@
         "_note": "推荐记录历史保留；admin/boss 兜底删除",
         "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
       }
+    },
+
+    "kpi": {
+      "_ssot": "§6 (2026-05-20 新增) admin/boss home KPI Level 2 下钻 — 4 endpoint signed/renewal/consumption/student-activity 全部 admin+boss 读，其余角色 403。boss 由后端强制 jwt.campusId 过滤（A04 client-controlled scope 防御）。",
+      "create": {
+        "allow": [],
+        "_note": "KPI 是聚合读路径，不存在 create 语义（聚合自 contracts/schedules/students 既存数据）",
+        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "read": {
+        "allow": ["admin", "boss"],
+        "_note": "kpi.controller.ts (2026-05-20): GET /db/kpi/signed | renewal | consumption | student-activity 全部 @Roles('admin','boss')；boss 服务端强制 callerCampusId=jwt.campusId（即使 query 传他校 → 403 FORBIDDEN_CAMPUS_MISMATCH）",
+        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "update": {
+        "allow": [],
+        "_note": "KPI 不存在 update 语义（聚合是只读派生）",
+        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "delete": {
+        "allow": [],
+        "_note": "KPI 不存在 delete 语义（聚合是只读派生）",
+        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      }
     }
   },
 
@@ -841,7 +866,8 @@
       "course_product",
       "campus",
       "user",
-      "parent_referral"
+      "parent_referral",
+      "kpi"
     ]
   }
 }

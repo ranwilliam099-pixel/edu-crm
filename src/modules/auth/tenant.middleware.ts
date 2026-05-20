@@ -434,6 +434,16 @@ export class TenantMiddleware implements NestMiddleware {
     const parentHomeworkSubmissionsPath = path === '/api/homework/db/submissions';
     const parentHomeworkStudentsPath = /^\/api\/homework\/db\/students\/[^/]+(\/|$)/.test(path);
 
+    // P4-Y (2026-05-20): C 端 4 新 endpoint
+    //   - POST /api/db/teacher-ratings — 家长评老师
+    //   - GET  /api/c/home — 家长 home 聚合
+    //   - GET  /api/c/students/:studentId/profile — C 端学员档案
+    //   - GET  /api/c/messages — C 端消息中心
+    //   - PATCH /api/c/messages/:id/mark-read — 标记已读
+    const parentTeacherRatingPath = path === '/api/db/teacher-ratings';
+    // /api/c/* 路径全量走 parent 分支（c-side controller 都是家长视角）
+    const parentCSidePath = /^\/api\/c\//.test(path);
+
     return (
       parentStudentPath ||
       parentMonthlyReportPath ||
@@ -443,7 +453,9 @@ export class TenantMiddleware implements NestMiddleware {
       parentReferralsPath ||
       parentCourseBalancePath ||
       parentHomeworkSubmissionsPath ||
-      parentHomeworkStudentsPath
+      parentHomeworkStudentsPath ||
+      parentTeacherRatingPath ||
+      parentCSidePath
     );
   }
 

@@ -122,6 +122,8 @@ export const TENANT_MIGRATIONS = [
   'V50__drop_teachers_hourly_price.sql',
   'V51__audit_log_id_uuid_to_varchar.sql',
   'V52__schedules_add_campus_id.sql',
+  // P4-Y (2026-05-20): teacher_rating_entries 明细表（家长 C 端评老师）
+  'V53__teacher_rating_entries.sql',
 ];
 
 // ----------------------------------------------------------------

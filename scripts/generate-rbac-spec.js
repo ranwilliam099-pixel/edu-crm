@@ -79,8 +79,8 @@ if (batchAObjects.length !== 5) {
   process.exit(2);
 }
 
-if (batchBObjects.length !== 13) {
-  console.error(`[generator] Batch B expected 13 peripheral objects, got ${batchBObjects.length}`);
+if (batchBObjects.length !== 14) {
+  console.error(`[generator] Batch B expected 14 peripheral objects (13 SSOT + kpi 2026-05-20), got ${batchBObjects.length}`);
   process.exit(2);
 }
 
@@ -121,8 +121,8 @@ if (!manifest.crossTenantBoundary || !Array.isArray(manifest.crossTenantBoundary
   validationErrors++;
 } else {
   const ctObjects = manifest.crossTenantBoundary.objects;
-  if (ctObjects.length !== 18) {
-    console.error(`[generator] crossTenantBoundary.objects expected 18 (5 core + 13 peripheral), got ${ctObjects.length}`);
+  if (ctObjects.length !== 19) {
+    console.error(`[generator] crossTenantBoundary.objects expected 19 (5 core + 14 peripheral inc. kpi 2026-05-20), got ${ctObjects.length}`);
     validationErrors++;
   }
   // Make sure every object in batch A ∪ B is in crossTenantBoundary.objects
@@ -330,7 +330,7 @@ function emitBatchA() {
 function emitBatchB() {
   const lines = [];
   lines.push(`/**`);
-  lines.push(` * Auto-generated RBAC spec — Batch B (外围 13 对象)`);
+  lines.push(` * Auto-generated RBAC spec — Batch B (外围 14 对象)`);
   lines.push(` *`);
   lines.push(` * !!! 禁止手改 !!! 改 src/__rbac__/manifest.json + 重跑 scripts/generate-rbac-spec.js`);
   lines.push(` *`);
@@ -338,7 +338,7 @@ function emitBatchB() {
   lines.push(` * 来源: ${manifest.source}`);
   lines.push(` * 对象: schedule / lesson_feedback / homework / assessment / learning_profile /`);
   lines.push(` *       monthly_report / invoice / course_consumption / course_package_balance /`);
-  lines.push(` *       course_product / campus / user / parent_referral`);
+  lines.push(` *       course_product / campus / user / parent_referral / kpi (2026-05-20)`);
   lines.push(` * 总 case 数: ${batchBObjects.length} 对象 × ${actions.length} CRUD × ${allRoles.length} 角色 = ${batchBObjects.length * actions.length * allRoles.length}`);
   lines.push(` *`);
   lines.push(` * 与 prompt 数字差异:`);
@@ -403,12 +403,19 @@ function emitBatchB() {
       const cell = manifest.matrix[obj][action];
       const allowList = cell.allow.join(',');
       const denyList = cell.deny.join(',');
+      // 2026-05-20 kpi 等纯读对象：create/update/delete cell.allow=[] 表示「无角色可做此动作」
+      //   - 此时 RbacGuard.canActivate 看到 reflector 返 [] 会走「无 @Roles」分支 return true（非业务场景）
+      //   - 为模拟「controller 真实 @Roles(['__never_match__'])」语义，注入哨兵 role 让 deny 严格成立
+      const denyMockRoles = cell.allow.length === 0 ? ['__never_match__'] : cell.allow;
       lines.push(`    describe('${action}', () => {`);
       lines.push(`      // manifest: allow=[${allowList}]`);
       lines.push(`      // manifest: deny=[${denyList}]`);
       if (cell._note) {
         const note = cell._note.replace(/\*\//g, '*\\/');
         lines.push(`      // note: ${note}`);
+      }
+      if (cell.allow.length === 0) {
+        lines.push(`      // empty allow → 哨兵 mock 'controller 该动作禁用': @Roles('__never_match__')`);
       }
       lines.push(``);
 
@@ -421,7 +428,7 @@ function emitBatchB() {
       }
       for (const role of cell.deny) {
         lines.push(`      it('deny ${role} → ForbiddenException', () => {`);
-        lines.push(`        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(${JSON.stringify(cell.allow)});`);
+        lines.push(`        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(${JSON.stringify(denyMockRoles)});`);
         lines.push(`        expect(() => guard.canActivate(mkContext(mkUser('${role}')))).toThrow(ForbiddenException);`);
         lines.push(`      });`);
       }

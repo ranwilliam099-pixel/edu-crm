@@ -90,6 +90,19 @@ import { UploadController } from './upload.controller';
 //   AuthModule 已 @Global，PhoneLookupService 自动可注入
 import { ParentBindingController } from './parent-binding.controller';
 
+// ===== P4-Y (2026-05-20) — 老师评分明细表 + C 端家长评老师 =====
+//   POST /api/db/teacher-ratings（家长评 5 星 + 文本 + tags）
+//   ParentSelfGuard 守 jwt.parentId === body.parentId
+//   ParentRepository / AuditLogRepository / SecurityService（@Global）自动注入
+import { TeacherRatingRepository } from './teacher-rating.repository';
+import { TeacherRatingController } from './teacher-rating.controller';
+
+// ===== P4-X (2026-05-20) — admin/boss home KPI Level 2 下钻聚合（SSOT §3.1/§6）=====
+//   GET /api/db/kpi/{signed,renewal,consumption,student-activity}
+//   全 @Roles('admin','boss') + boss 强制 callerCampusId=jwt.campusId（A04 防御）
+import { KpiController } from './kpi.controller';
+import { KpiService } from './kpi.service';
+
 // ===== V33 审计日志（生产架构 P0 第 1 项）=====
 import { AuditLogRepository } from './audit-log.repository';
 
@@ -187,6 +200,10 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     CourseProductController,
     // Sprint X.2 (2026-05-17) — staff 端家长账户管理 controller
     ParentBindingController,
+    // P4-X (2026-05-20) — admin/boss KPI Level 2 下钻
+    KpiController,
+    // P4-Y (2026-05-20) — C 端家长评老师
+    TeacherRatingController,
   ],
   providers: [
     // 基础设施
@@ -236,6 +253,10 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
       provide: HmacHasher,
       useFactory: () => new HmacHasher(),
     },
+    // P4-X (2026-05-20) — KPI 聚合服务
+    KpiService,
+    // P4-Y (2026-05-20) — 老师评分明细 repository
+    TeacherRatingRepository,
   ],
   exports: [
     PgPoolService,
@@ -273,6 +294,10 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     AuditLogRepository,
     FieldEncryptor,
     HmacHasher,
+    // P4-X (2026-05-20) — KPI 聚合服务
+    KpiService,
+    // P4-Y (2026-05-20) — 老师评分明细 repository
+    TeacherRatingRepository,
   ],
 })
 export class DbModule {}

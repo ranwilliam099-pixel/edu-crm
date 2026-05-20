@@ -1,5 +1,5 @@
 /**
- * Auto-generated RBAC spec — Batch B (外围 13 对象)
+ * Auto-generated RBAC spec — Batch B (外围 14 对象)
  *
  * !!! 禁止手改 !!! 改 src/__rbac__/manifest.json + 重跑 scripts/generate-rbac-spec.js
  *
@@ -7,8 +7,8 @@
  * 来源: docs/SSOT-拍板权威.md §1 角色 + §4 字段矩阵 + §6 操作权限矩阵
  * 对象: schedule / lesson_feedback / homework / assessment / learning_profile /
  *       monthly_report / invoice / course_consumption / course_package_balance /
- *       course_product / campus / user / parent_referral
- * 总 case 数: 13 对象 × 4 CRUD × 13 角色 = 676
+ *       course_product / campus / user / parent_referral / kpi (2026-05-20)
+ * 总 case 数: 14 对象 × 4 CRUD × 13 角色 = 728
  *
  * 与 prompt 数字差异:
  *   prompt 任务 A 说 "13 × 9 × 4 = 468"，本 spec 实际 13 × 13 × 4 = 676 case
@@ -50,7 +50,7 @@ function mkContext(user: JwtPayload | undefined): ExecutionContext {
   } as any;
 }
 
-describe('[RBAC L9 Batch B] 外围 13 对象 × 4 CRUD × 13 角色 = 676 case', () => {
+describe('[RBAC L9 Batch B] 外围 13 对象 × 4 CRUD × 13 角色 = 728 case', () => {
   let guard: RbacGuard;
   let reflector: Reflector;
 
@@ -3359,6 +3359,250 @@ describe('[RBAC L9 Batch B] 外围 13 对象 × 4 CRUD × 13 角色 = 676 case',
       });
       it('deny academic_admin → ForbiddenException', () => {
         (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('academic_admin')))).toThrow(ForbiddenException);
+      });
+    });
+
+  });
+
+  describe('kpi', () => {
+    describe('create', () => {
+      // manifest: allow=[]
+      // manifest: deny=[admin,boss,sales,sales_manager,academic,teacher,finance,parent,platform_admin,finance_admin,marketing,hr,academic_admin]
+      // note: KPI 是聚合读路径，不存在 create 语义（聚合自 contracts/schedules/students 既存数据）
+      // empty allow → 哨兵 mock 'controller 该动作禁用': @Roles('__never_match__')
+
+      it('deny admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('admin')))).toThrow(ForbiddenException);
+      });
+      it('deny boss → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('boss')))).toThrow(ForbiddenException);
+      });
+      it('deny sales → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('sales')))).toThrow(ForbiddenException);
+      });
+      it('deny sales_manager → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('sales_manager')))).toThrow(ForbiddenException);
+      });
+      it('deny academic → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('academic')))).toThrow(ForbiddenException);
+      });
+      it('deny teacher → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('teacher')))).toThrow(ForbiddenException);
+      });
+      it('deny finance → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('finance')))).toThrow(ForbiddenException);
+      });
+      it('deny parent → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('parent')))).toThrow(ForbiddenException);
+      });
+      it('deny platform_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('platform_admin')))).toThrow(ForbiddenException);
+      });
+      it('deny finance_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('finance_admin')))).toThrow(ForbiddenException);
+      });
+      it('deny marketing → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('marketing')))).toThrow(ForbiddenException);
+      });
+      it('deny hr → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('hr')))).toThrow(ForbiddenException);
+      });
+      it('deny academic_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('academic_admin')))).toThrow(ForbiddenException);
+      });
+    });
+
+    describe('read', () => {
+      // manifest: allow=[admin,boss]
+      // manifest: deny=[sales,sales_manager,academic,teacher,finance,parent,platform_admin,finance_admin,marketing,hr,academic_admin]
+      // note: kpi.controller.ts (2026-05-20): GET /db/kpi/signed | renewal | consumption | student-activity 全部 @Roles('admin','boss')；boss 服务端强制 callerCampusId=jwt.campusId（即使 query 传他校 → 403 FORBIDDEN_CAMPUS_MISMATCH）
+
+      it('allow admin → canActivate 返 true', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        const result = guard.canActivate(mkContext(mkUser('admin')));
+        expect(result).toBe(true);
+      });
+      it('allow boss → canActivate 返 true', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        const result = guard.canActivate(mkContext(mkUser('boss')));
+        expect(result).toBe(true);
+      });
+      it('deny sales → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('sales')))).toThrow(ForbiddenException);
+      });
+      it('deny sales_manager → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('sales_manager')))).toThrow(ForbiddenException);
+      });
+      it('deny academic → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('academic')))).toThrow(ForbiddenException);
+      });
+      it('deny teacher → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('teacher')))).toThrow(ForbiddenException);
+      });
+      it('deny finance → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('finance')))).toThrow(ForbiddenException);
+      });
+      it('deny parent → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('parent')))).toThrow(ForbiddenException);
+      });
+      it('deny platform_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('platform_admin')))).toThrow(ForbiddenException);
+      });
+      it('deny finance_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('finance_admin')))).toThrow(ForbiddenException);
+      });
+      it('deny marketing → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('marketing')))).toThrow(ForbiddenException);
+      });
+      it('deny hr → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('hr')))).toThrow(ForbiddenException);
+      });
+      it('deny academic_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["admin","boss"]);
+        expect(() => guard.canActivate(mkContext(mkUser('academic_admin')))).toThrow(ForbiddenException);
+      });
+    });
+
+    describe('update', () => {
+      // manifest: allow=[]
+      // manifest: deny=[admin,boss,sales,sales_manager,academic,teacher,finance,parent,platform_admin,finance_admin,marketing,hr,academic_admin]
+      // note: KPI 不存在 update 语义（聚合是只读派生）
+      // empty allow → 哨兵 mock 'controller 该动作禁用': @Roles('__never_match__')
+
+      it('deny admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('admin')))).toThrow(ForbiddenException);
+      });
+      it('deny boss → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('boss')))).toThrow(ForbiddenException);
+      });
+      it('deny sales → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('sales')))).toThrow(ForbiddenException);
+      });
+      it('deny sales_manager → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('sales_manager')))).toThrow(ForbiddenException);
+      });
+      it('deny academic → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('academic')))).toThrow(ForbiddenException);
+      });
+      it('deny teacher → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('teacher')))).toThrow(ForbiddenException);
+      });
+      it('deny finance → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('finance')))).toThrow(ForbiddenException);
+      });
+      it('deny parent → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('parent')))).toThrow(ForbiddenException);
+      });
+      it('deny platform_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('platform_admin')))).toThrow(ForbiddenException);
+      });
+      it('deny finance_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('finance_admin')))).toThrow(ForbiddenException);
+      });
+      it('deny marketing → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('marketing')))).toThrow(ForbiddenException);
+      });
+      it('deny hr → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('hr')))).toThrow(ForbiddenException);
+      });
+      it('deny academic_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('academic_admin')))).toThrow(ForbiddenException);
+      });
+    });
+
+    describe('delete', () => {
+      // manifest: allow=[]
+      // manifest: deny=[admin,boss,sales,sales_manager,academic,teacher,finance,parent,platform_admin,finance_admin,marketing,hr,academic_admin]
+      // note: KPI 不存在 delete 语义（聚合是只读派生）
+      // empty allow → 哨兵 mock 'controller 该动作禁用': @Roles('__never_match__')
+
+      it('deny admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('admin')))).toThrow(ForbiddenException);
+      });
+      it('deny boss → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('boss')))).toThrow(ForbiddenException);
+      });
+      it('deny sales → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('sales')))).toThrow(ForbiddenException);
+      });
+      it('deny sales_manager → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('sales_manager')))).toThrow(ForbiddenException);
+      });
+      it('deny academic → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('academic')))).toThrow(ForbiddenException);
+      });
+      it('deny teacher → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('teacher')))).toThrow(ForbiddenException);
+      });
+      it('deny finance → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('finance')))).toThrow(ForbiddenException);
+      });
+      it('deny parent → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('parent')))).toThrow(ForbiddenException);
+      });
+      it('deny platform_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('platform_admin')))).toThrow(ForbiddenException);
+      });
+      it('deny finance_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('finance_admin')))).toThrow(ForbiddenException);
+      });
+      it('deny marketing → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('marketing')))).toThrow(ForbiddenException);
+      });
+      it('deny hr → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
+        expect(() => guard.canActivate(mkContext(mkUser('hr')))).toThrow(ForbiddenException);
+      });
+      it('deny academic_admin → ForbiddenException', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["__never_match__"]);
         expect(() => guard.canActivate(mkContext(mkUser('academic_admin')))).toThrow(ForbiddenException);
       });
     });

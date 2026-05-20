@@ -6,11 +6,11 @@
  * 生成时间: 2026-05-19
  * 来源: docs/SSOT-拍板权威.md §1 角色 + §4 字段矩阵 + §6 操作权限矩阵
  * 对象: 18 = 5 核心 (Batch A) + 13 外围 (Batch B)
- * 总 case 数: 18 对象 × 13 角色 = 234
+ * 总 case 数: 19 对象 × 13 角色 = 247
  *
  * 与 prompt 数字差异:
- *   prompt 任务 B 说 "9 角色 × 18 对象 = 162"，本 spec 实际 13 × 18 = 234
- *   多 72 case 覆盖 2 平台 + 4 auxiliary 角色 = 6 × 18 = 108
+ *   prompt 任务 B 说 "9 角色 × 18 对象 = 162"，本 spec 实际 13 × 19 = 247
+ *   多 85 case 覆盖 2 平台 + 4 auxiliary 角色 = 6 × 18 = 108
  *   - 平台角色 (platform_admin / finance_admin)：期望 canActivate 返 true (isPlatformRole 豁免)
  *   - auxiliary 角色 (marketing/hr/finance_admin/academic_admin)：期望 ForbiddenException (mismatch tenantSchema)
  *
@@ -132,7 +132,7 @@ function mkMismatchHeader(user: JwtPayload | undefined): ExecutionContext {
   } as any;
 }
 
-describe('[RBAC L9 Batch C] 跨 tenant 强制 403 — 18 对象 × 13 角色 = 234 case', () => {
+describe('[RBAC L9 Batch C] 跨 tenant 强制 403 — 19 对象 × 13 角色 = 247 case', () => {
   let guard: TenantScopeGuard;
 
   beforeEach(async () => {
@@ -891,6 +891,50 @@ describe('[RBAC L9 Batch C] 跨 tenant 强制 403 — 18 对象 × 13 角色 = 2
   });
 
   describe('parent_referral — cross-tenant body.tenantSchema mismatch', () => {
+    it('admin → ForbiddenException (cross-tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('admin')))).toThrow(ForbiddenException);
+    });
+    it('boss → ForbiddenException (cross-tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('boss')))).toThrow(ForbiddenException);
+    });
+    it('sales → ForbiddenException (cross-tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('sales')))).toThrow(ForbiddenException);
+    });
+    it('sales_manager → ForbiddenException (cross-tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('sales_manager')))).toThrow(ForbiddenException);
+    });
+    it('academic → ForbiddenException (cross-tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('academic')))).toThrow(ForbiddenException);
+    });
+    it('teacher → ForbiddenException (cross-tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('teacher')))).toThrow(ForbiddenException);
+    });
+    it('finance → ForbiddenException (cross-tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('finance')))).toThrow(ForbiddenException);
+    });
+    it('parent → ForbiddenException (cross-tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('parent')))).toThrow(ForbiddenException);
+    });
+    it('platform_admin (平台角色) → canActivate 返 true (isPlatformRole 豁免)', () => {
+      const result = guard.canActivate(mkMismatchRequest(mkSelfUser('platform_admin')));
+      expect(result).toBe(true);
+    });
+    it('marketing → ForbiddenException (cross-tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('marketing')))).toThrow(ForbiddenException);
+    });
+    it('hr → ForbiddenException (cross-tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('hr')))).toThrow(ForbiddenException);
+    });
+    it('academic_admin → ForbiddenException (cross-tenant denied)', () => {
+      expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('academic_admin')))).toThrow(ForbiddenException);
+    });
+    it('finance_admin (平台角色) → canActivate 返 true (isPlatformRole 豁免)', () => {
+      const result = guard.canActivate(mkMismatchRequest(mkSelfUser('finance_admin')));
+      expect(result).toBe(true);
+    });
+  });
+
+  describe('kpi — cross-tenant body.tenantSchema mismatch', () => {
     it('admin → ForbiddenException (cross-tenant denied)', () => {
       expect(() => guard.canActivate(mkMismatchRequest(mkSelfUser('admin')))).toThrow(ForbiddenException);
     });

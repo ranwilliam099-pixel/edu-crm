@@ -88,6 +88,10 @@ const TENANT_MIGRATIONS = [
   //   「老师页面零财务字段」+ 课消从合同带价（每客户合同价不同），DB 不存老师定价
   //   新 tenant provision 跑完 V50 后 teachers 表无此列 — 应用层 teacher.repository 已对齐
   'V50__drop_teachers_hourly_price.sql',
+  // P4-Y (2026-05-20): teacher_rating_entries 明细表（家长一对一评分）
+  //   POST /db/teacher-ratings 4 个 C 端 endpoint 之一
+  //   与 V24 teacher_ratings（聚合）不同：V53 是明细表（UNIQUE(parent,teacher,student)）
+  'V53__teacher_rating_entries.sql',
 ];
 
 @Injectable()

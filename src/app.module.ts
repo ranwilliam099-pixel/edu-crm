@@ -33,6 +33,8 @@ import { LearningProfileModule } from './modules/learning-profile/learning-profi
 import { DbModule } from './modules/db/db.module';
 import { SecurityModule } from './modules/security/security.module';
 import { InvoiceModule } from './modules/invoice/invoice.module';
+// P4-Y (2026-05-20): C 端家长聚合 endpoint（/api/c/home / profile / messages / mark-read）
+import { CSideModule } from './modules/c-side/c-side.module';
 import { TenantSubscriptionGuard } from './guards/tenant-subscription.guard';
 import { GlobalExceptionFilter } from './filters/global-exception.filter';
 import { BusinessMetricsInterceptor } from './common/business-metrics/business-metrics.interceptor';
@@ -91,6 +93,8 @@ import { BusinessMetricsModule } from './common/business-metrics/business-metric
     InvoiceModule,
     // L7(2026-05-19 Day 4): 业务关键路径成功率监控 + 5xx 告警
     BusinessMetricsModule,
+    // P4-Y (2026-05-20): C 端家长聚合 endpoint（/api/c/home / profile / messages / mark-read）
+    CSideModule,
   ],
   providers: [
     // SPRINT-E.1(2026-05-13) ThrottlerGuard 全局注册（APP_GUARD），所有路由默认 60/min
