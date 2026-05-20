@@ -310,6 +310,15 @@ export class CSideController {
       });
       throw new ForbiddenException('message not found or not owned by this parent');
     }
+    // 5/20 P5 三审 production P1-1: 写操作 audit 补全（避免 PATCH mark-read 静默无审计）
+    await this.tryAudit(tenantSchema, {
+      actorUserId: parentId,
+      action: 'c.message.mark-read',
+      targetType: type,
+      targetId: id,
+      after: { parentId, tenantId, type },
+      req,
+    });
     return { id, type, markedAt: new Date().toISOString() };
   }
 

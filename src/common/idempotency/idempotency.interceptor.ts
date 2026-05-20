@@ -81,7 +81,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     const req = ctx.switchToHttp().getRequest<{
       method: string;
       headers: Record<string, string | string[] | undefined>;
-      user?: { id?: string };
+      user?: { sub?: string; id?: string };
     }>();
 
     if (SKIP_METHODS.has(req.method.toUpperCase())) {
@@ -101,7 +101,10 @@ export class IdempotencyInterceptor implements NestInterceptor {
       );
     }
 
-    const userId = req.user?.id ?? 'anon';
+    // 5/20 P5 三审 production P1-2: JWT 字段是 .sub (B 端 + parent 都用 sub)，原 .id 永远 undefined
+    //   → 所有用户共用 'anon' 命名空间，跨用户 idempotency 隔离失效（P4 parent 路径首次可触发）
+    //   修：优先 .sub，fallback .id，再 anon
+    const userId = req.user?.sub ?? req.user?.id ?? 'anon';
     const fullKey = `idem:${userId}:${key}`;
 
     // 查缓存

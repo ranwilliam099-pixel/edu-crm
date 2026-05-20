@@ -185,7 +185,7 @@ export class KpiService {
 
       return this.bucketContractRowsBySalesAcademic(rows);
     } catch (e) {
-      this.logger.debug(
+      this.logger.error(
         `[KPI-signed] ${tenantSchema}: ${(e as Error).message}`,
       );
       return this.emptySignedRenewal();
@@ -233,7 +233,7 @@ export class KpiService {
 
       return this.bucketContractRowsBySalesAcademic(rows);
     } catch (e) {
-      this.logger.debug(
+      this.logger.error(
         `[KPI-renewal] ${tenantSchema}: ${(e as Error).message}`,
       );
       return this.emptySignedRenewal();
@@ -306,7 +306,7 @@ export class KpiService {
         academic,
       };
     } catch (e) {
-      this.logger.debug(
+      this.logger.error(
         `[KPI-consumption] ${tenantSchema}: ${(e as Error).message}`,
       );
       return { total: { hours: 0, lessons: 0 }, academic: [] };
@@ -394,7 +394,7 @@ export class KpiService {
         campusBreakdown,
       };
     } catch (e) {
-      this.logger.debug(
+      this.logger.error(
         `[KPI-student-activity] ${tenantSchema}: ${(e as Error).message}`,
       );
       return {

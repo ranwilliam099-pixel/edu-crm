@@ -44,8 +44,12 @@ SET LOCAL search_path = __TENANT_SCHEMA__, public;
 CREATE TABLE IF NOT EXISTS teacher_rating_entries (
     id          VARCHAR(32)  PRIMARY KEY,
     parent_id   VARCHAR(32)  NOT NULL,
-    teacher_id  VARCHAR(32)  NOT NULL REFERENCES teachers(id),
-    student_id  VARCHAR(32)  NOT NULL REFERENCES students(id),
+    -- 5/20 P5 三审 security P2-3 (A05): 老师/学员被物理删除时评分历史 CASCADE
+    -- 业务语义：评分是绑定学员-老师 三元组的数据，源数据消失时评分失意义；
+    -- 软删（deleted_at）仍保留评分（FK 仍指向行，只是 deleted_at 非空）
+    -- 物理 DROP（极少，仅 DROP TABLE 时 / 数据清理脚本）→ CASCADE 避免 23503 阻断
+    teacher_id  VARCHAR(32)  NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+    student_id  VARCHAR(32)  NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     stars       SMALLINT     NOT NULL CHECK (stars BETWEEN 1 AND 5),
     content     TEXT         NULL,
     tags        JSONB        NULL,

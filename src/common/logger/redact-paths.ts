@@ -44,6 +44,12 @@ export const REDACT_PATHS: string[] = [
   'req.body.content',
   'req.url',
 
+  // 5/20 P5 三审 security P2-2 (A02): c-side listMessages 返 content 80 字符摘要 (teacher_note /
+  // parent_blessing) 含准 PII 学员姓名/家庭情况；未来 response serializer 输出时漏掩。预防性加 *.content
+  // 兜底所有路径（req.body.content 已涵盖请求路径，res / nested 字段加 wildcard）
+  '*.content',
+  '*.items[*].content',
+
   // ===== Sprint E.x F-08 round 2 (production validator P2 F-08-03) 2026-05-13: =====
   // *.errmsg 预防性 redact — 当前微信 API 错误消息不含用户输入（如 ECONNRESET），
   //   但未来微信 API 若在 errmsg 中回显用户提交的违规 content（极低概率但合规防御性）→ 逃出 redact。

@@ -12,12 +12,11 @@ import { PgPoolService, PgRow } from '../db/pg-pool.service';
  * 单 tenant scope（家长 ParentJwt 跨多机构时由 controller 分别调多次，与中间件单 tenant 守护对齐）
  */
 
+// SSOT §4.1 parent C 端字段红线：仅看「姓名 + 头像 + 校区 + 主带老师」
+// 5/20 round 2 BLOCKER-1 修：删 gender/gradeOrAge/schoolName 不在 §4.1 允许范围
 export interface ChildBrief {
   id: string;
   name: string;
-  gender?: string | null;
-  gradeOrAge?: string | null;
-  schoolName?: string | null;
   // 主带老师（assigned_teacher_id → teachers.name）
   mainTeacherId?: string | null;
   mainTeacherName?: string | null;
@@ -85,7 +84,7 @@ export class CSideRepository {
     if (studentIds.length === 0) return [];
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT s.id, s.student_name AS name, s.gender, s.grade_or_age, s.school_name,
+      `SELECT s.id, s.student_name AS name,
               s.assigned_teacher_id AS main_teacher_id,
               t.name              AS main_teacher_name,
               t.campus_id         AS campus_id,
@@ -305,13 +304,11 @@ export class CSideRepository {
 
   // ===== helpers =====
 
+  // SSOT §4.1 parent C 端：仅 姓名 + 头像 + 校区 + 主带老师（5/20 round 2 BLOCKER-1）
   private mapChildRow(r: PgRow): ChildBrief {
     return {
       id: r.id,
       name: r.name,
-      gender: r.gender ?? null,
-      gradeOrAge: r.grade_or_age ?? null,
-      schoolName: r.school_name ?? null,
       mainTeacherId: r.main_teacher_id ?? null,
       mainTeacherName: r.main_teacher_name ?? null,
       campusId: r.campus_id ?? null,

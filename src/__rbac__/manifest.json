@@ -1,7 +1,7 @@
 {
   "$schema": "./manifest.schema.json",
   "version": "1.0.0",
-  "generatedAt": "2026-05-19",
+  "generatedAt": "2026-05-20",
   "source": "docs/SSOT-拍板权威.md §1 角色 + §4 字段矩阵 + §6 操作权限矩阵",
   "doc": "Manifest 是 RBAC generator 的输入：9 角色 × 18 对象 × 4 CRUD = 期望 allow/deny 单元格。任何代码改 @Roles → 必同步改本 manifest → 重跑 generator → diff PR。Manifest 与代码不一致 = 真 bug 揭露。",
   "roles": {
@@ -55,7 +55,9 @@
       "campus",
       "user",
       "parent_referral",
-      "kpi"
+      "kpi",
+      "teacher_rating",
+      "c_message"
     ]
   },
   "actions": ["create", "read", "update", "delete"],
@@ -515,6 +517,56 @@
         "_note": "KPI 不存在 delete 语义（聚合是只读派生）",
         "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
       }
+    },
+
+    "teacher_rating": {
+      "_ssot": "§5.2 家长线 rate 对象 + §6 (2026-05-20 新增) parent 评老师 5 星 + content + tags; SSOT §2 规则 6 跨机构共享（评分不绑 tenant 内独立 schema 但走 tenant.middleware family-owner 守门）",
+      "_note": "POST /db/teacher-ratings @ teacher-rating.controller.ts (2026-05-20) — 不走 RbacGuard（parent JWT 无 role.tenant），走 ParentSelfGuard + tenant.middleware.requireParentDbUser + assertParent helper（jwtParentSub === body.parentId + binding active + teacher×student 真实关系 + msgSecCheck）。RBAC 矩阵记录为「parent.create=allow，其余 13 role deny」便于 batch-b generator 推 deny case。",
+      "create": {
+        "allow": ["parent"],
+        "_note": "teacher-rating.controller.ts:90 — POST /db/teacher-ratings 唯一允许 parent C 端创建/更新（三元组 UNIQUE → upsert）",
+        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "read": {
+        "allow": [],
+        "_note": "目前无 GET endpoint（前端 showcase 直接读 teacher_recommendations）；Sprint Y 如需扩 c-side 看自己评分历史时补",
+        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "update": {
+        "allow": ["parent"],
+        "_note": "三元组 UNIQUE → POST upsert 内部走 update 路径",
+        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "delete": {
+        "allow": [],
+        "_note": "评分历史保留，不允许删除（家长重评 → upsert update 内容，非新增 row）",
+        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      }
+    },
+
+    "c_message": {
+      "_ssot": "§3.7 家长 home 消息中心（feedback/monthly-report/system 聚合）+ §6 parent C 端独立",
+      "_note": "GET /api/c/messages + PATCH /api/c/messages/:id/mark-read @ c-side.controller.ts (2026-05-20) — 走 ParentSelfGuard + tenant.middleware.requireParentDbUser，不走 RbacGuard。matrix 记录用于 batch-b generator 推非 parent role 全 deny。",
+      "create": {
+        "allow": [],
+        "_note": "消息由系统派生（feedback/monthly-report notified_at 派生），无业务 create endpoint",
+        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "read": {
+        "allow": ["parent"],
+        "_note": "c-side.controller.ts:184 — GET /api/c/messages 仅 parent；assertParent 强制 jwtParentSub===query.parentId",
+        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "update": {
+        "allow": ["parent"],
+        "_note": "c-side.controller.ts:284 — PATCH /api/c/messages/:id/mark-read 仅 parent 标自己消息已读",
+        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      },
+      "delete": {
+        "allow": [],
+        "_note": "消息派生表，不允许 delete（系统生命周期由源数据控制）",
+        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+      }
     }
   },
 
@@ -867,7 +919,9 @@
       "campus",
       "user",
       "parent_referral",
-      "kpi"
+      "kpi",
+      "teacher_rating",
+      "c_message"
     ]
   }
 }

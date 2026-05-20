@@ -79,8 +79,8 @@ if (batchAObjects.length !== 5) {
   process.exit(2);
 }
 
-if (batchBObjects.length !== 14) {
-  console.error(`[generator] Batch B expected 14 peripheral objects (13 SSOT + kpi 2026-05-20), got ${batchBObjects.length}`);
+if (batchBObjects.length !== 16) {
+  console.error(`[generator] Batch B expected 16 peripheral objects (13 SSOT + kpi + teacher_rating + c_message 2026-05-20), got ${batchBObjects.length}`);
   process.exit(2);
 }
 
@@ -121,8 +121,8 @@ if (!manifest.crossTenantBoundary || !Array.isArray(manifest.crossTenantBoundary
   validationErrors++;
 } else {
   const ctObjects = manifest.crossTenantBoundary.objects;
-  if (ctObjects.length !== 19) {
-    console.error(`[generator] crossTenantBoundary.objects expected 19 (5 core + 14 peripheral inc. kpi 2026-05-20), got ${ctObjects.length}`);
+  if (ctObjects.length !== 21) {
+    console.error(`[generator] crossTenantBoundary.objects expected 21 (5 core + 16 peripheral inc. kpi+teacher_rating+c_message 2026-05-20), got ${ctObjects.length}`);
     validationErrors++;
   }
   // Make sure every object in batch A ∪ B is in crossTenantBoundary.objects

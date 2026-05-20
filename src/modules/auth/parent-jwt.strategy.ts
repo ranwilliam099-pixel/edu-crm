@@ -60,10 +60,11 @@ export class ParentJwtStrategy {
       throw new UnauthorizedException('Token type mismatch (expected parent)');
     }
     // T6a audit A1-r2 P0-NEW-3: 拒绝 B 端 audience（admin/boss JWT 不可走 parent 路径）
-    // 旧 parent token 无 aud 字段 → 由上一步 type='parent' 兜底（向前兼容）
-    if (raw.aud && raw.aud !== AUDIENCE_PARENT_APP) {
+    // 5/20 P5 三审 security P1-1 (A07): aud 缺失也强制 401，防 JWT_SECRET 泄露场景下
+    // 旧 token 无 aud 字段绕过 c-app scope 限制（MEMORY「ENCRYPTION_KEY 建议轮换」背景）
+    if (!raw.aud || raw.aud !== AUDIENCE_PARENT_APP) {
       throw new UnauthorizedException(
-        `Parent token audience mismatch (expected ${AUDIENCE_PARENT_APP}, got ${raw.aud})`,
+        `Parent token audience mismatch (expected ${AUDIENCE_PARENT_APP}, got ${raw.aud || 'missing'})`,
       );
     }
     if (!raw.parentId || typeof raw.parentId !== 'string' || raw.parentId.length !== 32) {

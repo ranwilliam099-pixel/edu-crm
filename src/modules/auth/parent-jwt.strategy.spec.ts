@@ -116,15 +116,20 @@ describe('ParentJwtStrategy - V10 BE-V10-3', () => {
       }
     });
 
-    it('parse 接受无 aud 字段的旧 parent token（向前兼容）', () => {
-      // 旧 parent token 不带 aud，由 type='parent' 兜底校验
+    // 5/20 P5 三审 security P1-1 (A07): 改为强制 aud，无 aud 旧 token 必拒
+    //   防 JWT_SECRET 泄露场景下旧 token 绕过 c-app scope 限制
+    it('parse 拒绝无 aud 字段的旧 parent token（5/20 round 2 安全收紧）', () => {
       const legacyToken = jwtService.sign(
         { parentId: ULID32_P1, type: 'parent' },
         { secret: 'test-secret-for-parent' },
       );
-      const payload = strategy.parse(legacyToken);
-      expect(payload.parentId).toBe(ULID32_P1);
-      expect(payload.aud).toBeUndefined();
+      try {
+        strategy.parse(legacyToken);
+        throw new Error('should have thrown UnauthorizedException');
+      } catch (e) {
+        expect(e).toBeInstanceOf(UnauthorizedException);
+        expect((e as Error).message).toMatch(/audience mismatch.*missing/i);
+      }
     });
   });
 });
