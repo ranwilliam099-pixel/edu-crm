@@ -301,14 +301,41 @@ export class CourseProductRepository {
              ORDER BY (c2.status = 'active') DESC, c2.signed_at DESC NULLS LAST
              LIMIT 1
          )                                                       AS contract_status,
+         -- S1 真生产 bug 修 (5/20): 合同 pending 时无 student_course_packages → 0
+         --   修复: 优先 packages 余额（active 合同精确）→ 兜底 contract.lesson_hours - 已消课时
+         --   语义: pending 合同已锁课时未付款，余额 = 合同总课时 - 已消课时
          COALESCE(
-           (SELECT SUM(scp.remaining_lessons)
-              FROM student_course_packages scp
-              JOIN course_packages cp ON cp.id = scp.course_package_id
-             WHERE scp.student_id = s.id
-               AND cp.course_product_id = $1
-               AND scp.status = 'active'),
-           0
+           -- 优先：active 合同精确 packages 累加
+           NULLIF(
+             (SELECT SUM(scp.remaining_lessons)
+                FROM student_course_packages scp
+                JOIN course_packages cp ON cp.id = scp.course_package_id
+               WHERE scp.student_id = s.id
+                 AND cp.course_product_id = $1
+                 AND scp.status = 'active'),
+             0
+           ),
+           -- 兜底：合同已锁课时 - 已 confirmed/locked 消课
+           GREATEST(
+             COALESCE(
+               (SELECT SUM(c3.lesson_hours)
+                  FROM contracts c3
+                 WHERE c3.student_id = s.id
+                   AND c3.course_product_id = $1
+                   AND c3.deleted_at IS NULL
+                   AND c3.status IN ('active','pending')),
+               0
+             ) - COALESCE(
+               (SELECT COUNT(*)::int
+                  FROM course_consumptions cc2
+                  JOIN schedules sc2 ON sc2.id = cc2.schedule_id
+                 WHERE cc2.student_id = s.id
+                   AND sc2.course_product_id = $1
+                   AND cc2.status IN ('confirmed','locked')),
+               0
+             ),
+             0
+           )
          )                                                       AS remaining_hours
        FROM students s
        WHERE s.deleted_at IS NULL
