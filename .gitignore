@@ -54,3 +54,4 @@ redis-data/
 
 # OS
 Thumbs.db
+.stryker-tmp/
