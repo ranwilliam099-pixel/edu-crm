@@ -15,11 +15,12 @@ import { LessonFeedbackService } from './lesson-feedback.service';
 import { CourseConsumptionService } from './course-consumption.service';
 import { MonthlyReportService } from './monthly-report.service';
 import { TeacherRepository } from '../db/teacher.repository';
+import { AuditLogRepository } from '../db/audit-log.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 describe('FeedbackController — Sprint B self-check', () => {
   let controller: FeedbackController;
-  let feedbackSvc: { findInDb: jest.Mock };
+  let feedbackSvc: { findInDb: jest.Mock; submitInDb: jest.Mock };
   let consumptionSvc: Record<string, jest.Mock>;
   let reportSvc: {
     findInDb: jest.Mock;
@@ -28,6 +29,7 @@ describe('FeedbackController — Sprint B self-check', () => {
     listPendingFinalizeInDb: jest.Mock;
   };
   let teacherRepo: { findById: jest.Mock; findByUserId: jest.Mock };
+  let auditLog: { log: jest.Mock };
 
   const TENANT = 'tenant_teacher_self_check_xxxxxxxx';
   const REPORT_ID = 'rep00000000000000000000000000R001';
@@ -70,7 +72,7 @@ describe('FeedbackController — Sprint B self-check', () => {
   };
 
   beforeEach(() => {
-    feedbackSvc = { findInDb: jest.fn() };
+    feedbackSvc = { findInDb: jest.fn(), submitInDb: jest.fn() };
     consumptionSvc = {};
     reportSvc = {
       findInDb: jest.fn(),
@@ -79,12 +81,14 @@ describe('FeedbackController — Sprint B self-check', () => {
       listPendingFinalizeInDb: jest.fn(),
     };
     teacherRepo = { findById: jest.fn(), findByUserId: jest.fn() };
+    auditLog = { log: jest.fn().mockResolvedValue(undefined) };
 
     controller = new FeedbackController(
       feedbackSvc as unknown as LessonFeedbackService,
       consumptionSvc as unknown as CourseConsumptionService,
       reportSvc as unknown as MonthlyReportService,
       teacherRepo as unknown as TeacherRepository,
+      auditLog as unknown as AuditLogRepository,
     );
   });
 
@@ -292,6 +296,140 @@ describe('FeedbackController — Sprint B self-check', () => {
         controller.listPendingFinalizeInDb({ tenantSchema: TENANT }, mkReq()),
       ).rejects.toThrow(/no teachers row bound/);
       expect(reportSvc.listPendingFinalizeInDb).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // 5/21 round 2 (security BLOCKER-1): submitFeedbackInDb teacher self-check
+  // ============================================================
+  describe('submitFeedbackInDb — teacher self-check（按 body.teacherId 比对 JWT 反查）', () => {
+    const FEEDBACK_ID = 'fb' + '0'.repeat(30);
+    const SCHEDULE_ID = 'sched' + '0'.repeat(27);
+    const STUDENT_ID = 'stu' + '0'.repeat(29);
+
+    const baseBody = {
+      id: FEEDBACK_ID,
+      scheduleId: SCHEDULE_ID,
+      studentId: STUDENT_ID,
+      teacherId: TEACHER_T1,
+      attendanceStatus: '出勤' as const,
+      classroomPerformance: '良好' as const,
+      tenantSchema: TENANT,
+    };
+
+    const persistedFeedback = {
+      id: FEEDBACK_ID,
+      scheduleId: SCHEDULE_ID,
+      studentId: STUDENT_ID,
+      teacherId: TEACHER_T1,
+      attendanceStatus: '出勤' as const,
+      classroomPerformance: '良好' as const,
+      submittedAt: new Date('2026-05-21T10:00:00Z'),
+      updatedAt: new Date('2026-05-21T10:00:00Z'),
+    };
+
+    it('teacher role + body.teacherId = 自己 → 放行 + 写 audit_log lesson-feedback.submitted', async () => {
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      feedbackSvc.submitInDb.mockResolvedValueOnce(persistedFeedback);
+
+      const r = await controller.submitFeedbackInDb(baseBody, mkReq());
+
+      expect(r.id).toBe(FEEDBACK_ID);
+      // self-check 调 findByUserId
+      expect(teacherRepo.findByUserId).toHaveBeenCalledWith(TENANT, USER_U1);
+      // service submitInDb 被调
+      expect(feedbackSvc.submitInDb).toHaveBeenCalledTimes(1);
+      // audit_log 必须写 lesson-feedback.submitted
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const [auditTenant, auditEntry] = auditLog.log.mock.calls[0];
+      expect(auditTenant).toBe(TENANT);
+      expect(auditEntry.action).toBe('lesson-feedback.submitted');
+      expect(auditEntry.targetType).toBe('lesson_feedback');
+      expect(auditEntry.targetId).toBe(FEEDBACK_ID);
+      expect(auditEntry.actorUserId).toBe(USER_U1);
+      expect(auditEntry.actorRole).toBe('teacher');
+      expect(auditEntry.after).toMatchObject({
+        scheduleId: SCHEDULE_ID,
+        studentId: STUDENT_ID,
+        teacherId: TEACHER_T1,
+        attendanceStatus: '出勤',
+      });
+    });
+
+    it('teacher 伪造 body.teacherId 为他人 → ForbiddenException + 写 audit_log teacher.self-check-failed + 不调 submitInDb', async () => {
+      // 攻击：req.user 是 U1 (绑 T1)，但 body.teacherId 传 T2
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+
+      await expect(
+        controller.submitFeedbackInDb(
+          { ...baseBody, teacherId: TEACHER_T2 },
+          mkReq(),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+
+      // submitInDb 必须不被调（self-check 早期拦截）
+      expect(feedbackSvc.submitInDb).not.toHaveBeenCalled();
+      // 拒绝路径写 audit_log teacher.self-check-failed
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const auditEntry = auditLog.log.mock.calls[0][1];
+      expect(auditEntry.action).toBe('teacher.self-check-failed');
+      expect(auditEntry.targetType).toBe('lesson_feedback');
+      expect(auditEntry.after.attempted_teacher_id).toBe(TEACHER_T2);
+      expect(auditEntry.after.own_teacher_id).toBe(TEACHER_T1);
+    });
+
+    it('teacher role + req.user.sub 未绑定 teachers 行 → ForbiddenException + 不调 submitInDb', async () => {
+      teacherRepo.findByUserId.mockResolvedValueOnce(null);
+
+      await expect(
+        controller.submitFeedbackInDb(baseBody, mkReq()),
+      ).rejects.toThrow(/no teachers row bound/);
+      expect(feedbackSvc.submitInDb).not.toHaveBeenCalled();
+    });
+
+    it('admin role → 跳过 self-check（可写任意 teacherId） + 仍写 audit_log', async () => {
+      // 攻击场景反转：admin 调 body.teacherId=T2 应被放行（拍板「老板校长 ✅ 全权」）
+      feedbackSvc.submitInDb.mockResolvedValueOnce({ ...persistedFeedback, teacherId: TEACHER_T2 });
+
+      const r = await controller.submitFeedbackInDb(
+        { ...baseBody, teacherId: TEACHER_T2 },
+        mkReq({
+          user: { sub: 'admin_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxA01', role: 'admin', tenantId: null, campusId: null },
+        }),
+      );
+
+      expect(r.id).toBe(FEEDBACK_ID);
+      // admin 不应触发 self-check 的 findByUserId
+      expect(teacherRepo.findByUserId).not.toHaveBeenCalled();
+      expect(feedbackSvc.submitInDb).toHaveBeenCalledTimes(1);
+      // admin 写成功仍记 audit_log（actorRole='admin'）
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const auditEntry = auditLog.log.mock.calls[0][1];
+      expect(auditEntry.action).toBe('lesson-feedback.submitted');
+      expect(auditEntry.actorRole).toBe('admin');
+    });
+
+    it('boss role → 跳过 self-check', async () => {
+      feedbackSvc.submitInDb.mockResolvedValueOnce(persistedFeedback);
+
+      await controller.submitFeedbackInDb(
+        baseBody,
+        mkReq({
+          user: { sub: 'boss_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxB01', role: 'boss', tenantId: 't', campusId: 'c' },
+        }),
+      );
+
+      expect(teacherRepo.findByUserId).not.toHaveBeenCalled();
+      expect(feedbackSvc.submitInDb).toHaveBeenCalledTimes(1);
+    });
+
+    it('audit_log 写失败 → fail-open：feedback 仍返回（不抛主流程）', async () => {
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      feedbackSvc.submitInDb.mockResolvedValueOnce(persistedFeedback);
+      auditLog.log.mockRejectedValueOnce(new Error('audit DB down'));
+
+      const r = await controller.submitFeedbackInDb(baseBody, mkReq());
+      expect(r.id).toBe(FEEDBACK_ID);
     });
   });
 });

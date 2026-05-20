@@ -81,6 +81,39 @@ describe('CourseConsumptionRepository', () => {
 
   // V38: 删 sumPayrollForTeacher 2 个单测（method 已从 repository.ts 删除，薪资业务下线）
 
+  // P1 S3 (2026-05-21) — feedback 提交合并 consumption confirm 用
+  //   5/21 round 2 (security BLOCKER-2)：单数版废弃；现 SQL 无 LIMIT 支持多学生小班课
+  describe('findAllPendingByScheduleId (S3 feedback-confirm 合并 / 多学生小班课)', () => {
+    it('SQL 含 schedule_id 过滤 + status=pending_feedback + 无 LIMIT（支持多学生）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([ROW]);
+      const r = await repo.findAllPendingByScheduleId(TENANT, SAMPLE.scheduleId);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('schedule_id = $1');
+      expect(sql).toContain("status = 'pending_feedback'");
+      // BLOCKER-2 修复关键断言：无 LIMIT（旧版 LIMIT 1 在小班课静默丢失）
+      expect(sql).not.toContain('LIMIT');
+      expect(pg.tenantQuery.mock.calls[0][2]).toEqual([SAMPLE.scheduleId]);
+      expect(r).toHaveLength(1);
+      expect(r[0].id).toBe(SAMPLE.id);
+      expect(r[0].status).toBe('pending_feedback');
+    });
+
+    it('schedule 无 pending consumption → 返回 []（已 confirmed/locked/cancelled 不返回）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      const r = await repo.findAllPendingByScheduleId(TENANT, SAMPLE.scheduleId);
+      expect(r).toEqual([]);
+    });
+
+    it('多学生小班课：1 schedule + 2 student → 返回 2 条（不被 LIMIT 1 截断）', async () => {
+      const ROW2 = { ...ROW, id: 'ccB' + '0'.repeat(29), student_id: 'stuB' + '0'.repeat(28) };
+      pg.tenantQuery.mockResolvedValueOnce([ROW, ROW2]);
+      const r = await repo.findAllPendingByScheduleId(TENANT, SAMPLE.scheduleId);
+      expect(r).toHaveLength(2);
+      expect(r[0].id).toBe(SAMPLE.id);
+      expect(r[1].id).toBe(ROW2.id);
+    });
+  });
+
   describe('findPendingFeedbackSummaryByTeacher (home-teacher 待办)', () => {
     it('返回 count + earliestDueAt（有待点评）', async () => {
       const due = new Date('2026-05-08T20:00:00Z');

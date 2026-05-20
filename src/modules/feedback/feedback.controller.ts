@@ -288,6 +288,15 @@ export class FeedbackController {
    *   - 拍板「教务全只读老师线」→ academic 不在写列表
    *   - 拍板「家长不能写反馈」→ parent 不在写列表
    *   - teacher self-check: feedback.teacherId === req.user 反查的 teachers.id
+   *
+   * 5/21 round 2 (security BLOCKER-1 修复)：
+   *   旧版 handler 直接将 body.teacherId 传 submitInDb 零 JWT 反查校验 →
+   *   teacher 可设 body.teacherId 为他人 → S3 触发他人 consumption confirm →
+   *   影响 weeklyConsumedYuan 财务对账（A04 跨 actor 攻击面）
+   *   修法：调用 assertTeacherIdSelfOrPrivileged 按 body.teacherId 比对 JWT 反查
+   *
+   * 5/21 round 2 (P1 audit_log 修复)：
+   *   写成功后调 auditLog.log 写 'lesson-feedback.submitted'（对标 finalize 模式）
    */
   @Post('db/lesson-feedbacks')
   @UseGuards(TenantScopeGuard, RbacGuard)
@@ -316,15 +325,47 @@ export class FeedbackController {
       nextPreview?: string;
       tenantSchema: string;
     },
+    @Req() req: AuthenticatedRequest,
   ): Promise<LessonFeedback> {
     const { tenantSchema, homeworkDeadlineMs, ...rest } = body;
-    return this.feedback.submitInDb(
+
+    // 5/21 BLOCKER-1: teacher 必须只能为自己 schedule 写反馈（防伪造 body.teacherId）
+    //   - admin/boss 跳过 self-check（拍板「老板校长 ✅ 全权」）
+    //   - teacher self-check 失败抛 ForbiddenException + 写 audit_log（teacher.self-check-failed）
+    await this.assertTeacherIdSelfOrPrivileged(req, tenantSchema, body.teacherId);
+
+    const result = await this.feedback.submitInDb(
       {
         ...rest,
         homeworkDeadline: homeworkDeadlineMs ? new Date(homeworkDeadlineMs) : undefined,
       },
       tenantSchema,
     );
+
+    // 5/21 P1: 写 audit_log（对标 finalize 模式 — fail-open）
+    try {
+      await this.auditLog?.log(tenantSchema, {
+        actorUserId: req.user?.sub ?? null,
+        actorRole: normalizeActorRole(req.user?.role),
+        action: 'lesson-feedback.submitted',
+        targetType: 'lesson_feedback',
+        targetId: result.id,
+        before: null,
+        after: {
+          scheduleId: body.scheduleId,
+          studentId: body.studentId,
+          teacherId: body.teacherId,
+          attendanceStatus: body.attendanceStatus,
+        },
+        ip: req.ip ?? null,
+        userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+        requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+      });
+    } catch {
+      // fail-open: AuditLogRepository.log 已内部 catch，此层兜底
+    }
+
+    return result;
   }
 
   /**
@@ -927,6 +968,60 @@ export class FeedbackController {
       throw new ForbiddenException(
         `teacher self-check: report.teacher_id=${report.teacherId} ` +
           `but req.user maps to teachers.id=${ownTeacherId} — 拒绝改他人月报`,
+      );
+    }
+  }
+
+  /**
+   * 5/21 round 2 (security BLOCKER-1): 按 body.teacherId 比对 JWT 反查 teachers.id
+   *
+   * 与 assertTeacherSelfOrPrivileged 区别：
+   *   - 后者按 reportId 先 SELECT report 拿 teacher_id（用于 finalize 等基于已有 row 的操作）
+   *   - 本 helper 直接接受 expectedTeacherId 参数（用于 submitFeedbackInDb 等 body 自带 teacherId 的创建操作）
+   *
+   * 用法：
+   *   - submitFeedbackInDb：body.teacherId 必须 = JWT 反查的 teachers.id（teacher role）
+   *   - admin / boss：跳过 self-check（特权路径）
+   *   - 其他 role：RbacGuard 已挡，此处不会触达
+   *
+   * 失败路径：
+   *   - 写 audit_log action='teacher.self-check-failed' targetType='lesson_feedback'（fail-open）
+   *   - 抛 ForbiddenException 阻断主流程
+   */
+  private async assertTeacherIdSelfOrPrivileged(
+    req: AuthenticatedRequest,
+    tenantSchema: string,
+    expectedTeacherId: string,
+  ): Promise<void> {
+    if (req.user?.role !== 'teacher') {
+      // admin / boss 走特权路径，无需 self-check
+      return;
+    }
+    const ownTeacherId = await this.resolveOwnTeacherId(req, tenantSchema);
+    if (expectedTeacherId !== ownTeacherId) {
+      // self-check 失败写 audit_log（fail-open）
+      try {
+        await this.auditLog?.log(tenantSchema, {
+          actorUserId: req.user?.sub ?? null,
+          actorRole: 'teacher',
+          action: 'teacher.self-check-failed',
+          targetType: 'lesson_feedback',
+          targetId: null,
+          before: null,
+          after: {
+            attempted_teacher_id: expectedTeacherId,
+            own_teacher_id: ownTeacherId,
+          },
+          ip: req.ip ?? null,
+          userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+          requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+        });
+      } catch {
+        // audit fail-open — 不阻塞主 ForbiddenException
+      }
+      throw new ForbiddenException(
+        `teacher self-check: body.teacherId=${expectedTeacherId} ` +
+          `but req.user maps to teachers.id=${ownTeacherId} — 拒绝写他人反馈`,
       );
     }
   }

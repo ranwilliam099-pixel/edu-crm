@@ -74,6 +74,36 @@ export class CourseConsumptionRepository {
   }
 
   /**
+   * P1 S3 (2026-05-21)：feedback 提交时合并 consumption confirm 用
+   *
+   * 找该 schedule 下所有 status='pending_feedback' 的 consumption
+   *
+   * 5/21 round 2 (security BLOCKER-2 修复)：
+   *   旧版 LIMIT 1 假设 schedule:consumption 1:1，但 V9 schema 是
+   *   `UNIQUE (schedule_id, student_id)` 不是 `UNIQUE (schedule_id)`
+   *   → 小班课多学生时同 schedule 多条 consumption 共存
+   *   → LIMIT 1 无 ORDER BY 任意选行，其他学生 consumption 静默丢失 + fail-open 无错
+   *   → 改为返回 array，service 循环 confirm 全部 pending（多学生小班课正确语义）
+   *
+   * @returns 该 schedule 所有 pending_feedback consumption 列表（已 confirmed/locked/cancelled
+   *          天然排除；空 schedule 或全部已处理 → 返回 []）
+   */
+  async findAllPendingByScheduleId(
+    tenantSchema: string,
+    scheduleId: string,
+  ): Promise<CourseConsumption[]> {
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT id, schedule_id, student_id, teacher_id, status, amount_yuan,
+              feedback_id, feedback_due_at, confirmed_at, locked_at, created_at
+       FROM course_consumptions
+       WHERE schedule_id = $1 AND status = 'pending_feedback'`,
+      [scheduleId],
+    );
+    return rows.map((r) => this.mapRow(r));
+  }
+
+  /**
    * cron 用：扫超期未填反馈的待锁条目
    */
   async findOverdueForLock(

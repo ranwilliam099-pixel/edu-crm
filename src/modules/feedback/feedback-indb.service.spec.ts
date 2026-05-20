@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { LessonFeedbackService, LessonFeedback } from './lesson-feedback.service';
 import { CourseConsumptionService, CourseConsumption } from './course-consumption.service';
 import { MonthlyReportService, MonthlyReport } from './monthly-report.service';
@@ -16,6 +16,10 @@ describe('Feedback Services InDb (V9)', () => {
   describe('LessonFeedbackService', () => {
     let service: LessonFeedbackService;
     let repo: { insert: jest.Mock; findById: jest.Mock; listByStudent: jest.Mock; update: jest.Mock; markParentRead: jest.Mock };
+    let consumptionRepo: {
+      findAllPendingByScheduleId: jest.Mock;
+      confirmByFeedback: jest.Mock;
+    };
     const FEEDBACK: LessonFeedback = {
       id: 'fb' + '0'.repeat(30),
       scheduleId: SCHEDULE,
@@ -26,6 +30,18 @@ describe('Feedback Services InDb (V9)', () => {
       submittedAt: new Date('2026-05-02T10:00:00Z'),
       updatedAt: new Date('2026-05-02T10:00:00Z'),
     };
+    // P1 S3 (2026-05-21): consumption mock 默认 stub findAllPendingByScheduleId → []
+    //   5/21 round 2 (BLOCKER-2)：单数版废弃，array 版支持多学生小班课
+    const PENDING_CONSUMPTION: CourseConsumption = {
+      id: 'cc' + '0'.repeat(30),
+      scheduleId: SCHEDULE,
+      studentId: STUDENT,
+      teacherId: TEACHER,
+      status: 'pending_feedback',
+      amountYuan: 200,
+      feedbackDueAt: new Date('2026-05-03T10:00:00Z'),
+      createdAt: new Date('2026-05-02T10:00:00Z'),
+    };
 
     beforeEach(async () => {
       repo = {
@@ -35,10 +51,15 @@ describe('Feedback Services InDb (V9)', () => {
         update: jest.fn(),
         markParentRead: jest.fn(),
       };
+      consumptionRepo = {
+        findAllPendingByScheduleId: jest.fn().mockResolvedValue([]),
+        confirmByFeedback: jest.fn(),
+      };
       const m = await Test.createTestingModule({
         providers: [
           LessonFeedbackService,
           { provide: LessonFeedbackRepository, useValue: repo },
+          { provide: CourseConsumptionRepository, useValue: consumptionRepo },
         ],
       }).compile();
       service = m.get(LessonFeedbackService);
@@ -77,6 +98,233 @@ describe('Feedback Services InDb (V9)', () => {
         ),
       ).rejects.toThrow(BadRequestException);
       expect(repo.insert).not.toHaveBeenCalled();
+    });
+
+    // P1 S3 (2026-05-21) — feedback 提交合并 consumption confirm
+    //   5/21 round 2 (BLOCKER-2)：从单数 findPending → 数组 findAllPending（支持多学生小班课）
+    //   6 case 覆盖：成功路径 / 数组空 / 单条失败 fail-open / 跨 tenant 隔离 / 多学生小班课 / 部分失败统计
+    describe('S3 合并：submitInDb 自动 confirm 同 schedule 下 pending consumption', () => {
+      it('成功路径：feedback 写 + consumption 自动 confirm（findAllPending → 1 条 confirmByFeedback 精确）', async () => {
+        repo.insert.mockResolvedValueOnce(FEEDBACK);
+        consumptionRepo.findAllPendingByScheduleId.mockResolvedValueOnce([PENDING_CONSUMPTION]);
+        consumptionRepo.confirmByFeedback.mockResolvedValueOnce({
+          ...PENDING_CONSUMPTION,
+          status: 'confirmed',
+          feedbackId: FEEDBACK.id,
+          confirmedAt: new Date(),
+        });
+
+        const r = await service.submitInDb(
+          {
+            id: FEEDBACK.id,
+            scheduleId: FEEDBACK.scheduleId,
+            studentId: FEEDBACK.studentId,
+            teacherId: FEEDBACK.teacherId,
+            attendanceStatus: '出勤',
+            classroomPerformance: '良好',
+          },
+          TENANT,
+        );
+
+        // feedback 主流程返回值 = repo.insert 返回值
+        expect(r.id).toBe(FEEDBACK.id);
+        // findAllPending 调用：tenantSchema + scheduleId
+        expect(consumptionRepo.findAllPendingByScheduleId).toHaveBeenCalledTimes(1);
+        expect(consumptionRepo.findAllPendingByScheduleId).toHaveBeenCalledWith(
+          TENANT,
+          FEEDBACK.scheduleId,
+        );
+        // confirmByFeedback 调用：tenantSchema + consumption.id + 持久化后 feedback.id
+        expect(consumptionRepo.confirmByFeedback).toHaveBeenCalledTimes(1);
+        expect(consumptionRepo.confirmByFeedback).toHaveBeenCalledWith(
+          TENANT,
+          PENDING_CONSUMPTION.id,
+          FEEDBACK.id,
+        );
+      });
+
+      it('consumption 数组为空：feedback 写成功 + 不调 confirmByFeedback', async () => {
+        repo.insert.mockResolvedValueOnce(FEEDBACK);
+        consumptionRepo.findAllPendingByScheduleId.mockResolvedValueOnce([]);
+
+        const r = await service.submitInDb(
+          {
+            id: FEEDBACK.id,
+            scheduleId: FEEDBACK.scheduleId,
+            studentId: FEEDBACK.studentId,
+            teacherId: FEEDBACK.teacherId,
+            attendanceStatus: '出勤',
+            classroomPerformance: '良好',
+          },
+          TENANT,
+        );
+
+        expect(r.id).toBe(FEEDBACK.id);
+        expect(consumptionRepo.findAllPendingByScheduleId).toHaveBeenCalledTimes(1);
+        // 关键断言：[] 时 confirmByFeedback 必须不被调
+        expect(consumptionRepo.confirmByFeedback).not.toHaveBeenCalled();
+      });
+
+      it('单条 confirm 抛错 → fail-open：feedback 仍写成功 + logger.warn 不抛主流程', async () => {
+        const warnSpy = jest
+          .spyOn((service as any).logger as Logger, 'warn')
+          .mockImplementation(() => undefined);
+
+        repo.insert.mockResolvedValueOnce(FEEDBACK);
+        consumptionRepo.findAllPendingByScheduleId.mockResolvedValueOnce([PENDING_CONSUMPTION]);
+        consumptionRepo.confirmByFeedback.mockRejectedValueOnce(
+          new Error('PG connection lost'),
+        );
+
+        // fail-open：主 Promise 不 reject
+        const r = await service.submitInDb(
+          {
+            id: FEEDBACK.id,
+            scheduleId: FEEDBACK.scheduleId,
+            studentId: FEEDBACK.studentId,
+            teacherId: FEEDBACK.teacherId,
+            attendanceStatus: '出勤',
+            classroomPerformance: '良好',
+          },
+          TENANT,
+        );
+
+        expect(r.id).toBe(FEEDBACK.id);
+        expect(consumptionRepo.confirmByFeedback).toHaveBeenCalledTimes(1);
+        // logger.warn 至少 1 次，含 consumption.id + 错误原因（cron scan-and-lock 兜底依赖）
+        expect(warnSpy).toHaveBeenCalled();
+        const warnMsg = warnSpy.mock.calls[0][0] as string;
+        expect(warnMsg).toContain('auto-confirm consumption');
+        expect(warnMsg).toContain(PENDING_CONSUMPTION.id);
+        expect(warnMsg).toContain('PG connection lost');
+
+        warnSpy.mockRestore();
+      });
+
+      it('跨 tenant 隔离：tenantSchema 正确传递到 findAllPending + confirmByFeedback', async () => {
+        const OTHER_TENANT = 'tenant_yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy';
+        repo.insert.mockResolvedValueOnce(FEEDBACK);
+        consumptionRepo.findAllPendingByScheduleId.mockResolvedValueOnce([PENDING_CONSUMPTION]);
+        consumptionRepo.confirmByFeedback.mockResolvedValueOnce({
+          ...PENDING_CONSUMPTION,
+          status: 'confirmed',
+        });
+
+        await service.submitInDb(
+          {
+            id: FEEDBACK.id,
+            scheduleId: FEEDBACK.scheduleId,
+            studentId: FEEDBACK.studentId,
+            teacherId: FEEDBACK.teacherId,
+            attendanceStatus: '出勤',
+            classroomPerformance: '良好',
+          },
+          OTHER_TENANT,
+        );
+
+        // 3 个 repo 调用同 tenantSchema，杜绝跨租户写入
+        expect(repo.insert.mock.calls[0][0]).toBe(OTHER_TENANT);
+        expect(consumptionRepo.findAllPendingByScheduleId.mock.calls[0][0]).toBe(OTHER_TENANT);
+        expect(consumptionRepo.confirmByFeedback.mock.calls[0][0]).toBe(OTHER_TENANT);
+      });
+
+      // 5/21 round 2 (BLOCKER-2 新 case)：多学生小班课
+      it('多学生小班课：findAllPending 返 2 条 → 2 次 confirmByFeedback 全调（防 LIMIT 1 静默丢失）', async () => {
+        const STUDENT_B = 'stuB' + '0'.repeat(28);
+        const PENDING_B: CourseConsumption = {
+          ...PENDING_CONSUMPTION,
+          id: 'ccB' + '0'.repeat(29),
+          studentId: STUDENT_B,
+        };
+
+        repo.insert.mockResolvedValueOnce(FEEDBACK);
+        consumptionRepo.findAllPendingByScheduleId.mockResolvedValueOnce([
+          PENDING_CONSUMPTION,
+          PENDING_B,
+        ]);
+        consumptionRepo.confirmByFeedback
+          .mockResolvedValueOnce({ ...PENDING_CONSUMPTION, status: 'confirmed' })
+          .mockResolvedValueOnce({ ...PENDING_B, status: 'confirmed' });
+
+        const r = await service.submitInDb(
+          {
+            id: FEEDBACK.id,
+            scheduleId: FEEDBACK.scheduleId,
+            studentId: FEEDBACK.studentId,
+            teacherId: FEEDBACK.teacherId,
+            attendanceStatus: '出勤',
+            classroomPerformance: '良好',
+          },
+          TENANT,
+        );
+
+        expect(r.id).toBe(FEEDBACK.id);
+        // 2 条 consumption 都被 confirm（多学生小班课正确语义）
+        expect(consumptionRepo.confirmByFeedback).toHaveBeenCalledTimes(2);
+        expect(consumptionRepo.confirmByFeedback).toHaveBeenNthCalledWith(
+          1,
+          TENANT,
+          PENDING_CONSUMPTION.id,
+          FEEDBACK.id,
+        );
+        expect(consumptionRepo.confirmByFeedback).toHaveBeenNthCalledWith(
+          2,
+          TENANT,
+          PENDING_B.id,
+          FEEDBACK.id,
+        );
+      });
+
+      // 5/21 round 2 (BLOCKER-2 新 case)：部分失败统计正确（一条 confirm 失败不影响另一条）
+      it('多学生：1 条 confirm 失败 + 1 条成功 → fail-open + logger 统计 confirmed=1/total=2', async () => {
+        const PENDING_B: CourseConsumption = {
+          ...PENDING_CONSUMPTION,
+          id: 'ccB' + '0'.repeat(29),
+        };
+        const logSpy = jest
+          .spyOn((service as any).logger as Logger, 'log')
+          .mockImplementation(() => undefined);
+        const warnSpy = jest
+          .spyOn((service as any).logger as Logger, 'warn')
+          .mockImplementation(() => undefined);
+
+        repo.insert.mockResolvedValueOnce(FEEDBACK);
+        consumptionRepo.findAllPendingByScheduleId.mockResolvedValueOnce([
+          PENDING_CONSUMPTION,
+          PENDING_B,
+        ]);
+        // 第 1 条失败、第 2 条成功 → 部分失败的统计应正确
+        consumptionRepo.confirmByFeedback
+          .mockRejectedValueOnce(new Error('row-1 locked'))
+          .mockResolvedValueOnce({ ...PENDING_B, status: 'confirmed' });
+
+        const r = await service.submitInDb(
+          {
+            id: FEEDBACK.id,
+            scheduleId: FEEDBACK.scheduleId,
+            studentId: FEEDBACK.studentId,
+            teacherId: FEEDBACK.teacherId,
+            attendanceStatus: '出勤',
+            classroomPerformance: '良好',
+          },
+          TENANT,
+        );
+
+        expect(r.id).toBe(FEEDBACK.id);
+        expect(consumptionRepo.confirmByFeedback).toHaveBeenCalledTimes(2);
+        // 失败一条 → warn 一条
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        // 完成 log 一条含 confirmed=1/total=2 + scheduleId（spy 捕获多条 log，包括 pure submit 的；
+        // 用 some() 找到 S3 统计那条）
+        const logMessages = logSpy.mock.calls.map((args) => args[0] as string);
+        const s3LogMsg = logMessages.find((m) => m.includes('[S3] auto-confirmed'));
+        expect(s3LogMsg).toBeDefined();
+        expect(s3LogMsg).toContain('1/2');
+        expect(s3LogMsg).toContain(FEEDBACK.scheduleId);
+
+        logSpy.mockRestore();
+        warnSpy.mockRestore();
+      });
     });
 
     it('findInDb throws NotFoundException when missing', async () => {
