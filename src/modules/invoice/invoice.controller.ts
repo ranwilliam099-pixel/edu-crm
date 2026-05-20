@@ -21,7 +21,13 @@ import { Roles } from '../../guards/rbac.decorator';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 import { InvoiceService } from './invoice.service';
-import { CreateInvoiceDto, Invoice, PendingContractView } from './invoice.dto';
+import {
+  CreateInvoiceDto,
+  Invoice,
+  MarkInvoicePaidDto,
+  MarkInvoicePaidResult,
+  PendingContractView,
+} from './invoice.dto';
 import {
   ActorRole,
   AuditLogRepository,
@@ -37,6 +43,7 @@ import {
  *
  * Endpoints:
  *   POST /db/invoices                       创建开票申请（B 端 finance/boss/admin）
+ *   POST /db/invoices/:id/mark-paid         P1 业务流 S2 — 标记收款 + 合同激活 + 自动建课时包
  *   GET  /db/invoices/pending-contracts     列待开票合同（前端 new sheet 用）
  *   GET  /db/invoices/:id                   详情（已开票后 finance 复查）
  *
@@ -159,6 +166,79 @@ export class InvoiceController {
     }
 
     return this.service.createInvoice(
+      body,
+      { sub: userSub, role: userRole },
+      {
+        ip: req.ip ?? null,
+        userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+        requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+      },
+    );
+  }
+
+  // ============================================================
+  // POST /api/db/invoices/:id/mark-paid — 财务标记收款 + 合同激活 + 自动建课时包
+  // ============================================================
+
+  /**
+   * P1 业务流闭环 S2 (2026-05-20)
+   *
+   * @param id           32-char ULID invoiceId
+   * @body
+   *   tenantSchema    必填（TenantScopeGuard 校验）
+   *   paidAt          ISO8601 实际收款时间
+   *   paymentMethod   收款方式枚举（微信支付/对公转账/现金/支付宝/银行卡/其他）
+   *
+   * @returns MarkInvoicePaidResult { invoice, contract, studentCoursePackage }
+   *
+   * @errors
+   *   400 BadRequest      paidAt 非 ISO8601 / paymentMethod 非合法枚举 / id 非 32-char / contract 0 课时
+   *   401 Unauthorized    JWT 缺
+   *   403 Forbidden       role !== 'finance' / tenantSchema mismatch
+   *   404 NotFound        invoice 不存在 / contract 软删
+   *   409 Conflict        invoice.status != 'pending' / contract.status='cancelled'/'expired'
+   *
+   * 5/20 拍板：@Roles('finance')（与 invoice.create 一致，SSOT §6 finance.invoice.* 严格只允许 finance）
+   *
+   * @UseInterceptors(IdempotencyInterceptor)：
+   *   强烈推荐前端带 Idempotency-Key 防双击二次激活（合同已 active 后再 mark-paid 会 409 防御兜底，
+   *   但 Idempotency 层先挡更友好）
+   *
+   * @Throttle 30/min：财务操作频次低，防恶意刷
+   */
+  @Post(':id/mark-paid')
+  @Roles('finance')
+  @UseInterceptors(IdempotencyInterceptor)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  async markPaid(
+    @Param('id') id: string,
+    @Body() body: MarkInvoicePaidDto,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<MarkInvoicePaidResult> {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!id || id.length !== 32) {
+      throw new BadRequestException('id must be 32-char ULID');
+    }
+    if (!body.paidAt) {
+      throw new BadRequestException('paidAt required (ISO8601)');
+    }
+    // ISO8601 简易校验（service 层会再做精确 Date 解析校验）
+    const parsedAt = new Date(body.paidAt);
+    if (Number.isNaN(parsedAt.getTime())) {
+      throw new BadRequestException('paidAt must be valid ISO8601 datetime');
+    }
+    if (!body.paymentMethod) {
+      throw new BadRequestException('paymentMethod required');
+    }
+    const userSub = req.user?.sub;
+    const userRole = req.user?.role;
+    if (!userSub || !userRole) {
+      throw new BadRequestException('user identity required');
+    }
+
+    return this.service.markPaid(
+      id,
       body,
       { sub: userSub, role: userRole },
       {

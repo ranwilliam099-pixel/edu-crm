@@ -21,7 +21,12 @@ import { InvoiceController } from './invoice.controller';
 import type { InvoiceService } from './invoice.service';
 import type { AuditLogRepository } from '../db/audit-log.repository';
 import type { AuthenticatedRequest, TenantRole } from '../auth/jwt-payload.interface';
-import type { Invoice, PendingContractView } from './invoice.dto';
+import type {
+  Invoice,
+  MarkInvoicePaidDto,
+  MarkInvoicePaidResult,
+  PendingContractView,
+} from './invoice.dto';
 
 const TENANT_A = 'tenant_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const INVOICE_ID = '01HRX5INVOICE0000000000000000A01';
@@ -64,6 +69,9 @@ function invoiceFixture(overrides: Partial<Invoice> = {}): Invoice {
     cancelledAt: null,
     createdAt: '2026-05-15T00:00:00.000Z',
     updatedAt: '2026-05-15T00:00:00.000Z',
+    // P1 业务流 S2 (V54) — mark-paid 字段（默认 null）
+    paidAt: null,
+    paymentMethod: null,
     ...overrides,
   };
 }
@@ -74,6 +82,7 @@ describe('InvoiceController (Wave 4A.2-T1)', () => {
     createInvoice: jest.Mock;
     listPendingContracts: jest.Mock;
     findById: jest.Mock;
+    markPaid: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
 
@@ -90,6 +99,7 @@ describe('InvoiceController (Wave 4A.2-T1)', () => {
       createInvoice: jest.fn(),
       listPendingContracts: jest.fn(),
       findById: jest.fn(),
+      markPaid: jest.fn(),
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = build();
@@ -243,6 +253,237 @@ describe('InvoiceController (Wave 4A.2-T1)', () => {
   });
 
   // ============================================================
+  // POST /db/invoices/:id/mark-paid — P1 业务流闭环 S2 (2026-05-20)
+  // ============================================================
+  describe('markPaid() — 财务标记收款 + 合同激活 + 自动建课时包', () => {
+    const validMarkPaidBody = (): MarkInvoicePaidDto => ({
+      tenantSchema: TENANT_A,
+      paidAt: '2026-05-20T10:30:00.000Z',
+      paymentMethod: '微信支付',
+    });
+
+    function markPaidResultFixture(
+      overrides: Partial<MarkInvoicePaidResult> = {},
+    ): MarkInvoicePaidResult {
+      return {
+        invoice: invoiceFixture({
+          status: 'issued',
+          paidAt: '2026-05-20T10:30:00.000Z',
+          paymentMethod: '微信支付',
+          issuedAt: '2026-05-20T11:00:00.000Z',
+        }),
+        contract: {
+          id: CONTRACT_ID,
+          studentId: 'stu0000000000000000000000000000A1',
+          status: 'active',
+          activatedAt: '2026-05-20T11:00:00.000Z',
+          totalAmount: 9999,
+          lessonHours: 30,
+          giftHours: 3,
+        },
+        studentCoursePackage: {
+          id: 'scp00000000000000000000000000A0A1',
+          studentId: 'stu0000000000000000000000000000A1',
+          coursePackageId: 'cpkg000000000000000000000000A0A1',
+          contractId: CONTRACT_ID,
+          totalLessons: 33,
+          usedLessons: 0,
+          refundedLessons: 0,
+          remainingLessons: 33,
+          activatedAt: '2026-05-20T11:00:00.000Z',
+          expiresAt: '2027-05-15T11:00:00.000Z',
+          status: 'active',
+        },
+        ...overrides,
+      };
+    }
+
+    // ---------- Happy path ----------
+    it('finance happy path → 调 service.markPaid 一次 + 返 3 个对象（invoice/contract/scp）', async () => {
+      service.markPaid.mockResolvedValueOnce(markPaidResultFixture());
+      const req = makeReq({ user: jwt('finance', USER_FINANCE) });
+      const r = await controller.markPaid(INVOICE_ID, validMarkPaidBody(), req);
+
+      // 返 3 个对象
+      expect(r.invoice.id).toBe(INVOICE_ID);
+      expect(r.invoice.status).toBe('issued');
+      expect(r.invoice.paymentMethod).toBe('微信支付');
+      expect(r.contract.id).toBe(CONTRACT_ID);
+      expect(r.contract.status).toBe('active');
+      expect(r.studentCoursePackage.contractId).toBe(CONTRACT_ID);
+      expect(r.studentCoursePackage.totalLessons).toBe(33);
+      expect(r.studentCoursePackage.remainingLessons).toBe(33);
+      expect(r.studentCoursePackage.status).toBe('active');
+
+      // service.markPaid 调一次 + 参数透传
+      expect(service.markPaid).toHaveBeenCalledTimes(1);
+      const [id, dto, currentUser, auditCtx] = service.markPaid.mock.calls[0];
+      expect(id).toBe(INVOICE_ID);
+      expect(dto.tenantSchema).toBe(TENANT_A);
+      expect(dto.paidAt).toBe('2026-05-20T10:30:00.000Z');
+      expect(dto.paymentMethod).toBe('微信支付');
+      expect(currentUser).toEqual({ sub: USER_FINANCE, role: 'finance' });
+      expect(auditCtx.ip).toBe('10.0.0.1');
+      expect(auditCtx.userAgent).toBe('WeChatMP/8.x');
+      expect(auditCtx.requestId).toBe('req-test-w4a-001');
+    });
+
+    // ---------- 入参校验（controller 层 fail-fast）----------
+    it('tenantSchema 缺失 → BadRequest', async () => {
+      const body = { ...validMarkPaidBody(), tenantSchema: '' };
+      const req = makeReq({ user: jwt('finance') });
+      await expect(controller.markPaid(INVOICE_ID, body, req)).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(controller.markPaid(INVOICE_ID, body, req)).rejects.toThrow(/tenantSchema/);
+      expect(service.markPaid).not.toHaveBeenCalled();
+    });
+
+    it('id 长度 != 32 → BadRequest', async () => {
+      const req = makeReq({ user: jwt('finance') });
+      await expect(controller.markPaid('short_id', validMarkPaidBody(), req)).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(
+        controller.markPaid('short_id', validMarkPaidBody(), req),
+      ).rejects.toThrow(/id/);
+      expect(service.markPaid).not.toHaveBeenCalled();
+    });
+
+    it('id 为空字符串 → BadRequest', async () => {
+      const req = makeReq({ user: jwt('finance') });
+      await expect(controller.markPaid('', validMarkPaidBody(), req)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('paidAt 缺失 → BadRequest', async () => {
+      const body = { ...validMarkPaidBody(), paidAt: '' };
+      const req = makeReq({ user: jwt('finance') });
+      await expect(
+        controller.markPaid(INVOICE_ID, body as MarkInvoicePaidDto, req),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        controller.markPaid(INVOICE_ID, body as MarkInvoicePaidDto, req),
+      ).rejects.toThrow(/paidAt/);
+    });
+
+    it('paidAt 非 ISO8601（"not-a-date"）→ BadRequest', async () => {
+      const body = { ...validMarkPaidBody(), paidAt: 'not-a-date' };
+      const req = makeReq({ user: jwt('finance') });
+      await expect(controller.markPaid(INVOICE_ID, body, req)).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(controller.markPaid(INVOICE_ID, body, req)).rejects.toThrow(/ISO8601/);
+    });
+
+    it('paymentMethod 缺失 → BadRequest', async () => {
+      const body = { ...validMarkPaidBody(), paymentMethod: '' as never };
+      const req = makeReq({ user: jwt('finance') });
+      await expect(controller.markPaid(INVOICE_ID, body, req)).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(controller.markPaid(INVOICE_ID, body, req)).rejects.toThrow(/paymentMethod/);
+    });
+
+    it('req.user 缺失 → BadRequest（user identity required）', async () => {
+      const req = makeReq();
+      await expect(
+        controller.markPaid(INVOICE_ID, validMarkPaidBody(), req),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        controller.markPaid(INVOICE_ID, validMarkPaidBody(), req),
+      ).rejects.toThrow(/user identity/);
+      expect(service.markPaid).not.toHaveBeenCalled();
+    });
+
+    it('req.user.sub 缺失 → BadRequest', async () => {
+      const req = makeReq({ user: { ...jwt('finance'), sub: '' } as never });
+      await expect(
+        controller.markPaid(INVOICE_ID, validMarkPaidBody(), req),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    // ---------- service 透传错误（404 / 409 / repo down）----------
+    it('service 抛 NotFoundException → controller 透传', async () => {
+      const { NotFoundException } = await import('@nestjs/common');
+      service.markPaid.mockRejectedValueOnce(
+        new NotFoundException('INVOICE_MARK_PAID_NOT_FOUND: invoiceId=xxx'),
+      );
+      const req = makeReq({ user: jwt('finance') });
+      await expect(
+        controller.markPaid(INVOICE_ID, validMarkPaidBody(), req),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('service 抛 ConflictException (invoice.status != pending) → controller 透传', async () => {
+      const { ConflictException } = await import('@nestjs/common');
+      service.markPaid.mockRejectedValueOnce(
+        new ConflictException({
+          error: 'INVOICE_NOT_PENDING',
+          invoiceId: INVOICE_ID,
+          currentStatus: 'issued',
+        }),
+      );
+      const req = makeReq({ user: jwt('finance') });
+      await expect(
+        controller.markPaid(INVOICE_ID, validMarkPaidBody(), req),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('service 抛通用 Error (repo down) → controller 透传', async () => {
+      service.markPaid.mockRejectedValueOnce(new Error('PG down'));
+      const req = makeReq({ user: jwt('finance') });
+      await expect(
+        controller.markPaid(INVOICE_ID, validMarkPaidBody(), req),
+      ).rejects.toThrow(/PG down/);
+    });
+
+    // ---------- auditCtx 透传 ----------
+    it('req.headers 缺失 → auditCtx.userAgent/requestId 为 null (fail-safe)', async () => {
+      service.markPaid.mockResolvedValueOnce(markPaidResultFixture());
+      const req = {
+        headers: {},
+        ip: '10.0.0.99',
+        user: jwt('finance'),
+      } as unknown as AuthenticatedRequest;
+      await controller.markPaid(INVOICE_ID, validMarkPaidBody(), req);
+      const [, , , auditCtx] = service.markPaid.mock.calls[0];
+      expect(auditCtx.userAgent).toBeNull();
+      expect(auditCtx.requestId).toBeNull();
+      expect(auditCtx.ip).toBe('10.0.0.99');
+    });
+
+    it('req.ip 缺失 → auditCtx.ip=null', async () => {
+      service.markPaid.mockResolvedValueOnce(markPaidResultFixture());
+      const req = {
+        headers: { 'user-agent': 'WX/1' },
+        user: jwt('finance'),
+      } as unknown as AuthenticatedRequest;
+      await controller.markPaid(INVOICE_ID, validMarkPaidBody(), req);
+      const [, , , auditCtx] = service.markPaid.mock.calls[0];
+      expect(auditCtx.ip).toBeNull();
+    });
+
+    // ---------- 各 paymentMethod 枚举透传 ----------
+    it.each([
+      ['微信支付'],
+      ['对公转账'],
+      ['现金'],
+      ['支付宝'],
+      ['银行卡'],
+      ['其他'],
+    ])('paymentMethod="%s" 透传到 service', async (method) => {
+      service.markPaid.mockResolvedValueOnce(markPaidResultFixture());
+      const req = makeReq({ user: jwt('finance') });
+      const body = { ...validMarkPaidBody(), paymentMethod: method as never };
+      await controller.markPaid(INVOICE_ID, body, req);
+      const [, dto] = service.markPaid.mock.calls[0];
+      expect(dto.paymentMethod).toBe(method);
+    });
+  });
+
+  // ============================================================
   // GET /db/invoices/pending-contracts — listPending
   // ============================================================
   describe('listPending() — 待开票合同列表', () => {
@@ -361,6 +602,27 @@ describe('InvoiceController (Wave 4A.2-T1)', () => {
     it('detail 方法 @Roles 严格等于 [finance]（5/15 A-1 拍板）', () => {
       const roles = Reflect.getMetadata(ROLES_KEY, InvoiceController.prototype.detail);
       expect(roles).toEqual(['finance']);
+    });
+
+    it('markPaid 方法 @Roles 严格等于 [finance]（P1 业务流 S2 拍板，与 invoice.create 一致）', () => {
+      const roles = Reflect.getMetadata(ROLES_KEY, InvoiceController.prototype.markPaid);
+      expect(roles).toEqual(['finance']);
+    });
+
+    it('markPaid @Roles 不含 sales / teacher / academic / parent / boss / admin / sales_director', () => {
+      const roles: string[] =
+        Reflect.getMetadata(ROLES_KEY, InvoiceController.prototype.markPaid) || [];
+      expect(roles).not.toContain('sales');
+      expect(roles).not.toContain('teacher');
+      expect(roles).not.toContain('academic');
+      expect(roles).not.toContain('academic_admin');
+      expect(roles).not.toContain('parent');
+      expect(roles).not.toContain('sales_manager');
+      expect(roles).not.toContain('sales_director');
+      expect(roles).not.toContain('hr');
+      expect(roles).not.toContain('marketing');
+      expect(roles).not.toContain('boss');
+      expect(roles).not.toContain('admin');
     });
 
     it('@Roles 不包含 sales / teacher / academic / parent / boss / admin (拍板拒绝角色)', () => {

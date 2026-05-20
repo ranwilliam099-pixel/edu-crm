@@ -5,7 +5,14 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InvoiceRepository } from './invoice.repository';
-import { CreateInvoiceDto, Invoice, PendingContractView } from './invoice.dto';
+import {
+  CreateInvoiceDto,
+  Invoice,
+  MarkInvoicePaidDto,
+  MarkInvoicePaidResult,
+  PaymentMethod,
+  PendingContractView,
+} from './invoice.dto';
 import { SecurityService } from '../security/security.service';
 import {
   ActorRole,
@@ -129,6 +136,150 @@ export class InvoiceService {
    */
   async findById(tenantSchema: string, id: string): Promise<Invoice | null> {
     return this.repo.findById(tenantSchema, id);
+  }
+
+  /**
+   * P1 业务流闭环 S2 (2026-05-20) — mark-paid 编排
+   *
+   * 业务流：财务在「待付款 invoice 列表」上点「已收款」按钮 →
+   *   1. invoice.status: pending → issued + 写 paid_at / payment_method / issued_at
+   *   2. contract.status: pending → active + 写 activated_at
+   *   3. 自动建 course_package（机构课包 snapshot）
+   *   4. 自动建 student_course_package（学员账户，触发 remainingLessons 余额）
+   *
+   * 上述 4 个写操作走 InvoiceRepository.markPaid 单事务原子性，本方法仅做：
+   *   - PaymentMethod 枚举校验
+   *   - 调 repo.markPaid（事务内 SELECT FOR UPDATE 双锁防并发）
+   *   - 写 audit_log 3 条（invoice.mark-paid / contract.activate / student_course_package.create）
+   *
+   * audit_log 策略（5/10 拍板「敏感金额变更必入 audit」）：
+   *   - invoice.mark-paid: amount + payment_method + paidAt 入 after（财务作账可追溯）
+   *   - contract.activate: action 派生（无独立 endpoint），关联 invoice_id（before.status='pending' → after.status='active'）
+   *   - student_course_package.create: totalLessons + contractId + invoiceId 入 after（教学链路源头）
+   *
+   * 不在 service 做：
+   *   - RBAC（controller 层 @Roles + RbacGuard）
+   *   - TenantScopeGuard（controller 层 class-level）
+   *   - 收款方式向第三方支付平台调账（人工录入，不联动支付网关）
+   *
+   * @throws BadRequestException paymentMethod 非合法枚举
+   * @throws NotFoundException invoice 不存在 / 合同已软删
+   * @throws ConflictException invoice 已 issued/cancelled / contract 已 cancelled/expired
+   */
+  async markPaid(
+    invoiceId: string,
+    dto: MarkInvoicePaidDto,
+    currentUser: { sub: string; role: string },
+    auditCtx: {
+      ip: string | null;
+      userAgent: string | null;
+      requestId: string | null;
+    },
+  ): Promise<MarkInvoicePaidResult> {
+    // 1. PaymentMethod 枚举校验（应用层 enum）
+    const validMethods: PaymentMethod[] = [
+      '微信支付',
+      '对公转账',
+      '现金',
+      '支付宝',
+      '银行卡',
+      '其他',
+    ];
+    if (!validMethods.includes(dto.paymentMethod)) {
+      throw new BadRequestException(
+        `paymentMethod must be one of: ${validMethods.join(' | ')}`,
+      );
+    }
+
+    // 2. 调 repo.markPaid（5 步事务原子性）
+    const result = await this.repo.markPaid(dto.tenantSchema, invoiceId, {
+      paidAt: dto.paidAt,
+      paymentMethod: dto.paymentMethod,
+      operatorUserId: currentUser.sub,
+    });
+
+    // 3. audit_log 3 条（与 service 层「金额变更必入 audit」一致）
+    const actorRole = normalizeActorRole(currentUser.role);
+
+    // 3.1 invoice.mark-paid
+    await this.tryAudit(dto.tenantSchema, {
+      actorUserId: currentUser.sub,
+      actorRole,
+      action: 'invoice.mark-paid',
+      targetType: 'invoice',
+      targetId: result.invoice.id,
+      before: {
+        status: 'pending',
+      },
+      after: {
+        status: result.invoice.status, // 'issued'
+        amount: result.invoice.amount,
+        paymentMethod: dto.paymentMethod,
+        paidAt: result.invoice.paidAt,
+        issuedAt: result.invoice.issuedAt,
+        contractId: result.invoice.contractId,
+        studentId: result.invoice.studentId,
+        // PII mask（不入完整抬头 / 税号 / 手机）
+        invoiceTitleLength: result.invoice.invoiceTitle.length,
+        hasTaxId: !!result.invoice.taxId,
+        hasReceivePhone: !!result.invoice.receivePhone,
+      },
+      ip: auditCtx.ip,
+      userAgent: auditCtx.userAgent,
+      requestId: auditCtx.requestId,
+    });
+
+    // 3.2 contract.activate（派生 action，关联 invoice_id 让审计可追溯触发源）
+    await this.tryAudit(dto.tenantSchema, {
+      actorUserId: currentUser.sub,
+      actorRole,
+      action: 'contract.activate',
+      targetType: 'contract',
+      targetId: result.contract.id,
+      before: {
+        status: 'pending',
+      },
+      after: {
+        status: result.contract.status, // 'active'
+        activatedAt: result.contract.activatedAt,
+        totalAmount: result.contract.totalAmount,
+        lessonHours: result.contract.lessonHours,
+        giftHours: result.contract.giftHours,
+        studentId: result.contract.studentId,
+        // 关联触发源（财务 mark-paid 一气呵成激活合同）
+        triggeredByInvoiceId: result.invoice.id,
+      },
+      ip: auditCtx.ip,
+      userAgent: auditCtx.userAgent,
+      requestId: auditCtx.requestId,
+    });
+
+    // 3.3 student_course_package.create
+    await this.tryAudit(dto.tenantSchema, {
+      actorUserId: currentUser.sub,
+      actorRole,
+      action: 'student_course_package.create',
+      targetType: 'student_course_package',
+      targetId: result.studentCoursePackage.id,
+      before: null,
+      after: {
+        id: result.studentCoursePackage.id,
+        studentId: result.studentCoursePackage.studentId,
+        coursePackageId: result.studentCoursePackage.coursePackageId,
+        contractId: result.studentCoursePackage.contractId,
+        invoiceId: result.invoice.id,                 // 关联触发源
+        totalLessons: result.studentCoursePackage.totalLessons,
+        remainingLessons: result.studentCoursePackage.remainingLessons,
+        activatedAt: result.studentCoursePackage.activatedAt,
+        expiresAt: result.studentCoursePackage.expiresAt,
+        status: result.studentCoursePackage.status,
+      },
+      ip: auditCtx.ip,
+      userAgent: auditCtx.userAgent,
+      requestId: auditCtx.requestId,
+    });
+
+    return result;
   }
 
   /**

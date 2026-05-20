@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ulid } from 'ulid';
 import { PgPoolService, PgRow } from '../db/pg-pool.service';
 import { FieldEncryptor } from '../../common/crypto/field-encryptor';
 import { HmacHasher } from '../../common/crypto/hmac-hasher';
@@ -79,6 +80,9 @@ export class InvoiceRepository {
       cancelledAt: r.cancelled_at ? new Date(r.cancelled_at).toISOString() : null,
       createdAt: new Date(r.created_at).toISOString(),
       updatedAt: new Date(r.updated_at).toISOString(),
+      // P1 业务流 S2 (V54) — mark-paid 字段（旧 invoice 数据 NULL fallback）
+      paidAt: r.paid_at ? new Date(r.paid_at).toISOString() : null,
+      paymentMethod: r.payment_method ?? null,
     };
   }
 
@@ -248,6 +252,280 @@ export class InvoiceRepository {
         );
 
         return this.mapRow(ins.rows[0]);
+      },
+      { tenantSchema },
+    );
+  }
+
+  /**
+   * P1 业务流闭环 S2 (2026-05-20) — mark-paid 全链路（5 步事务原子性）
+   *
+   * 流程：
+   *   1. SELECT FOR UPDATE invoice + 验证 status='pending'（否则 409）
+   *   2. SELECT FOR UPDATE contract + 取 snapshot 字段（验证 status 非 cancelled/expired，否则 409）
+   *   3. UPDATE invoice: status='issued', paid_at, payment_method, issued_at=NOW()
+   *   4. UPDATE contract: status='active', activated_at=NOW(), updated_by
+   *      （手写 SQL 而非调 ContractRepository.setStatus — 因为本方法在事务内必须用 client 不是 pool）
+   *   5. INSERT course_package（自动建机构课包 snapshot）
+   *   6. INSERT student_course_package（自动建学员账户）
+   *
+   * @returns { invoice, contract, studentCoursePackage } 全部最新 snapshot
+   *
+   * 异常路径：
+   *   - invoice 不存在 → NotFoundException
+   *   - invoice.status != 'pending' → ConflictException（含 currentStatus）
+   *   - contract 不存在（合同被软删但 invoice 未删）→ NotFoundException
+   *   - contract.status='cancelled'/'expired' → ConflictException（不允许激活已撤销/过期合同）
+   *   - contract.lessonHours + giftHours <= 0 → BadRequestException（防 0 课时包）
+   */
+  async markPaid(
+    tenantSchema: string,
+    invoiceId: string,
+    payload: {
+      paidAt: string;                                            // ISO8601
+      paymentMethod: string;                                     // 应用层 enum 已校验
+      operatorUserId: string;                                    // finance.sub
+    },
+  ): Promise<{
+    invoice: Invoice;
+    contract: {
+      id: string;
+      studentId: string;
+      status: 'active';
+      activatedAt: string;
+      totalAmount: number;
+      lessonHours: number;
+      giftHours: number;
+    };
+    studentCoursePackage: {
+      id: string;
+      studentId: string;
+      coursePackageId: string;
+      contractId: string;
+      totalLessons: number;
+      usedLessons: 0;
+      refundedLessons: 0;
+      remainingLessons: number;
+      activatedAt: string;
+      expiresAt: string;
+      status: 'active';
+    };
+  }> {
+    if (!invoiceId || invoiceId.length !== 32) {
+      throw new BadRequestException('invoiceId must be 32-char ULID');
+    }
+    if (!payload.paidAt) {
+      throw new BadRequestException('paidAt required (ISO8601)');
+    }
+    const parsedPaidAt = new Date(payload.paidAt);
+    if (Number.isNaN(parsedPaidAt.getTime())) {
+      throw new BadRequestException('paidAt must be valid ISO8601 datetime');
+    }
+    if (!payload.paymentMethod || payload.paymentMethod.length === 0) {
+      throw new BadRequestException('paymentMethod required');
+    }
+    if (payload.paymentMethod.length > 16) {
+      throw new BadRequestException('paymentMethod exceeds 16 chars');
+    }
+    if (!payload.operatorUserId || payload.operatorUserId.length !== 32) {
+      throw new BadRequestException('operatorUserId must be 32-char ULID');
+    }
+
+    return this.pg.transaction(
+      async (client) => {
+        // ----------------------------------------------------------
+        // 1. SELECT FOR UPDATE invoice + 验证 status='pending'
+        // ----------------------------------------------------------
+        const invQ = await client.query<PgRow>(
+          `SELECT * FROM invoices WHERE id = $1 FOR UPDATE`,
+          [invoiceId],
+        );
+        if (invQ.rows.length === 0) {
+          throw new NotFoundException(
+            `INVOICE_MARK_PAID_NOT_FOUND: invoiceId=${invoiceId}`,
+          );
+        }
+        const invRow = invQ.rows[0];
+        if (invRow.status !== 'pending') {
+          throw new ConflictException({
+            error: 'INVOICE_NOT_PENDING',
+            invoiceId,
+            currentStatus: invRow.status,
+          });
+        }
+        const contractId = invRow.contract_id as string;
+
+        // ----------------------------------------------------------
+        // 2. SELECT FOR UPDATE contract + 取 snapshot 字段
+        // ----------------------------------------------------------
+        const ctQ = await client.query<PgRow>(
+          `SELECT id, student_id, course_product_id, course_product_name,
+                  lesson_hours, gift_hours, total_amount, standard_price,
+                  status, deleted_at
+             FROM contracts
+            WHERE id = $1
+            FOR UPDATE`,
+          [contractId],
+        );
+        if (ctQ.rows.length === 0 || ctQ.rows[0].deleted_at) {
+          throw new NotFoundException(
+            `INVOICE_MARK_PAID_CONTRACT_NOT_FOUND: contractId=${contractId}`,
+          );
+        }
+        const ctRow = ctQ.rows[0];
+        if (ctRow.status === 'cancelled' || ctRow.status === 'expired') {
+          throw new ConflictException({
+            error: 'CONTRACT_NOT_ACTIVATABLE',
+            contractId,
+            currentStatus: ctRow.status,
+          });
+        }
+        const lessonHours = Number(ctRow.lesson_hours);
+        const giftHours = Number(ctRow.gift_hours);
+        const totalLessons = lessonHours + giftHours;
+        if (totalLessons <= 0) {
+          throw new BadRequestException(
+            `INVOICE_MARK_PAID_ZERO_LESSONS: contract has 0 total lessons (lessonHours=${lessonHours} giftHours=${giftHours})`,
+          );
+        }
+        const contractTotalAmount = Number(ctRow.total_amount);
+        const contractStandardPrice = Number(ctRow.standard_price);
+        const unitPriceYuan = lessonHours > 0
+          ? Number((contractStandardPrice / lessonHours).toFixed(2))
+          : 0;
+        // courseProductId 可能为 null（V29 销售自填合同）
+        // 自动建 course_package 时 courseProductId NULL → DB 层 NOT NULL constraint 会失败
+        // 兜底：用 'CUSTOM_PRODUCT_FALLBACK_' + 后 8 位 contractId 作为占位（应用层用 fallback id）
+        // 注：V12 course_packages.course_product_id 是 NOT NULL — 必须给值
+        //     销售自填合同的 courseProductName 在 contract 上已有，此处不强加 FK 约束 cascade
+        const rawCourseProductId = ctRow.course_product_id as string | null;
+        const fallbackCourseProductId = rawCourseProductId
+          ? rawCourseProductId
+          : `cprod_custom_${contractId.slice(-22)}`.padEnd(32, '0').slice(0, 32);
+        const coursePackageName = (
+          (ctRow.course_product_name as string | null) ||
+          `合同 ${contractId.slice(-8).toUpperCase()}`
+        ) + ' 课时包';
+        const validityMonths = 12; // 默认 12 个月有效期（拍板）
+
+        // ----------------------------------------------------------
+        // 3. UPDATE invoice: status='issued' + paid_at + payment_method + issued_at
+        // ----------------------------------------------------------
+        const updInvQ = await client.query<PgRow>(
+          `UPDATE invoices
+              SET status = 'issued',
+                  paid_at = $2,
+                  payment_method = $3,
+                  issued_at = NOW(),
+                  updated_at = NOW()
+            WHERE id = $1 AND status = 'pending'
+        RETURNING *`,
+          [invoiceId, parsedPaidAt, payload.paymentMethod],
+        );
+        if (updInvQ.rows.length === 0) {
+          // 并发场景兜底（理论上 FOR UPDATE 已挡，留兜底防御）
+          throw new ConflictException({
+            error: 'INVOICE_NOT_PENDING_RACE',
+            invoiceId,
+          });
+        }
+
+        // ----------------------------------------------------------
+        // 4. UPDATE contract: status='active' + activated_at=NOW()
+        // ----------------------------------------------------------
+        const updCtQ = await client.query<PgRow>(
+          `UPDATE contracts
+              SET status = 'active',
+                  activated_at = NOW(),
+                  updated_at = NOW(),
+                  updated_by = $2
+            WHERE id = $1 AND deleted_at IS NULL
+        RETURNING id, student_id, status, activated_at, total_amount, lesson_hours, gift_hours`,
+          [contractId, payload.operatorUserId],
+        );
+        if (updCtQ.rows.length === 0) {
+          throw new NotFoundException(
+            `INVOICE_MARK_PAID_CONTRACT_UPDATE_FAILED: contractId=${contractId}`,
+          );
+        }
+        const updCtRow = updCtQ.rows[0];
+
+        // ----------------------------------------------------------
+        // 5. INSERT course_packages（自动建机构课包 snapshot）
+        // ----------------------------------------------------------
+        const newCoursePackageId = ulid().padEnd(32, '0').slice(0, 32);
+        await client.query(
+          `INSERT INTO course_packages (
+             id, course_product_id, name, total_lessons, unit_price_yuan,
+             total_price_yuan, validity_months, status, created_by, updated_by
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$8)`,
+          [
+            newCoursePackageId,
+            fallbackCourseProductId,
+            coursePackageName,
+            totalLessons,
+            unitPriceYuan,
+            contractTotalAmount,
+            validityMonths,
+            payload.operatorUserId,
+          ],
+        );
+
+        // ----------------------------------------------------------
+        // 6. INSERT student_course_packages（自动建学员账户）
+        // ----------------------------------------------------------
+        const newStudentPackageId = ulid().padEnd(32, '0').slice(0, 32);
+        const activatedAt = new Date();
+        const expiresAt = new Date(
+          activatedAt.getTime() + validityMonths * 30 * 24 * 60 * 60 * 1000,
+        );
+        const studentId = ctRow.student_id as string;
+        const scpQ = await client.query<PgRow>(
+          `INSERT INTO student_course_packages (
+             id, student_id, course_package_id, contract_id,
+             total_lessons, used_lessons, refunded_lessons,
+             activated_at, expires_at, status, low_balance_alerted
+           ) VALUES ($1,$2,$3,$4,$5,0,0,$6,$7,'active',FALSE)
+       RETURNING id, student_id, course_package_id, contract_id,
+                 total_lessons, used_lessons, refunded_lessons, remaining_lessons,
+                 activated_at, expires_at, status`,
+          [
+            newStudentPackageId,
+            studentId,
+            newCoursePackageId,
+            contractId,
+            totalLessons,
+            activatedAt,
+            expiresAt,
+          ],
+        );
+        const scpRow = scpQ.rows[0];
+
+        return {
+          invoice: this.mapRow(updInvQ.rows[0]),
+          contract: {
+            id: updCtRow.id as string,
+            studentId: updCtRow.student_id as string,
+            status: 'active' as const,
+            activatedAt: new Date(updCtRow.activated_at).toISOString(),
+            totalAmount: Number(updCtRow.total_amount),
+            lessonHours: Number(updCtRow.lesson_hours),
+            giftHours: Number(updCtRow.gift_hours),
+          },
+          studentCoursePackage: {
+            id: scpRow.id as string,
+            studentId: scpRow.student_id as string,
+            coursePackageId: scpRow.course_package_id as string,
+            contractId: scpRow.contract_id as string,
+            totalLessons: Number(scpRow.total_lessons),
+            usedLessons: 0 as const,
+            refundedLessons: 0 as const,
+            remainingLessons: Number(scpRow.remaining_lessons),
+            activatedAt: new Date(scpRow.activated_at).toISOString(),
+            expiresAt: new Date(scpRow.expires_at).toISOString(),
+            status: 'active' as const,
+          },
+        };
       },
       { tenantSchema },
     );

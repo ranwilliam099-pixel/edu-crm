@@ -90,6 +90,9 @@ export interface Invoice {
   cancelledAt: string | null;
   createdAt: string;
   updatedAt: string;
+  // P1 业务流 S2 (V54) — mark-paid endpoint 写入字段
+  paidAt: string | null;
+  paymentMethod: string | null;
 }
 
 /**
@@ -112,4 +115,74 @@ export interface PendingContractView {
   signedAt: string | null;
   /** OOUX：合同号即 contract.id 后 8 位（前端展示用，可读性强） */
   contractNo: string;
+}
+
+// ============================================================
+// P1 业务流闭环 S2 (2026-05-20)：mark-paid → 合同激活 → 自动建课时包
+// ============================================================
+
+/** 收款方式枚举（财务录入收款记账） */
+export type PaymentMethod =
+  | '微信支付'
+  | '对公转账'
+  | '现金'
+  | '支付宝'
+  | '银行卡'
+  | '其他';
+
+/** mark-paid 入参（POST /api/db/invoices/:id/mark-paid Body） */
+export class MarkInvoicePaidDto {
+  @ApiProperty({ description: '多租户 schema（TenantScopeGuard 校验）' })
+  tenantSchema!: string;
+
+  @ApiProperty({
+    description: '收款时间 ISO8601（财务实际收到款的时间，可早于 mark-paid 操作时间）',
+    example: '2026-05-20T10:30:00.000Z',
+  })
+  paidAt!: string;
+
+  @ApiProperty({
+    description: '收款方式',
+    enum: ['微信支付', '对公转账', '现金', '支付宝', '银行卡', '其他'],
+  })
+  paymentMethod!: PaymentMethod;
+}
+
+/**
+ * mark-paid 响应体（一次写多个资源的复合返回）
+ *
+ * 设计意图：
+ *   - 前端财务页 mark-paid 后立即更新 3 个相关视图（invoice/contract/课时包）
+ *   - 不需再发 3 次 GET 拉取，省 N+1 网络请求
+ */
+export interface MarkInvoicePaidResult {
+  invoice: Invoice;
+  contract: MarkPaidContract;
+  studentCoursePackage: MarkPaidStudentCoursePackage;
+}
+
+/** 合同激活后 snapshot（与 ContractRepository.Contract 同型，最小子集） */
+export interface MarkPaidContract {
+  id: string;
+  studentId: string;
+  status: 'active';                       // mark-paid 后必为 active
+  activatedAt: string;                    // NOW() 由 ContractRepository.setStatus 自动写
+  totalAmount: number;
+  lessonHours: number;
+  giftHours: number;
+}
+
+/** 自动建的 student_course_package snapshot */
+export interface MarkPaidStudentCoursePackage {
+  id: string;
+  studentId: string;
+  coursePackageId: string;                // 自动建的 course_package.id
+  contractId: string;
+  totalLessons: number;                   // = contract.lessonHours + contract.giftHours
+  usedLessons: 0;                         // 初始 0
+  refundedLessons: 0;                     // 初始 0
+  remainingLessons: number;               // = totalLessons - 0 - 0（GENERATED ALWAYS）
+  activatedAt: string;                    // NOW()
+  expiresAt: string;                      // NOW() + validityMonths
+  status: 'active';
 }

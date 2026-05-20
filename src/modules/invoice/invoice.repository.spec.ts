@@ -65,6 +65,8 @@ function invoiceRow(overrides: Record<string, unknown> = {}): Record<string, unk
     created_by_user_id: USER_FINANCE,
     issued_at: null,
     cancelled_at: null,
+    paid_at: null,
+    payment_method: null,
     created_at: new Date('2026-05-15T00:00:00.000Z'),
     updated_at: new Date('2026-05-15T00:00:00.000Z'),
     ...overrides,
@@ -688,6 +690,564 @@ describe('InvoiceRepository (Wave 4A.2-T3)', () => {
       expect(rows[0].studentName).toBeNull();
       expect(rows[0].parentName).toBeNull();
       expect(rows[0].signedAt).toBeNull();
+    });
+  });
+
+  // ============================================================
+  // markPaid() — P1 业务流闭环 S2 (2026-05-20)
+  // 5 步事务：SELECT FOR UPDATE invoice → SELECT FOR UPDATE contract →
+  //          UPDATE invoice → UPDATE contract → INSERT course_packages → INSERT student_course_packages
+  // ============================================================
+  describe('markPaid() — 5 步事务原子性', () => {
+    const baseMarkPaidPayload = () => ({
+      paidAt: '2026-05-20T10:30:00.000Z',
+      paymentMethod: '微信支付',
+      operatorUserId: USER_FINANCE,
+    });
+
+    function setupHappyPath(opts: {
+      courseProductId?: string | null;
+      lessonHours?: number;
+      giftHours?: number;
+      totalAmount?: string;
+      standardPrice?: string;
+      contractStatus?: 'pending' | 'active' | 'cancelled' | 'expired';
+    } = {}) {
+      // Mock 6 txClient.query 调用按顺序（注：repository markPaid 实际调用次数为 6：
+      //   1) SELECT FOR UPDATE invoice
+      //   2) SELECT FOR UPDATE contract
+      //   3) UPDATE invoices
+      //   4) UPDATE contracts
+      //   5) INSERT course_packages
+      //   6) INSERT student_course_packages）
+      const courseProductId =
+        opts.courseProductId === undefined ? 'cprod_existing_123' : opts.courseProductId;
+      const lessonHours = opts.lessonHours ?? 30;
+      const giftHours = opts.giftHours ?? 3;
+      const totalAmount = opts.totalAmount ?? '9999.00';
+      const standardPrice = opts.standardPrice ?? '12000.00';
+      const contractStatus = opts.contractStatus ?? 'pending';
+
+      // 1) SELECT FOR UPDATE invoice
+      txClient.query.mockResolvedValueOnce({
+        rows: [invoiceRow({ status: 'pending' })],
+      });
+      // 2) SELECT FOR UPDATE contract
+      txClient.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: CONTRACT_ID,
+            student_id: STUDENT_ID,
+            course_product_id: courseProductId,
+            course_product_name: '语文课',
+            lesson_hours: lessonHours,
+            gift_hours: giftHours,
+            total_amount: totalAmount,
+            standard_price: standardPrice,
+            status: contractStatus,
+            deleted_at: null,
+          },
+        ],
+      });
+      // 3) UPDATE invoices → 返 updated invoice row
+      txClient.query.mockResolvedValueOnce({
+        rows: [
+          invoiceRow({
+            status: 'issued',
+            paid_at: new Date('2026-05-20T10:30:00.000Z'),
+            payment_method: '微信支付',
+            issued_at: new Date('2026-05-20T11:00:00.000Z'),
+          }),
+        ],
+      });
+      // 4) UPDATE contracts → 返 contract snapshot
+      txClient.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: CONTRACT_ID,
+            student_id: STUDENT_ID,
+            status: 'active',
+            activated_at: new Date('2026-05-20T11:00:00.000Z'),
+            total_amount: totalAmount,
+            lesson_hours: lessonHours,
+            gift_hours: giftHours,
+          },
+        ],
+      });
+      // 5) INSERT course_packages
+      txClient.query.mockResolvedValueOnce({ rowCount: 1 });
+      // 6) INSERT student_course_packages → 返 scp row
+      txClient.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'scp00000000000000000000000000A0A3',
+            student_id: STUDENT_ID,
+            course_package_id: 'cpkg000000000000000000000000A0A3',
+            contract_id: CONTRACT_ID,
+            total_lessons: lessonHours + giftHours,
+            used_lessons: 0,
+            refunded_lessons: 0,
+            remaining_lessons: lessonHours + giftHours,
+            activated_at: new Date('2026-05-20T11:00:00.000Z'),
+            expires_at: new Date('2027-05-15T11:00:00.000Z'),
+            status: 'active',
+          },
+        ],
+      });
+    }
+
+    // ---------- 入参校验（fail-fast 不进事务）----------
+    it('invoiceId 长度 != 32 → BadRequest + 不进事务', async () => {
+      await expect(
+        repo.markPaid(TENANT, 'short_id', baseMarkPaidPayload()),
+      ).rejects.toThrow(BadRequestException);
+      expect(pg.transaction).not.toHaveBeenCalled();
+    });
+
+    it('paidAt 缺失 → BadRequest', async () => {
+      await expect(
+        repo.markPaid(TENANT, INVOICE_ID, { ...baseMarkPaidPayload(), paidAt: '' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('paidAt 非合法 ISO8601 → BadRequest', async () => {
+      await expect(
+        repo.markPaid(TENANT, INVOICE_ID, {
+          ...baseMarkPaidPayload(),
+          paidAt: 'not-a-date',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        repo.markPaid(TENANT, INVOICE_ID, {
+          ...baseMarkPaidPayload(),
+          paidAt: 'not-a-date',
+        }),
+      ).rejects.toThrow(/ISO8601/);
+    });
+
+    it('paymentMethod 缺失 → BadRequest', async () => {
+      await expect(
+        repo.markPaid(TENANT, INVOICE_ID, {
+          ...baseMarkPaidPayload(),
+          paymentMethod: '',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('paymentMethod 超 16 字符 → BadRequest', async () => {
+      await expect(
+        repo.markPaid(TENANT, INVOICE_ID, {
+          ...baseMarkPaidPayload(),
+          paymentMethod: 'X'.repeat(17),
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('operatorUserId 长度 != 32 → BadRequest', async () => {
+      await expect(
+        repo.markPaid(TENANT, INVOICE_ID, {
+          ...baseMarkPaidPayload(),
+          operatorUserId: 'short',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    // ---------- Happy path: 5 SQL 调用顺序正确 ----------
+    it('happy path → 6 SQL 调用按序：SELECT inv → SELECT ct → UPDATE inv → UPDATE ct → INSERT cp → INSERT scp', async () => {
+      setupHappyPath();
+      const r = await repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload());
+
+      // pg.transaction 调一次 + 携带 tenantSchema
+      expect(pg.transaction).toHaveBeenCalledTimes(1);
+      const opts = pg.transaction.mock.calls[0][1];
+      expect(opts.tenantSchema).toBe(TENANT);
+
+      // 6 次 SQL 调用
+      expect(txClient.query.mock.calls.length).toBe(6);
+
+      // 调用 1: SELECT FOR UPDATE invoice
+      const c1 = txClient.query.mock.calls[0];
+      expect(c1[0]).toMatch(/SELECT \* FROM invoices/);
+      expect(c1[0]).toMatch(/FOR UPDATE/);
+      expect(c1[1]).toEqual([INVOICE_ID]);
+
+      // 调用 2: SELECT FOR UPDATE contract
+      const c2 = txClient.query.mock.calls[1];
+      expect(c2[0]).toMatch(/FROM contracts/);
+      expect(c2[0]).toMatch(/FOR UPDATE/);
+      expect(c2[1]).toEqual([CONTRACT_ID]);
+
+      // 调用 3: UPDATE invoices
+      const c3 = txClient.query.mock.calls[2];
+      expect(c3[0]).toMatch(/UPDATE invoices/);
+      expect(c3[0]).toMatch(/status = 'issued'/);
+      expect(c3[0]).toMatch(/paid_at = \$2/);
+      expect(c3[0]).toMatch(/payment_method = \$3/);
+      // params: [invoiceId, paidAt Date, paymentMethod]
+      expect(c3[1][0]).toBe(INVOICE_ID);
+      expect(c3[1][1]).toBeInstanceOf(Date);
+      expect(c3[1][2]).toBe('微信支付');
+
+      // 调用 4: UPDATE contracts
+      const c4 = txClient.query.mock.calls[3];
+      expect(c4[0]).toMatch(/UPDATE contracts/);
+      expect(c4[0]).toMatch(/status = 'active'/);
+      expect(c4[0]).toMatch(/activated_at = NOW\(\)/);
+      expect(c4[1]).toEqual([CONTRACT_ID, USER_FINANCE]);
+
+      // 调用 5: INSERT course_packages
+      const c5 = txClient.query.mock.calls[4];
+      expect(c5[0]).toMatch(/INSERT INTO course_packages/);
+      const c5Params = c5[1] as unknown[];
+      // course_package.totalLessons = lessonHours + giftHours = 33
+      expect(c5Params[3]).toBe(33);
+      // unit_price_yuan = standard_price / lesson_hours = 12000 / 30 = 400
+      expect(c5Params[4]).toBe(400);
+      // total_price_yuan = contract.total_amount = 9999
+      expect(c5Params[5]).toBe(9999);
+      // validity_months = 12
+      expect(c5Params[6]).toBe(12);
+      // created_by / updated_by = USER_FINANCE
+      expect(c5Params[7]).toBe(USER_FINANCE);
+
+      // 调用 6: INSERT student_course_packages
+      const c6 = txClient.query.mock.calls[5];
+      expect(c6[0]).toMatch(/INSERT INTO student_course_packages/);
+      const c6Params = c6[1] as unknown[];
+      // total_lessons = 33
+      expect(c6Params[4]).toBe(33);
+      // contract_id = CONTRACT_ID
+      expect(c6Params[3]).toBe(CONTRACT_ID);
+      // student_id = STUDENT_ID
+      expect(c6Params[1]).toBe(STUDENT_ID);
+
+      // 返 3 对象
+      expect(r.invoice.status).toBe('issued');
+      expect(r.invoice.paymentMethod).toBe('微信支付');
+      expect(r.contract.status).toBe('active');
+      expect(r.contract.id).toBe(CONTRACT_ID);
+      expect(r.studentCoursePackage.totalLessons).toBe(33);
+      expect(r.studentCoursePackage.contractId).toBe(CONTRACT_ID);
+      expect(r.studentCoursePackage.status).toBe('active');
+    });
+
+    // ---------- 404 路径 ----------
+    it('invoice 不存在 → NotFoundException + 不进入 UPDATE 阶段', async () => {
+      txClient.query.mockResolvedValueOnce({ rows: [] }); // SELECT invoice 空
+      await expect(
+        repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload()),
+      ).rejects.toThrow(NotFoundException);
+      // 仅 1 次 SELECT，不会触发后续 UPDATE/INSERT
+      expect(txClient.query.mock.calls.length).toBe(1);
+    });
+
+    it('contract 不存在 → NotFoundException + 不 UPDATE invoice', async () => {
+      // 1) SELECT invoice 找到
+      txClient.query.mockResolvedValueOnce({
+        rows: [invoiceRow({ status: 'pending' })],
+      });
+      // 2) SELECT contract 空
+      txClient.query.mockResolvedValueOnce({ rows: [] });
+      await expect(
+        repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload()),
+      ).rejects.toThrow(NotFoundException);
+      // 应只 2 次（未到 UPDATE）
+      expect(txClient.query.mock.calls.length).toBe(2);
+    });
+
+    it('contract 已软删（deleted_at not null）→ NotFoundException', async () => {
+      txClient.query.mockResolvedValueOnce({
+        rows: [invoiceRow({ status: 'pending' })],
+      });
+      txClient.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: CONTRACT_ID,
+            student_id: STUDENT_ID,
+            course_product_id: 'cprod_x',
+            course_product_name: '语文课',
+            lesson_hours: 30,
+            gift_hours: 3,
+            total_amount: '9999',
+            standard_price: '12000',
+            status: 'pending',
+            deleted_at: new Date('2026-05-10T00:00:00Z'),
+          },
+        ],
+      });
+      await expect(
+        repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload()),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    // ---------- 409 路径 ----------
+    it('invoice.status="issued" → ConflictException INVOICE_NOT_PENDING + currentStatus', async () => {
+      txClient.query.mockResolvedValueOnce({
+        rows: [invoiceRow({ status: 'issued' })],
+      });
+      try {
+        await repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload());
+        fail('expected ConflictException');
+      } catch (e) {
+        expect(e).toBeInstanceOf(ConflictException);
+        const response = (e as ConflictException).getResponse() as {
+          error?: string;
+          invoiceId?: string;
+          currentStatus?: string;
+        };
+        expect(response.error).toBe('INVOICE_NOT_PENDING');
+        expect(response.invoiceId).toBe(INVOICE_ID);
+        expect(response.currentStatus).toBe('issued');
+      }
+    });
+
+    it('invoice.status="cancelled" → ConflictException', async () => {
+      txClient.query.mockResolvedValueOnce({
+        rows: [invoiceRow({ status: 'cancelled' })],
+      });
+      await expect(
+        repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload()),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('contract.status="cancelled" → ConflictException CONTRACT_NOT_ACTIVATABLE', async () => {
+      txClient.query.mockResolvedValueOnce({
+        rows: [invoiceRow({ status: 'pending' })],
+      });
+      txClient.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: CONTRACT_ID,
+            student_id: STUDENT_ID,
+            course_product_id: 'cprod_x',
+            course_product_name: '语文课',
+            lesson_hours: 30,
+            gift_hours: 3,
+            total_amount: '9999',
+            standard_price: '12000',
+            status: 'cancelled',
+            deleted_at: null,
+          },
+        ],
+      });
+      try {
+        await repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload());
+        fail('expected ConflictException');
+      } catch (e) {
+        expect(e).toBeInstanceOf(ConflictException);
+        const response = (e as ConflictException).getResponse() as {
+          error?: string;
+          contractId?: string;
+          currentStatus?: string;
+        };
+        expect(response.error).toBe('CONTRACT_NOT_ACTIVATABLE');
+        expect(response.contractId).toBe(CONTRACT_ID);
+        expect(response.currentStatus).toBe('cancelled');
+      }
+    });
+
+    it('contract.status="expired" → ConflictException CONTRACT_NOT_ACTIVATABLE', async () => {
+      txClient.query.mockResolvedValueOnce({
+        rows: [invoiceRow({ status: 'pending' })],
+      });
+      txClient.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: CONTRACT_ID,
+            student_id: STUDENT_ID,
+            course_product_id: 'cprod_x',
+            course_product_name: '语文课',
+            lesson_hours: 30,
+            gift_hours: 3,
+            total_amount: '9999',
+            standard_price: '12000',
+            status: 'expired',
+            deleted_at: null,
+          },
+        ],
+      });
+      await expect(
+        repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload()),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    // ---------- 0 课时合同（防御）----------
+    it('contract.lessonHours + giftHours = 0 → BadRequest（防 0 课时包）', async () => {
+      txClient.query.mockResolvedValueOnce({
+        rows: [invoiceRow({ status: 'pending' })],
+      });
+      txClient.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: CONTRACT_ID,
+            student_id: STUDENT_ID,
+            course_product_id: 'cprod_x',
+            course_product_name: '语文课',
+            lesson_hours: 0,
+            gift_hours: 0,
+            total_amount: '9999',
+            standard_price: '0',
+            status: 'pending',
+            deleted_at: null,
+          },
+        ],
+      });
+      // 用 try/catch 而非 double-await（mock queue 只 push 2 个 row，second await 时 query 返 undefined）
+      try {
+        await repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload());
+        fail('expected BadRequestException');
+      } catch (e) {
+        expect(e).toBeInstanceOf(BadRequestException);
+        expect((e as BadRequestException).message).toMatch(/ZERO_LESSONS/);
+      }
+    });
+
+    // ---------- V29 销售自填合同（courseProductId NULL）----------
+    it('contract.courseProductId NULL (V29 销售自填) → INSERT course_packages 用 fallback id', async () => {
+      setupHappyPath({ courseProductId: null });
+      await repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload());
+      // 调用 5 是 INSERT course_packages
+      const c5 = txClient.query.mock.calls[4];
+      const c5Params = c5[1] as unknown[];
+      // params[1] 是 course_product_id（NULL fallback）
+      const fallbackId = c5Params[1] as string;
+      expect(fallbackId.length).toBe(32);
+      expect(fallbackId).toMatch(/^cprod_custom_/);
+    });
+
+    it('contract.courseProductId 存在 → INSERT course_packages 直接用 id', async () => {
+      setupHappyPath({ courseProductId: 'cprod_existing_xyz' });
+      await repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload());
+      const c5 = txClient.query.mock.calls[4];
+      const c5Params = c5[1] as unknown[];
+      expect(c5Params[1]).toBe('cprod_existing_xyz');
+    });
+
+    // ---------- 各课时 / 价格组合 ----------
+    it('lessonHours=20 + giftHours=5 + standardPrice=10000 → totalLessons=25 + unitPrice=500', async () => {
+      setupHappyPath({
+        lessonHours: 20,
+        giftHours: 5,
+        standardPrice: '10000.00',
+        totalAmount: '8000.00',
+      });
+      await repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload());
+      const c5 = txClient.query.mock.calls[4];
+      const c5Params = c5[1] as unknown[];
+      // total_lessons = 25
+      expect(c5Params[3]).toBe(25);
+      // unit_price_yuan = 10000 / 20 = 500
+      expect(c5Params[4]).toBe(500);
+      // total_price_yuan = 8000 (contract.total_amount)
+      expect(c5Params[5]).toBe(8000);
+
+      // student_course_packages.total_lessons = 25
+      const c6Params = txClient.query.mock.calls[5][1] as unknown[];
+      expect(c6Params[4]).toBe(25);
+    });
+
+    // ---------- paidAt 时间各字符串 ----------
+    it('paidAt 字符串 "2026-05-20T10:30:00Z" → 转 Date 写入 UPDATE invoice', async () => {
+      setupHappyPath();
+      await repo.markPaid(TENANT, INVOICE_ID, {
+        ...baseMarkPaidPayload(),
+        paidAt: '2026-05-20T10:30:00Z',
+      });
+      const c3Params = txClient.query.mock.calls[2][1] as unknown[];
+      const paidAtParam = c3Params[1] as Date;
+      expect(paidAtParam).toBeInstanceOf(Date);
+      expect(paidAtParam.toISOString()).toBe('2026-05-20T10:30:00.000Z');
+    });
+
+    // ---------- 并发兜底（UPDATE invoices RETURNING 空）----------
+    it('SELECT FOR UPDATE 通过但 UPDATE invoices RETURNING 0 行 → ConflictException 并发兜底', async () => {
+      // 1) SELECT invoice 状态 pending
+      txClient.query.mockResolvedValueOnce({
+        rows: [invoiceRow({ status: 'pending' })],
+      });
+      // 2) SELECT contract OK
+      txClient.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: CONTRACT_ID,
+            student_id: STUDENT_ID,
+            course_product_id: 'cprod_x',
+            course_product_name: '语文课',
+            lesson_hours: 30,
+            gift_hours: 3,
+            total_amount: '9999',
+            standard_price: '12000',
+            status: 'pending',
+            deleted_at: null,
+          },
+        ],
+      });
+      // 3) UPDATE invoices RETURNING 空（并发场景）
+      txClient.query.mockResolvedValueOnce({ rows: [] });
+      try {
+        await repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload());
+        fail('expected ConflictException');
+      } catch (e) {
+        expect(e).toBeInstanceOf(ConflictException);
+        const response = (e as ConflictException).getResponse() as { error?: string };
+        expect(response.error).toBe('INVOICE_NOT_PENDING_RACE');
+      }
+    });
+
+    // ---------- 返回值字段完整性 ----------
+    it('返回 result.invoice 含 paidAt + paymentMethod + status="issued" + issuedAt', async () => {
+      setupHappyPath();
+      const r = await repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload());
+      expect(r.invoice.status).toBe('issued');
+      expect(r.invoice.paymentMethod).toBe('微信支付');
+      expect(r.invoice.paidAt).toBeDefined();
+      expect(r.invoice.paidAt).not.toBeNull();
+      expect(r.invoice.issuedAt).toBeDefined();
+      expect(r.invoice.issuedAt).not.toBeNull();
+    });
+
+    it('返回 result.contract 含 id/studentId/status/activatedAt/totalAmount/lessonHours/giftHours', async () => {
+      setupHappyPath();
+      const r = await repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload());
+      expect(r.contract.id).toBe(CONTRACT_ID);
+      expect(r.contract.studentId).toBe(STUDENT_ID);
+      expect(r.contract.status).toBe('active');
+      expect(r.contract.activatedAt).toBeDefined();
+      expect(r.contract.totalAmount).toBe(9999);
+      expect(r.contract.lessonHours).toBe(30);
+      expect(r.contract.giftHours).toBe(3);
+    });
+
+    it('返回 result.studentCoursePackage 含 id/studentId/coursePackageId/contractId/totalLessons/remainingLessons/usedLessons=0', async () => {
+      setupHappyPath();
+      const r = await repo.markPaid(TENANT, INVOICE_ID, baseMarkPaidPayload());
+      expect(r.studentCoursePackage.id).toBeDefined();
+      expect(r.studentCoursePackage.studentId).toBe(STUDENT_ID);
+      expect(r.studentCoursePackage.coursePackageId).toBeDefined();
+      expect(r.studentCoursePackage.contractId).toBe(CONTRACT_ID);
+      expect(r.studentCoursePackage.totalLessons).toBe(33);
+      expect(r.studentCoursePackage.remainingLessons).toBe(33);
+      expect(r.studentCoursePackage.usedLessons).toBe(0);
+      expect(r.studentCoursePackage.refundedLessons).toBe(0);
+      expect(r.studentCoursePackage.status).toBe('active');
+      expect(r.studentCoursePackage.activatedAt).toBeDefined();
+      expect(r.studentCoursePackage.expiresAt).toBeDefined();
+    });
+
+    // ---------- mapRow 透传 paid_at / payment_method ----------
+    it('mapRow 解析 paid_at + payment_method 列（向后兼容老数据 null）', () => {
+      const oldRow = invoiceRow({ paid_at: null, payment_method: null });
+      const inv = repo.mapRow(oldRow);
+      expect(inv.paidAt).toBeNull();
+      expect(inv.paymentMethod).toBeNull();
+
+      const newRow = invoiceRow({
+        paid_at: new Date('2026-05-20T10:30:00.000Z'),
+        payment_method: '微信支付',
+      });
+      const inv2 = repo.mapRow(newRow);
+      expect(inv2.paidAt).toBe('2026-05-20T10:30:00.000Z');
+      expect(inv2.paymentMethod).toBe('微信支付');
     });
   });
 });
