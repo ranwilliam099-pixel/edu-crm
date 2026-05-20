@@ -62,6 +62,12 @@ describe('CourseProductController.getStats (5/15 拍板 OOUX 聚合)', () => {
     return {
       productId: PRODUCT_ID,
       productName: '英语 1v1 30 课时',
+      // P0 真机 bug 修 (5/20): 前端 wxml 顶部基础信息需 5 字段渲染
+      courseLine: '英语',
+      classType: '一对一',
+      lessonPackage: '30 课时',
+      standardPrice: 6000,
+      status: '上架',
       studentCount: 1,
       teacherCount: 1,
       weeklyConsumedYuan: 600,

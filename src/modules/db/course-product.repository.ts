@@ -64,6 +64,13 @@ export interface CourseProductStatsTeacher {
 export interface CourseProductStats {
   productId: string;
   productName: string;
+  // P0 真机 bug 修 (5/20)：前端 wxml 需要这 5 字段渲染（在售/课程线/课程类型/课时包/标准价），
+  // 之前 stats SQL 仅 select id+product_name，前端无法填充顶部基础信息 → fallback MOCK 假数据
+  courseLine: string;
+  classType: string;
+  lessonPackage: string | null;
+  standardPrice: number;
+  status: '上架' | '下架';
   studentCount: number;
   teacherCount: number;
   /** 本周消课金额（course_consumptions.amount_yuan 在 status IN confirmed/locked 内 SUM） */
@@ -241,14 +248,16 @@ export class CourseProductRepository {
     const callerOwnerSalesId = options.callerOwnerSalesId ?? null;
     const callerCampusId = options.callerCampusId ?? null;
 
-    // 1. 校验 product 存在 + 拿 name
+    // 1. 校验 product 存在 + 拿全字段（P0 真机 bug 修 5/20：前端 wxml 顶部基础信息需 5 字段）
     const productRows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT id, product_name FROM course_products WHERE id = $1`,
+      `SELECT id, product_name, course_line, class_type, lesson_package, standard_price, status
+         FROM course_products WHERE id = $1`,
       [productId],
     );
     if (productRows.length === 0) return null;
-    const productName = String(productRows[0].product_name);
+    const productRow = productRows[0];
+    const productName = String(productRow.product_name);
 
     // 2. students[]：合同 active + pending 视为在册
     //    LEFT JOIN student_course_packages 求 remaining_lessons（同 course_product_id 关联），
@@ -399,6 +408,12 @@ export class CourseProductRepository {
     return {
       productId,
       productName,
+      // P0 真机 bug 修 (5/20)：前端 wxml 顶部基础信息需要这 5 字段渲染
+      courseLine: String(productRow.course_line || ''),
+      classType: String(productRow.class_type || ''),
+      lessonPackage: productRow.lesson_package == null ? null : String(productRow.lesson_package),
+      standardPrice: Number(productRow.standard_price ?? 0),
+      status: (productRow.status as '上架' | '下架') || '上架',
       studentCount: students.length,
       teacherCount: teachers.length,
       weeklyConsumedYuan,
