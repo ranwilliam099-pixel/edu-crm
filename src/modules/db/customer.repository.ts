@@ -109,6 +109,51 @@ export class CustomerRepository {
   ) {}
 
   /**
+   * 2026-05-21 销售可随时编辑家长信息（V55 新增 + 已有 3 字段）
+   *   PATCH 模式：仅 patch 非 undefined 字段
+   *   支持改：parentName / parentGender / primaryMobile
+   *   primaryMobile 改时需同步 _hash + _encrypted 三列
+   *   updated_at = NOW() + updated_by 自动写
+   */
+  async update(
+    tenantSchema: string,
+    customerId: string,
+    operatorUserId: string,
+    patch: {
+      parentName?: string;
+      parentGender?: string | null;
+      primaryMobile?: string;
+    },
+  ): Promise<void> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    const push = (col: string, val: unknown) => {
+      params.push(val);
+      sets.push(`${col} = $${params.length}`);
+    };
+    if (patch.parentName !== undefined) push('parent_name', patch.parentName);
+    if (patch.parentGender !== undefined) push('parent_gender', patch.parentGender);
+    if (patch.primaryMobile !== undefined) {
+      // 三列同时改（V41 A02-4 hash + encrypted 一致性）
+      const mobilePlain = patch.primaryMobile;
+      const mobileHash = this.hashMobile(mobilePlain);
+      const mobileEncrypted = this.encryptMobile(mobilePlain);
+      push('primary_mobile', mobilePlain);
+      push('primary_mobile_hash', mobileHash);
+      push('primary_mobile_encrypted', mobileEncrypted);
+    }
+    if (sets.length === 0) {
+      throw new BadRequestException('至少传一个 patch 字段');
+    }
+    params.push(operatorUserId);
+    params.push(customerId);
+    sets.push(`updated_at = NOW()`);
+    sets.push(`updated_by = $${params.length - 1}`);
+    const sql = `UPDATE customers SET ${sets.join(', ')} WHERE id = $${params.length}`;
+    await this.pg.tenantQuery(tenantSchema, sql, params);
+  }
+
+  /**
    * V29 R2 销售即时建客户（家长） + opportunity + 可选 student（一并）
    *
    * 来源：用户 2026-05-07「全做」— 销售自己开拓的客户能即时录入，不必等公共池

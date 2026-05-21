@@ -153,9 +153,12 @@ export class CourseConsumptionRepository {
   ): Promise<CourseConsumption> {
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
+      // 2026-05-21 Sprint Y P1-3 修：WHERE 收紧 status='pending_feedback'
+      //   旧 status != 'cancelled' 允许已 confirmed/locked 行被覆盖（误更新风险）
+      //   新仅 pending_feedback 状态可推进，confirmed/locked/cancelled 全拒绝
       `UPDATE course_consumptions
        SET status = 'confirmed', feedback_id = $1, confirmed_at = NOW(), locked_at = NULL
-       WHERE id = $2 AND status != 'cancelled'
+       WHERE id = $2 AND status = 'pending_feedback'
        RETURNING id, schedule_id, student_id, teacher_id, status, amount_yuan,
                  feedback_id, feedback_due_at, confirmed_at, locked_at, created_at`,
       [feedbackId, id],

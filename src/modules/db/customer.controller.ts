@@ -8,6 +8,7 @@ import {
   HttpStatus,
   Optional,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -212,6 +213,41 @@ export class CustomerController {
     });
 
     return result;
+  }
+
+  /**
+   * 2026-05-21 销售可随时编辑家长信息
+   *   PATCH /db/customers/:id?tenantSchema=
+   *   Body: { parentName?, parentGender?, primaryMobile? }
+   *   RBAC: sales/sales_manager/boss/admin/academic/academic_admin 可改家长
+   *   finance/teacher/parent 拒绝
+   */
+  @Patch(':id')
+  @UseGuards(RbacGuard)
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin')
+  @HttpCode(HttpStatus.OK)
+  async updateCustomer(
+    @Param('id') id: string,
+    @Query('tenantSchema') tenantSchema: string,
+    @Body()
+    body: {
+      parentName?: string;
+      parentGender?: string | null;
+      primaryMobile?: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ ok: true }> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!id || id.length !== 32) {
+      throw new BadRequestException('customerId must be 32-char ULID');
+    }
+    if (body.primaryMobile !== undefined && !/^1[3-9]\d{9}$/.test(body.primaryMobile)) {
+      throw new BadRequestException('primaryMobile must be 11-digit Chinese mobile');
+    }
+    const operatorUserId = req.user?.sub;
+    if (!operatorUserId) throw new BadRequestException('user sub required');
+    await this.repo.update(tenantSchema, id, operatorUserId, body);
+    return { ok: true };
   }
 
   @Get('mine')
