@@ -176,4 +176,35 @@ describe('PhoneLookupService - Sprint X.2 跨表 phone 反查', () => {
     const result = await service.lookupByPhone('13800001111');
     expect(result.parent?.status).toBe('停用');
   });
+
+  // 2026-05-22 SSOT §14.2: refresh endpoint 补 tenantName/campusName 4 字段
+  describe('getUserContextById — refresh 链路', () => {
+    it('happy path: 返 tenantName + campusName', async () => {
+      pgQuerySpy.mockResolvedValueOnce([{ name: '民心校学' }]); // tenants
+      pgTenantQuerySpy.mockResolvedValueOnce([{ name: '总部' }]); // campus
+      const r = await service.getUserContextById('t1'.padEnd(32, '0'), 'c1'.padEnd(32, '0'));
+      expect(r).toEqual({ tenantName: '民心校学', campusName: '总部' });
+    });
+
+    it('campusId=null（跨校 role admin/hr）→ skip campus query, campusName 返空串', async () => {
+      pgQuerySpy.mockResolvedValueOnce([{ name: '民心校学' }]);
+      const r = await service.getUserContextById('t1'.padEnd(32, '0'), null);
+      expect(r).toEqual({ tenantName: '民心校学', campusName: '' });
+      expect(pgTenantQuerySpy).not.toHaveBeenCalled();
+    });
+
+    it('fail-open: tenant query 抛错 → tenantName 返空串', async () => {
+      pgQuerySpy.mockRejectedValueOnce(new Error('tenants down'));
+      pgTenantQuerySpy.mockResolvedValueOnce([{ name: '总部' }]);
+      const r = await service.getUserContextById('t1'.padEnd(32, '0'), 'c1'.padEnd(32, '0'));
+      expect(r).toEqual({ tenantName: '', campusName: '总部' });
+    });
+
+    it('fail-open: campus query 抛错 → campusName 返空串, tenantName 仍正常', async () => {
+      pgQuerySpy.mockResolvedValueOnce([{ name: '民心校学' }]);
+      pgTenantQuerySpy.mockRejectedValueOnce(new Error('schema not found'));
+      const r = await service.getUserContextById('t1'.padEnd(32, '0'), 'c1'.padEnd(32, '0'));
+      expect(r).toEqual({ tenantName: '民心校学', campusName: '' });
+    });
+  });
 });

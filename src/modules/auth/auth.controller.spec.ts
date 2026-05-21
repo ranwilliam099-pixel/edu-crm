@@ -118,7 +118,16 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
         },
         { provide: UserRepository, useValue: { findById: userRepoFindByIdSpy } },
         // Sprint X.2 — 新 dependency
-        { provide: PhoneLookupService, useValue: { lookupByPhone: phoneLookupSpy } },
+        {
+          provide: PhoneLookupService,
+          useValue: {
+            lookupByPhone: phoneLookupSpy,
+            // 2026-05-22 refresh endpoint 新依赖（拿 tenantName + campusName 补完整 4 字段）
+            getUserContextById: jest
+              .fn()
+              .mockResolvedValue({ tenantName: 'TestOrg', campusName: 'TestCampus' }),
+          },
+        },
         { provide: PasswordHasher, useValue: { verify: passwordVerifySpy } },
         // Sprint X.2 round 2: audit_log mock (fail-open, 不阻断登录主流程)
         { provide: AuditLogRepository, useValue: { log: auditLogSpy } },

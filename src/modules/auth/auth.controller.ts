@@ -643,6 +643,13 @@ export class AuthController {
       }
 
       const accessJti = ulid();
+      // 2026-05-22 (SSOT §14.2): refresh 补完整 4 字段防 UX 突变
+      //   user.repository 已有 name + mobile，tenantName + campusName 走
+      //   phoneLookup.getUserContextById fail-open 兜底（任一查询失败返空串）
+      const userCtx = await this.phoneLookup.getUserContextById(
+        oldRow.tenantId,
+        realUser.campusId ?? null,
+      );
       const signPayload: Omit<JwtPayload, 'jti' | 'aud'> = {
         sub: oldRow.subjectId,
         tenantId: oldRow.tenantId,
@@ -650,11 +657,9 @@ export class AuthController {
         // realUser.campusId 类型为 string（user.repository.ts:25），但 JwtPayload.campusId
         // 允许 null（跨校 role 如 boss / admin / hr）— V2 schema users.campus_id 可空
         campusId: realUser.campusId ?? null,
-        // 2026-05-22 (SSOT §14.2): refresh 时仅补 name + phone (user.repository 已有)
-        // TODO Sprint Y: tenantName + campusName 需额外 query public.tenants + tenant.campuses
-        //   本次留前端 fallback 占位 (24h+ refresh 后才触发, UX 短暂占位可接受)
-        //   首次 login 走 signBUserToken 已含完整 4 字段
         name: realUser.name,
+        tenantName: userCtx.tenantName || undefined,
+        campusName: userCtx.campusName || undefined,
         phone: realUser.mobile,
       };
       const accessToken = this.jwt.sign(signPayload, {

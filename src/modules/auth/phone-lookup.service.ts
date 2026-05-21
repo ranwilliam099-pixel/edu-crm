@@ -157,6 +157,52 @@ export class PhoneLookupService {
   }
 
   /**
+   * 2026-05-22 (SSOT §14.2): refresh endpoint 补 tenantName/campusName 4 字段
+   *
+   * 单点反查 tenant.name + campus.name（用 ID 不用 phone，refresh token 链路不带 phone）
+   *
+   * @param tenantId  oldRow.tenantId
+   * @param campusId  realUser.campusId（跨校 role admin/hr 可能为 null）
+   * @returns { tenantName, campusName } — 任一查询失败返 '' fail-open
+   */
+  async getUserContextById(
+    tenantId: string,
+    campusId: string | null,
+  ): Promise<{ tenantName: string; campusName: string }> {
+    let tenantName = '';
+    let campusName = '';
+    // tenant.name from public.tenants
+    try {
+      const tenantRows = await this.pg.query<{ name: string }>(
+        'SELECT name FROM public.tenants WHERE id = $1',
+        [tenantId],
+      );
+      if (tenantRows[0]) tenantName = tenantRows[0].name || '';
+    } catch (err) {
+      this.logger.warn(
+        `[phone-lookup.getUserContextById] tenant query failed: ${(err as Error).message}`,
+      );
+    }
+    // campus.name from tenant schema（跨校 role campusId 可能为 null，skip）
+    if (campusId) {
+      try {
+        const schema = `tenant_${tenantId.toLowerCase()}`;
+        const campusRows = await this.pg.tenantQuery<{ name: string }>(
+          schema,
+          'SELECT name FROM campuses WHERE id = $1',
+          [campusId],
+        );
+        if (campusRows[0]) campusName = campusRows[0].name || '';
+      } catch (err) {
+        this.logger.warn(
+          `[phone-lookup.getUserContextById] campus query failed: ${(err as Error).message}`,
+        );
+      }
+    }
+    return { tenantName, campusName };
+  }
+
+  /**
    * 列出所有 tenants（cache 不在此层；D1 应用层串行不缓存）
    *
    * fail-open: 查询失败返空数组（防 PG 单点抖动 → login 全瘫）
