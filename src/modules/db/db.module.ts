@@ -1,8 +1,11 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Module, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PgPoolService } from './pg-pool.service';
 import { TenantProvisionService } from './tenant-provision.service';
+// § 12B (2026-05-21): customer.controller PATCH 联动 setAsParentAccount 需要 ParentService
+//   forwardRef 防 ParentModule ↔ DbModule 循环依赖（ParentRepository 在 DbModule providers）
+import { ParentModule } from '../parent/parent.module';
 
 // ===== V7 教师档案 =====
 import { TeacherRepository } from './teacher.repository';
@@ -177,6 +180,8 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
         },
       }),
     }),
+    // § 12B: ParentModule 暴露 ParentService 给 customer.controller PATCH 联动
+    forwardRef(() => ParentModule),
   ],
   controllers: [
     OnboardingController,

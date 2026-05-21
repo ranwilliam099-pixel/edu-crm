@@ -6,6 +6,7 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common';
+import { ulid } from 'ulid';
 import { ParentRepository } from '../db/parent.repository';
 
 /**
@@ -219,6 +220,97 @@ export class ParentService {
     const existing = await this.repo.findActiveBindingsForStudent(input.studentId);
     const binding = this.createBinding(input, existing);
     return this.repo.insertBinding(binding);
+  }
+
+  /**
+   * § 12B (2026-05-21) 拍板：从客户家长信息一键创建 parent 账户 + 绑定学员
+   *
+   * 用途：销售在 sales-customers/new 表单打勾「设为家长端账户」，或在 detail 页后补打勾
+   *
+   * 步骤（事务外但幂等）：
+   *   1. findParentByPhone(phone) — 跨 tenant phone_hash 查 public.parents
+   *   2. miss → insertParent(ulid, phone, name, status='启用')
+   *   3. findActiveBindingsForStudent(studentId) — 取该学员当前所有家长绑定
+   *   4. createBinding 校验（3 上限 + 重复检测，V10 DB 触发器兜底）
+   *   5. insertBinding
+   *   6. 返回 { parent, binding, isNewParent }
+   *
+   * Reuse 路径（同手机号跨 tenant 已建 parent）：直接走步骤 3-5，不重建 parent
+   *
+   * @param input.studentId  学员 ULID
+   * @param input.tenantId   学员所属 tenant ULID（写 parent_student_bindings.tenant_id）
+   * @param input.phone      家长手机号（由 controller 反查 customers.primary_mobile 拿到）
+   * @param input.name       家长姓名（可空，由 controller 反查 customers.parent_name）
+   * @param input.relationship 关系（默认 'mother'，前端可改）
+   */
+  async createFromCustomerInDb(input: {
+    studentId: string;
+    tenantId: string;
+    phone: string;
+    name?: string;
+    relationship?: Relationship;
+  }): Promise<{ parent: Parent; binding: ParentStudentBinding; isNewParent: boolean }> {
+    if (!this.repo) throw new BadRequestException('ParentRepository not available');
+    if (!input.studentId || input.studentId.length !== 32) {
+      throw new BadRequestException('studentId must be 32-char ULID');
+    }
+    if (!input.tenantId || input.tenantId.length !== 32) {
+      throw new BadRequestException('tenantId must be 32-char ULID');
+    }
+    if (!input.phone || !/^1[3-9]\d{9}$/.test(input.phone)) {
+      throw new BadRequestException('家长手机号必须是 11 位中国手机号格式');
+    }
+
+    // 1. 跨 tenant 复用 parent
+    let parent = await this.repo.findParentByPhone(input.phone);
+    let isNewParent = false;
+
+    if (!parent) {
+      // 2. 不存在 → 新建
+      const newParent = this.registerParent({
+        id: ulid(),
+        phone: input.phone,
+        name: input.name,
+      });
+      parent = await this.repo.insertParent(newParent);
+      isNewParent = true;
+      this.logger.log(
+        `[§12B] createFromCustomer 新建 parent id=${parent.id} phone=***${input.phone.slice(-4)}`,
+      );
+    } else {
+      this.logger.log(
+        `[§12B] createFromCustomer 复用已有 parent id=${parent.id} (跨 tenant 共享)`,
+      );
+    }
+
+    // 3. 查该 student 当前所有 binding（用于 3 上限校验 + 重复检测）
+    const existing = await this.repo.findActiveBindingsForStudent(input.studentId);
+
+    // 已有该 parent + student binding → 幂等返回（不重复 INSERT，不抛错）
+    const existingBinding = existing.find(
+      (b) => b.parentId === parent!.id && b.bindingStatus === 'active',
+    );
+    if (existingBinding) {
+      this.logger.log(
+        `[§12B] createFromCustomer 幂等返回已有 binding id=${existingBinding.id}`,
+      );
+      return { parent, binding: existingBinding, isNewParent };
+    }
+
+    // 4. 校验 + 5. INSERT
+    const binding = this.createBinding(
+      {
+        id: ulid(),
+        parentId: parent.id,
+        studentId: input.studentId,
+        tenantId: input.tenantId,
+        isPrimary: existing.filter((b) => b.bindingStatus === 'active').length === 0,
+        relationship: input.relationship || 'mother',
+      },
+      existing,
+    );
+    const inserted = await this.repo.insertBinding(binding);
+    return { parent, binding: inserted, isNewParent };
   }
 
   async listMyChildrenInDb(

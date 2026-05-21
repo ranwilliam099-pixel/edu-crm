@@ -916,6 +916,38 @@ export class CustomerRepository {
    *   - teacher / finance 不可见 → maskCustomer 已 mask 成 null
    *   helper 仅做技术解密，权限由 maskCustomer 守门（双层防御）。
    */
+  /**
+   * § 12B (2026-05-21): 反查家长联系信息（用于「设为家长端账户」联动）
+   *
+   * 入参 studentId → JOIN customers.parent_name + customers.primary_mobile（解密）
+   * 用途：parent.controller create-from-customer endpoint + customer.controller PATCH 联动
+   */
+  async findParentContactByStudentId(
+    tenantSchema: string,
+    studentId: string,
+  ): Promise<{ customerId: string; parentName: string | null; primaryMobile: string | null } | null> {
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT c.id AS customer_id, c.parent_name, c.primary_mobile, c.primary_mobile_encrypted
+         FROM students s
+         JOIN customers c ON c.id = s.customer_id
+        WHERE s.id = $1
+        LIMIT 1`,
+      [studentId],
+    );
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      customerId: r.customer_id,
+      parentName: r.parent_name || null,
+      primaryMobile: this.decryptPrimaryMobile(
+        r.customer_id,
+        r.primary_mobile_encrypted as Buffer | null,
+        r.primary_mobile as string | null,
+      ),
+    };
+  }
+
   private decryptPrimaryMobile(
     rowId: string,
     encrypted: Buffer | null | undefined,

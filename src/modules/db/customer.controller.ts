@@ -21,6 +21,7 @@ import {
   FollowEntry,
   FollowType,
 } from './customer.repository';
+import { ParentService } from '../parent/parent.service';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { AuthenticatedRequest, JwtPayload } from '../auth/jwt-payload.interface';
 import { Roles } from '../../guards/rbac.decorator';
@@ -59,6 +60,9 @@ export class CustomerController {
     //   - @Optional：unit spec 直接 new 不传也能跑（兼容现有 spec 测试）
     //   - fail-open：log() 写失败仅 logger.warn 不抛主业务（AuditLogRepository.log 内部 catch）
     @Optional() private readonly auditLog?: AuditLogRepository,
+    // § 12B (2026-05-21): 设为家长端账户联动需要 ParentService
+    //   - @Optional：unit spec 兼容；正常注入由 CustomerModule 注册 ParentModule
+    @Optional() private readonly parentService?: ParentService,
   ) {}
 
   /**
@@ -160,9 +164,18 @@ export class CustomerController {
       source?: string;
       note?: string;
       stage?: string;
+      // V55 字段（学员 + 家长扩展，2026-05-21 用户拍板两板块）
+      parentGender?: string;
+      studentGender?: string;
+      school?: string;
+      studentPhone?: string;
+      availableTime?: string[];
+      // § 12B (2026-05-21) 拍板: 打勾即设为家长端账户
+      //   true + studentId 存在 → 主流程后联动 createFromCustomerInDb
+      setAsParentAccount?: boolean;
     },
     @Req() req: AuthenticatedRequest,
-  ): Promise<CreateCustomerResult> {
+  ): Promise<CreateCustomerResult & { parentAccountSet?: boolean; isNewParent?: boolean }> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
     const operatorUserId = req.user?.sub;
     if (!operatorUserId) throw new BadRequestException('user sub required');
@@ -171,6 +184,13 @@ export class CustomerController {
       throw new BadRequestException(
         '跨校 role 必须显式传 campusId（admin/hr 无单一 campus；5/15 A-2 删 sales_director）',
       );
+    }
+    // V55 学员电话 + 家长电话 11 位中国手机号格式校验（前端已校但服务端兜底）
+    if (body.studentPhone && !/^1[3-9]\d{9}$/.test(body.studentPhone)) {
+      throw new BadRequestException('studentPhone must be 11-digit Chinese mobile');
+    }
+    if (!/^1[3-9]\d{9}$/.test(body.primaryMobile)) {
+      throw new BadRequestException('primaryMobile must be 11-digit Chinese mobile');
     }
     const result = await this.repo.createWithOpportunity(body.tenantSchema, {
       customerId: body.customerId,
@@ -186,6 +206,12 @@ export class CustomerController {
       stage: body.stage,
       source: body.source,
       note: body.note,
+      // V55 字段透传给 repository
+      parentGender: body.parentGender,
+      studentGender: body.studentGender,
+      school: body.school,
+      studentPhone: body.studentPhone,
+      availableTime: body.availableTime,
     });
 
     // Sprint B.5: audit_log customer.create（PII masked phone 入 after，便于运营溯源）
@@ -212,6 +238,36 @@ export class CustomerController {
       },
     });
 
+    // § 12B (2026-05-21) 拍板联动: setAsParentAccount=true + studentId 存在
+    //   主流程已成功 (customer + student + opportunity 写入)，联动失败不阻塞返回
+    if (body.setAsParentAccount === true && result.studentId) {
+      try {
+        const linkage = await this.setParentAccountForCustomer(
+          body.tenantSchema,
+          result.customerId,
+          result.studentId,
+          req,
+        );
+        return {
+          ...result,
+          parentAccountSet: true,
+          isNewParent: linkage.isNewParent,
+        };
+      } catch (err) {
+        const msg = (err as Error)?.message || String(err);
+        await this.tryAudit(body.tenantSchema, {
+          actorUserId: operatorUserId,
+          ...this.auditCtx(req),
+          action: 'customer.set-parent-account.error',
+          targetType: 'customer',
+          targetId: result.customerId,
+          before: null,
+          after: { error: msg, studentId: result.studentId, source: 'POST-creation' },
+        });
+        return { ...result, parentAccountSet: false };
+      }
+    }
+
     return result;
   }
 
@@ -234,9 +290,14 @@ export class CustomerController {
       parentName?: string;
       parentGender?: string | null;
       primaryMobile?: string;
+      // § 12B (2026-05-21): 联动「设为家长端账户」
+      //   true → 在 PATCH 主流程之后调 set-parent-account 联动（需 studentId）
+      //   不传 / false → 仅更新 customer 字段
+      setAsParentAccount?: boolean;
+      studentId?: string;
     },
     @Req() req: AuthenticatedRequest,
-  ): Promise<{ ok: true }> {
+  ): Promise<{ ok: true; parentAccountSet?: boolean; isNewParent?: boolean }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
     if (!id || id.length !== 32) {
       throw new BadRequestException('customerId must be 32-char ULID');
@@ -246,8 +307,137 @@ export class CustomerController {
     }
     const operatorUserId = req.user?.sub;
     if (!operatorUserId) throw new BadRequestException('user sub required');
-    await this.repo.update(tenantSchema, id, operatorUserId, body);
+    await this.repo.update(tenantSchema, id, operatorUserId, {
+      parentName: body.parentName,
+      parentGender: body.parentGender,
+      primaryMobile: body.primaryMobile,
+    });
+
+    // § 12B 联动：仅在主 PATCH 成功后 + setAsParentAccount=true + 提供 studentId 时跑
+    //   失败不阻断主流程，记 audit_log error 让运维介入
+    if (body.setAsParentAccount === true && body.studentId) {
+      try {
+        const result = await this.setParentAccountForCustomer(
+          tenantSchema,
+          id,
+          body.studentId,
+          req,
+        );
+        return { ok: true, parentAccountSet: true, isNewParent: result.isNewParent };
+      } catch (err) {
+        // 联动失败不阻塞主 PATCH（用户 PATCH 已成功）；前端用 toast 提示「家长账户设定失败」
+        const msg = (err as Error)?.message || String(err);
+        await this.tryAudit(tenantSchema, {
+          actorUserId: operatorUserId,
+          ...this.auditCtx(req),
+          action: 'customer.set-parent-account.error',
+          targetType: 'customer',
+          targetId: id,
+          before: null,
+          after: { error: msg, studentId: body.studentId, source: 'PATCH-linkage' },
+        });
+        return { ok: true, parentAccountSet: false };
+      }
+    }
     return { ok: true };
+  }
+
+  /**
+   * § 12B (2026-05-21) — 客户详情页「设为家长端账户」后补打勾
+   *
+   * URL: POST /api/db/customers/:id/set-parent-account
+   * Body: { tenantSchema, studentId }
+   *
+   * 流程：
+   *   1. 反查 customer.parent_name + primary_mobile（解密）
+   *   2. 跨 tenant phone_hash 查 public.parents 复用 / 新建
+   *   3. INSERT parent_student_bindings（V10 三人上限触发器兜底）
+   *   4. audit_log customer.set-parent-account
+   */
+  @Post(':id/set-parent-account')
+  @UseGuards(RbacGuard)
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin')
+  @HttpCode(HttpStatus.OK)
+  async setParentAccount(
+    @Param('id') id: string,
+    @Body()
+    body: { tenantSchema: string; studentId: string },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ ok: true; parentId: string; isNewParent: boolean }> {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!id || id.length !== 32) {
+      throw new BadRequestException('customerId must be 32-char ULID');
+    }
+    if (!body.studentId || body.studentId.length !== 32) {
+      throw new BadRequestException('studentId must be 32-char ULID');
+    }
+    const result = await this.setParentAccountForCustomer(
+      body.tenantSchema,
+      id,
+      body.studentId,
+      req,
+    );
+    return { ok: true, parentId: result.parentId, isNewParent: result.isNewParent };
+  }
+
+  /**
+   * § 12B 内部联动 helper：customer.parent_name + primary_mobile → parents/bindings
+   * PATCH + POST 两个 endpoint 共用
+   */
+  private async setParentAccountForCustomer(
+    tenantSchema: string,
+    customerId: string,
+    studentId: string,
+    req: AuthenticatedRequest,
+  ): Promise<{ parentId: string; isNewParent: boolean }> {
+    if (!this.parentService) {
+      throw new BadRequestException('ParentService not available (module wiring missing)');
+    }
+    // 1. 反查 customer 家长姓名 + 手机号（解密后明文）
+    const contact = await this.repo.findParentContactByStudentId(tenantSchema, studentId);
+    if (!contact) {
+      throw new BadRequestException(
+        `student ${studentId} not found or no customer linked`,
+      );
+    }
+    if (!contact.primaryMobile) {
+      throw new BadRequestException(
+        '家长手机号未填，无法创建家长端账户 — 请先在客户详情补全家长手机号',
+      );
+    }
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      throw new BadRequestException('user tenantId required');
+    }
+
+    // 2-4. 创建 / 复用 parent + INSERT binding
+    const { parent, binding, isNewParent } =
+      await this.parentService.createFromCustomerInDb({
+        studentId,
+        tenantId,
+        phone: contact.primaryMobile,
+        name: contact.parentName || undefined,
+      });
+
+    // 5. audit_log（不入 PII，phone 脱敏）
+    await this.tryAudit(tenantSchema, {
+      actorUserId: req.user?.sub ?? null,
+      ...this.auditCtx(req),
+      action: 'customer.set-parent-account',
+      targetType: 'customer',
+      targetId: customerId,
+      before: null,
+      after: {
+        parentId: parent.id,
+        bindingId: binding.id,
+        studentId,
+        isNewParent,
+        parentNameProvided: !!contact.parentName,
+        primaryMobileMask: this.maskPhoneForAudit(contact.primaryMobile),
+      },
+    });
+
+    return { parentId: parent.id, isNewParent };
   }
 
   @Get('mine')
