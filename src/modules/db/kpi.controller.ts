@@ -32,6 +32,8 @@ import {
   AuditLogRepository,
   normalizeActorRole,
 } from './audit-log.repository';
+// 2026-05-22 SSOT §6.9 KPI 5min Redis cache (fail-open)
+import { RedisService } from '../redis/redis.service';
 
 /**
  * KpiController — 4 KPI dashboard endpoint（2026-05-20 P4-X 拍板）
@@ -66,6 +68,8 @@ export class KpiController {
     // 2026-05-22 Sprint Y: 老师/教务/财务 home audit_log read 写入
     // @Optional unit spec 兼容；fail-open log() 内部已 catch
     @Optional() private readonly auditLog?: AuditLogRepository,
+    // 2026-05-22 SSOT §6.9 Redis 5min KPI cache (fail-open PG 兜底)
+    @Optional() private readonly redis?: RedisService,
   ) {}
 
   /**
@@ -185,7 +189,18 @@ export class KpiController {
     const userId = req.user?.sub;
     if (!userId) throw new BadRequestException('user sub required');
 
-    const result = await this.kpi.getTeacherHomeKpi(tenantSchema, userId);
+    // 2026-05-22 SSOT §6.9 Redis 5min cache wrap (fail-open PG 兜底)
+    //   key: kpi:home:teacher:{tenantSchema}:{userId}:{yyyy-mm}
+    //   命中 cache < 100ms / miss 后 compute + 缓存 300s
+    const month = new Date().toISOString().slice(0, 7);
+    const cacheKey = `kpi:home:teacher:${tenantSchema}:${userId}:${month}`;
+    const result = this.redis
+      ? await this.redis.getOrCompute<TeacherHomeKpiResult>(
+          cacheKey,
+          300,
+          () => this.kpi.getTeacherHomeKpi(tenantSchema, userId),
+        )
+      : await this.kpi.getTeacherHomeKpi(tenantSchema, userId);
 
     // 2026-05-22 SSOT §6.8 KPI 4 字段合并（target / scheduled / attended / forecast）
     //   注: teacher 视角 scopeId 不用，service 内部用 userId 反查 teacher_id 后按 teacher 维度算
@@ -253,7 +268,17 @@ export class KpiController {
       );
     }
 
-    const result = await this.kpi.getAcademicHomeKpi(tenantSchema, callerCampusId);
+    // 2026-05-22 SSOT §6.9 Redis 5min cache wrap (fail-open PG 兜底)
+    //   key: kpi:home:academic:{tenantSchema}:{userId}:{campusId}:{yyyy-mm}
+    const month = new Date().toISOString().slice(0, 7);
+    const cacheKey = `kpi:home:academic:${tenantSchema}:${userId}:${callerCampusId}:${month}`;
+    const result = this.redis
+      ? await this.redis.getOrCompute<AcademicHomeKpiResult>(
+          cacheKey,
+          300,
+          () => this.kpi.getAcademicHomeKpi(tenantSchema, callerCampusId),
+        )
+      : await this.kpi.getAcademicHomeKpi(tenantSchema, callerCampusId);
 
     // 2026-05-22 SSOT §6.8 KPI 4 字段合并（target / scheduled / attended / forecast）
     //   academic 视角 scopeId = callerCampusId（本校所有 schedule 聚合）

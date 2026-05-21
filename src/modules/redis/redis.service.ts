@@ -91,6 +91,53 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   // 基础 K/V
   // ============================================================
 
+  /**
+   * 2026-05-22 SSOT §6.9 KPI 缓存 helper — getOrCompute 模式
+   *
+   * 流程：
+   *   1. 先 get(key) — 有 → JSON.parse 返（cache hit < 100ms）
+   *   2. 无 → 调 computeFn → set TTL → 返（cache miss）
+   *   3. Redis 任何失败 → 直接 computeFn (fail-open 不阻塞业务 + 不缓存)
+   *
+   * fail-open 哲学（SSOT §9 P0 8 项）: Redis 挂掉 → 业务降级直查 PG + 不缓存
+   *
+   * @example
+   *   const summary = await redis.getOrCompute<MonthlyKpiSummary>(
+   *     `kpi:home:teacher:${tenantSchema}:${userId}:${month}`,
+   *     300,
+   *     () => kpi.getMonthlyKpiSummary(tenantSchema, 'teacher', userId, null),
+   *   );
+   */
+  async getOrCompute<T>(
+    key: string,
+    ttlSec: number,
+    computeFn: () => Promise<T>,
+  ): Promise<T> {
+    // Step 1: 尝试 cache hit
+    try {
+      const cached = await this.client.get(key);
+      if (cached !== null) {
+        return JSON.parse(cached) as T;
+      }
+    } catch (err) {
+      this.logger.warn(
+        `[redis.getOrCompute] cache read fail (fail-open): ${(err as Error).message}`,
+      );
+      return computeFn();
+    }
+    // Step 2: cache miss → compute
+    const value = await computeFn();
+    // Step 3: 写 cache (fail-open: 写失败不阻塞业务)
+    try {
+      await this.client.set(key, JSON.stringify(value), 'EX', ttlSec);
+    } catch (err) {
+      this.logger.warn(
+        `[redis.getOrCompute] cache write fail (fail-open): ${(err as Error).message}`,
+      );
+    }
+    return value;
+  }
+
   async get(key: string): Promise<string | null> {
     return this.client.get(key);
   }
