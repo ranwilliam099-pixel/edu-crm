@@ -214,7 +214,7 @@ export class ContractRepository {
     //   1. courseProductId 必填（禁止销售自填新产品）
     //   2. SELECT course_products WHERE id=$1 校验存在 + status='在售'
     //   3. payload.standardPrice 与 course_products.standard_price 强一致（防 client 改价）
-    //   4. payload.lessonHours 与 course_products.lesson_package 强一致
+    //   4. payload.lessonHours ≥ course_products.lesson_package（最小节数语义，可以买更多）
     //   5. courseProductName / classType 从产品表回填（不接受 client 传值）
     if (!payload.courseProductId || payload.courseProductId.length !== 32) {
       throw new BadRequestException(
@@ -257,10 +257,16 @@ export class ContractRepository {
         `单价不一致：产品标价 ¥${productPrice.toFixed(2)} 与传入 ¥${payload.standardPrice.toFixed(2)}（防销售改价；前端请从产品下拉自动填）`,
       );
     }
-    if (Number(product.lesson_package) !== payload.lessonHours) {
+    // 2026-05-21 拍板：「最小节数」语义 — 销售签约可以买更多但不能少于最小
+    //   旧（错）实现：严格相等 lessonHours === lesson_package
+    //   新（对）实现：lessonHours ≥ lesson_package
+    if (payload.lessonHours < Number(product.lesson_package)) {
       throw new BadRequestException(
-        `课时数不一致：产品 ${product.lesson_package} 课时 与传入 ${payload.lessonHours}（产品标准课时包，不可改）`,
+        `课时数低于最小节数：产品最小 ${product.lesson_package} 课时，签约填 ${payload.lessonHours} 课时（可填更多但不能更少）`,
       );
+    }
+    if (payload.lessonHours <= 0) {
+      throw new BadRequestException('课时数必须 > 0');
     }
     // 用产品表 product_name / class_type 强制回填（client 传值忽略）
     const enforcedProductName = product.product_name;

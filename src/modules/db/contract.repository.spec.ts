@@ -200,19 +200,34 @@ describe('ContractRepository', () => {
       ).rejects.toThrow(/单价不一致/);
     });
 
-    it('2026-05-21 拍板：lessonHours 不一致 → BadRequest', async () => {
-      pg.tenantQuery.mockResolvedValueOnce([PRODUCT_ROW]); // lesson_package=30
+    it('2026-05-21 拍板：lessonHours < 最小节数 → BadRequest', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([PRODUCT_ROW]); // lesson_package=30 (最小节数)
       await expect(
         repo.create(TENANT, {
           id: CONTRACT_ID,
           studentId: STUDENT_ID,
           courseProductId: COURSE_ID,
           ownerUserId: OWNER_ID,
-          lessonHours: 50, // 改课时
+          lessonHours: 20, // 低于最小 30
           standardPrice: 1999,
           totalAmount: 1999,
         }),
-      ).rejects.toThrow(/课时数不一致/);
+      ).rejects.toThrow(/课时数低于最小节数/);
+    });
+
+    it('2026-05-21 拍板：lessonHours > 最小节数 → 允许（可买更多）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([PRODUCT_ROW]); // lesson_package=30
+      mockTransactionInsertContract({ ...ROW, lesson_hours: 60 });
+      const r = await repo.create(TENANT, {
+        id: CONTRACT_ID,
+        studentId: STUDENT_ID,
+        courseProductId: COURSE_ID,
+        ownerUserId: OWNER_ID,
+        lessonHours: 60, // 高于最小 30 → 允许
+        standardPrice: 1999,
+        totalAmount: 1999,
+      });
+      expect(r).toBeDefined();
     });
 
     it('2026-05-21 拍板：strict 通过 → INSERT contracts + UPDATE opportunities 同 transaction', async () => {
