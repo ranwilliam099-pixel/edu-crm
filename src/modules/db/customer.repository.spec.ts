@@ -172,16 +172,18 @@ describe('CustomerRepository (V25 + V34 字段加密双写双读 + V41 customers
       expect(customersCall).toBeDefined();
       expect(customersCall![0]).toMatch(/primary_mobile_hash/);
       expect(customersCall![0]).toMatch(/primary_mobile_encrypted/);
-      // params 顺序：customerId, parentName, primary_mobile, primary_mobile_hash,
-      //              primary_mobile_encrypted, campusId, ownerSalesId
+      // 2026-05-21 V55 加 parent_gender 列后 params 顺序：
+      //   customerId, parentName, parentGender, primary_mobile,
+      //   primary_mobile_hash, primary_mobile_encrypted, campusId, ownerSalesId
       const cParams = customersCall![1];
       expect(cParams[0]).toBe(CUSTOMER_ID);
       expect(cParams[1]).toBe('王爸爸');
-      expect(cParams[2]).toBe(MOCK_PHONE_PLAIN); // primary_mobile 明文
-      expect(cParams[3]).toEqual(MOCK_HASH_MOBILE); // primary_mobile_hash
-      expect(cParams[4]).toEqual(MOCK_CIPHER_PHONE); // primary_mobile_encrypted
-      expect(cParams[5]).toBe(CAMPUS_A);
-      expect(cParams[6]).toBe(SALES_A);
+      expect(cParams[2]).toBeNull(); // parentGender 未传 → null（V55）
+      expect(cParams[3]).toBe(MOCK_PHONE_PLAIN); // primary_mobile 明文
+      expect(cParams[4]).toEqual(MOCK_HASH_MOBILE); // primary_mobile_hash
+      expect(cParams[5]).toEqual(MOCK_CIPHER_PHONE); // primary_mobile_encrypted
+      expect(cParams[6]).toBe(CAMPUS_A);
+      expect(cParams[7]).toBe(SALES_A);
 
       // V34 opportunity INSERT 的 SQL 含 phone_encrypted 列（原 A02-2 不变）
       const oppoCall = txClient.query.mock.calls.find(

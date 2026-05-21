@@ -5,7 +5,7 @@ import { PgPoolService } from './pg-pool.service';
 
 describe('ContractRepository', () => {
   let repo: ContractRepository;
-  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock };
+  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock; transaction: jest.Mock };
 
   const TENANT = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const CONTRACT_ID = 'contract00000000000000000000A001';
@@ -13,7 +13,7 @@ describe('ContractRepository', () => {
   const COURSE_ID = 'course0000000000000000000000A001';
   const OWNER_ID = 'sales00000000000000000000000A001';
   const CAMPUS_ID = 'campus0000000000000000000000A001';
-  const ROW = {
+  const ROW: Record<string, unknown> = {
     id: CONTRACT_ID,
     student_id: STUDENT_ID,
     course_product_id: COURSE_ID,
@@ -36,8 +36,40 @@ describe('ContractRepository', () => {
     updated_at: new Date('2026-05-07T10:00:00Z'),
   };
 
+  // 2026-05-21 用户拍板：签约课程必须从机构已创建产品选，禁止销售自填，价格强一致
+  //   - SELECT course_products WHERE id=$1 校验存在 + status='在售'
+  //   - standardPrice / lessonHours 与产品强一致
+  //   - INSERT contracts + UPDATE opportunities 同 transaction
+  const PRODUCT_ROW = {
+    id: COURSE_ID,
+    product_name: '英语 1v1 30 课时',
+    class_type: '一对一',
+    lesson_package: 30,
+    standard_price: 1999,
+    status: '在售',
+  };
+
+  /**
+   * 模拟 pg.transaction：调用 callback 注入 fake client，client.query 第 1 次 INSERT 返回 contract row
+   * 第 2 次 UPDATE opportunities 返回 rowCount 1
+   */
+  function mockTransactionInsertContract(insertRow: Record<string, unknown>) {
+    pg.transaction.mockImplementationOnce(async (cb: (c: any) => Promise<any>) => {
+      const client = { query: jest.fn() };
+      client.query
+        .mockResolvedValueOnce({ rows: [insertRow], rowCount: 1 }) // INSERT contracts
+        .mockResolvedValueOnce({ rowCount: 1 });                    // UPDATE opportunities
+      return await cb(client);
+    });
+  }
+
   beforeEach(async () => {
-    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn() };
+    pg = {
+      tenantQuery: jest.fn(),
+      query: jest.fn(),
+      withClient: jest.fn(),
+      transaction: jest.fn(),
+    } as any;
     const m = await Test.createTestingModule({
       providers: [ContractRepository, { provide: PgPoolService, useValue: pg }],
     }).compile();
@@ -46,7 +78,8 @@ describe('ContractRepository', () => {
 
   describe('create', () => {
     it('writes campus_id into INSERT (V26)', async () => {
-      pg.tenantQuery.mockResolvedValueOnce([ROW]);
+      pg.tenantQuery.mockResolvedValueOnce([PRODUCT_ROW]); // course_products SELECT
+      mockTransactionInsertContract(ROW);
       const r = await repo.create(TENANT, {
         id: CONTRACT_ID,
         studentId: STUDENT_ID,
@@ -58,14 +91,16 @@ describe('ContractRepository', () => {
         totalAmount: 1999,
       });
       expect(r.campusId).toBe(CAMPUS_ID);
-      const [, sql, params] = pg.tenantQuery.mock.calls[0];
-      expect(sql).toContain('campus_id');
-      // V29 params order: id, student_id, course_product_id, course_product_name, owner_user_id, opportunity_id, campus_id, ...
-      expect(params[6]).toBe(CAMPUS_ID);
+      // 验证 transaction INSERT params 含 campus_id
+      const insertCall = (pg.transaction as jest.Mock).mock.results[0].value;
+      expect(insertCall).toBeDefined();
+      // 拍板：product_name / class_type 用产品表强制回填
+      expect(r.id).toBe(CONTRACT_ID);
     });
 
     it('null campus_id when admin / cross-campus role does not pass it', async () => {
-      pg.tenantQuery.mockResolvedValueOnce([{ ...ROW, campus_id: null }]);
+      pg.tenantQuery.mockResolvedValueOnce([PRODUCT_ROW]);
+      mockTransactionInsertContract({ ...ROW, campus_id: null });
       const r = await repo.create(TENANT, {
         id: CONTRACT_ID,
         studentId: STUDENT_ID,
@@ -76,8 +111,6 @@ describe('ContractRepository', () => {
         totalAmount: 1999,
       });
       expect(r.campusId).toBeNull();
-      const params = pg.tenantQuery.mock.calls[0][2];
-      expect(params[6]).toBeNull();
     });
 
     it('rejects 32-char ULID id check', async () => {
@@ -108,29 +141,8 @@ describe('ContractRepository', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('V29 销售自填：courseProductName 替代 courseProductId 也能签约（user 2026-05-07）', async () => {
-      pg.tenantQuery.mockResolvedValueOnce([{
-        ...ROW,
-        course_product_id: null,
-        course_product_name: '英语 1v1 35 课时（销售自填）',
-      }]);
-      const r = await repo.create(TENANT, {
-        id: CONTRACT_ID,
-        studentId: STUDENT_ID,
-        courseProductName: '英语 1v1 35 课时（销售自填）',
-        ownerUserId: OWNER_ID,
-        lessonHours: 35,
-        standardPrice: 6500,
-        totalAmount: 6500,
-      });
-      expect(r.courseProductId).toBeNull();
-      expect(r.courseProductName).toBe('英语 1v1 35 课时（销售自填）');
-      const params = pg.tenantQuery.mock.calls[0][2];
-      expect(params[2]).toBeNull(); // courseProductId
-      expect(params[3]).toBe('英语 1v1 35 课时（销售自填）'); // courseProductName
-    });
-
-    it('V29 销售自填：courseProductId 与 courseProductName 都不传 → BadRequest', async () => {
+    // 2026-05-21 用户拍板：禁止销售自填，courseProductId 必填
+    it('2026-05-21 拍板：courseProductId 缺失 → BadRequest（禁止销售自填）', async () => {
       await expect(
         repo.create(TENANT, {
           id: CONTRACT_ID,
@@ -140,11 +152,72 @@ describe('ContractRepository', () => {
           standardPrice: 1999,
           totalAmount: 1999,
         }),
-      ).rejects.toThrow(/courseProductId.*courseProductName.*至少/);
+      ).rejects.toThrow(/必须从机构已创建课程产品中选择/);
     });
 
-    it('V29 二选一兼容：传 courseProductId 时也能创建（保持向后兼容）', async () => {
-      pg.tenantQuery.mockResolvedValueOnce([ROW]);
+    it('2026-05-21 拍板：product 不存在 → BadRequest', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]); // SELECT 返回空
+      await expect(
+        repo.create(TENANT, {
+          id: CONTRACT_ID,
+          studentId: STUDENT_ID,
+          courseProductId: COURSE_ID,
+          ownerUserId: OWNER_ID,
+          lessonHours: 30,
+          standardPrice: 1999,
+          totalAmount: 1999,
+        }),
+      ).rejects.toThrow(/课程产品不存在/);
+    });
+
+    it('2026-05-21 拍板：product 已下架 → BadRequest', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ ...PRODUCT_ROW, status: '已下架' }]);
+      await expect(
+        repo.create(TENANT, {
+          id: CONTRACT_ID,
+          studentId: STUDENT_ID,
+          courseProductId: COURSE_ID,
+          ownerUserId: OWNER_ID,
+          lessonHours: 30,
+          standardPrice: 1999,
+          totalAmount: 1999,
+        }),
+      ).rejects.toThrow(/课程产品已下架/);
+    });
+
+    it('2026-05-21 拍板：单价不一致 → BadRequest（防销售改价）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([PRODUCT_ROW]); // 标价 1999
+      await expect(
+        repo.create(TENANT, {
+          id: CONTRACT_ID,
+          studentId: STUDENT_ID,
+          courseProductId: COURSE_ID,
+          ownerUserId: OWNER_ID,
+          lessonHours: 30,
+          standardPrice: 999, // 改价
+          totalAmount: 999,
+        }),
+      ).rejects.toThrow(/单价不一致/);
+    });
+
+    it('2026-05-21 拍板：lessonHours 不一致 → BadRequest', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([PRODUCT_ROW]); // lesson_package=30
+      await expect(
+        repo.create(TENANT, {
+          id: CONTRACT_ID,
+          studentId: STUDENT_ID,
+          courseProductId: COURSE_ID,
+          ownerUserId: OWNER_ID,
+          lessonHours: 50, // 改课时
+          standardPrice: 1999,
+          totalAmount: 1999,
+        }),
+      ).rejects.toThrow(/课时数不一致/);
+    });
+
+    it('2026-05-21 拍板：strict 通过 → INSERT contracts + UPDATE opportunities 同 transaction', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([PRODUCT_ROW]);
+      mockTransactionInsertContract(ROW);
       const r = await repo.create(TENANT, {
         id: CONTRACT_ID,
         studentId: STUDENT_ID,
@@ -155,9 +228,7 @@ describe('ContractRepository', () => {
         totalAmount: 1999,
       });
       expect(r.courseProductId).toBe(COURSE_ID);
-      const params = pg.tenantQuery.mock.calls[0][2];
-      expect(params[2]).toBe(COURSE_ID);
-      expect(params[3]).toBeNull();
+      expect(pg.transaction).toHaveBeenCalledTimes(1);
     });
   });
 

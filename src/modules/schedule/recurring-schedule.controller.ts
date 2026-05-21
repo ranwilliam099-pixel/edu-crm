@@ -19,6 +19,8 @@ import {
   RecurringRbacContext,
 } from './recurring-schedule.service';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
+import { RbacGuard } from '../../guards/rbac.guard';
+import { Roles } from '../../guards/rbac.decorator';
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
 import { ActorRole, AuditLogRepository, normalizeActorRole } from '../db/audit-log.repository';
@@ -83,6 +85,13 @@ export class RecurringScheduleController {
    * Sprint E backlog #3: 成功 'recurring-binding.create' / 拒绝 'recurring-binding.create.denied'
    */
   @Post('bindings')
+  // Security round 2 (2026-05-21): 加 @UseGuards(RbacGuard) 激活 @Roles 装饰器
+  //   - class-level 只有 TenantScopeGuard, @Roles 单独写不生效
+  //   - 5/21 拍板 4 roles, 但 service.assertRecurringRbac 仍 'academic' only
+  //     (Sprint Y backlog: 扩展 RecurringRbacContext.callerRole 到 4 roles)
+  //   - 当前更严方向: @Roles 4 roles 列入,运行时收紧到 academic 不破坏现状
+  @UseGuards(RbacGuard)
+  @Roles('academic', 'academic_admin', 'boss', 'admin')  // 2026-05-21 用户拍板: 销售对学员-老师绑定无权限
   @HttpCode(HttpStatus.CREATED)
   async createBinding(
     @Body()
@@ -194,6 +203,9 @@ export class RecurringScheduleController {
    *   - service 是同步方法，本方法因 audit 改 async
    */
   @Post('bindings/:id/unbind')
+  // Security round 2 (2026-05-21): 加 @UseGuards(RbacGuard) 激活 @Roles
+  @UseGuards(RbacGuard)
+  @Roles('academic', 'academic_admin', 'boss', 'admin')  // 2026-05-21 用户拍板: 销售对学员-老师绑定无权限
   @HttpCode(HttpStatus.OK)
   async unbindBinding(
     @Param('id') _id: string,
@@ -251,6 +263,11 @@ export class RecurringScheduleController {
    * Sprint E backlog #3: 成功 'recurring-schedule.create' / 拒绝 'recurring-schedule.create.denied'
    */
   @Post('schedules')
+  // Security round 2 (2026-05-21): 加 @UseGuards(RbacGuard) + @Roles
+  //   - 周期课表 (recurring schedule) = 学员-老师绑定的扩展, 走同一 RBAC
+  //   - assertCallerRoleAndDeriveContext 运行时仍 academic only (Sprint Y 扩展)
+  @UseGuards(RbacGuard)
+  @Roles('academic', 'academic_admin', 'boss', 'admin')
   @HttpCode(HttpStatus.CREATED)
   async createRecurring(
     @Body()
@@ -391,6 +408,9 @@ export class RecurringScheduleController {
    *   - service 是同步方法，本方法因 audit 改 async
    */
   @Post('schedules/:id/archive')
+  // Security round 2 (2026-05-21): 加 @UseGuards(RbacGuard) + @Roles
+  @UseGuards(RbacGuard)
+  @Roles('academic', 'academic_admin', 'boss', 'admin')
   @HttpCode(HttpStatus.OK)
   async archiveRecurring(
     @Param('id') _id: string,

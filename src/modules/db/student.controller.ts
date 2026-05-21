@@ -228,6 +228,12 @@ export class StudentController {
     if (!id || id.length !== 32) {
       throw new BadRequestException('studentId must be 32-char ULID');
     }
+    // 2026-05-21 security round 1 P1-A 修：phone 字段也需 11 位中国手机号格式校验
+    //   （与 customer PATCH primaryMobile 校验一致；学员电话也是 PII）
+    if (body.phone !== undefined && body.phone !== null && body.phone !== ''
+        && !/^1[3-9]\d{9}$/.test(body.phone)) {
+      throw new BadRequestException('student phone must be 11-digit Chinese mobile');
+    }
     const operatorUserId = req.user?.sub;
     if (!operatorUserId) throw new BadRequestException('user sub required');
     await this.repo.update(tenantSchema, id, operatorUserId, body);
