@@ -75,6 +75,18 @@ export interface StudentActivityKpiResult {
 }
 
 /**
+ * 2026-05-21 销售视角 home KPI（拍板：销售自己的 home 必须接真接口）
+ *   personalSigned   本月签约金额 + 笔数 (contracts SUM by owner_user_id, 30 天窗口)
+ *   customersInProgress  在跟客户数 (opportunities count by owner_user_id, stage NOT IN [已报名,已失单])
+ *   trialRate        试听转化率（Sprint Y 后端补 schedule + status 分析）
+ */
+export interface SalesHomeKpiResult {
+  personalSigned: { amount: string; count: number; rankText: string };
+  customersInProgress: { count: number };
+  trialRate: { rate: string; total: number };
+}
+
+/**
  * 格式化金额：1234567 → '¥1,234,567'
  */
 function formatAmountText(yuan: number): string {
@@ -495,6 +507,69 @@ export class KpiService {
       total: { amount: '0', count: 0 },
       sales: [],
       academic: [],
+    };
+  }
+
+  /**
+   * 2026-05-21 销售自视角 home KPI
+   *   SQL 直查 contracts (owner_user_id=salesUserId, signed_at 30d 内) + opportunities (在跟数)
+   *   salesUserId 来自 JWT req.user.sub（controller 层传入），无需 client 提供
+   *   trialRate 暂留 0（Sprint Y 后端补：trial schedule 数 / consult 总数 = 转化率）
+   */
+  async getSalesHomeKpi(
+    tenantSchema: string,
+    salesUserId: string,
+  ): Promise<SalesHomeKpiResult> {
+    if (!salesUserId) {
+      return this.emptySalesHome();
+    }
+
+    // 1. personalSigned: 本月（30 天滚动）签约金额 + 笔数
+    const signedRows = await this.pg.tenantQuery<{
+      total_amount: string | number;
+      cnt: string | number;
+    }>(
+      tenantSchema,
+      `SELECT
+         COALESCE(SUM(total_amount), 0) AS total_amount,
+         COUNT(*) AS cnt
+       FROM contracts
+       WHERE owner_user_id = $1
+         AND signed_at >= NOW() - INTERVAL '30 days'
+         AND deleted_at IS NULL`,
+      [salesUserId],
+    );
+    const personalAmount = Number(signedRows[0]?.total_amount || 0);
+    const personalCount = Number(signedRows[0]?.cnt || 0);
+
+    // 2. customersInProgress: 在跟客户数（owner_user_id=me + stage 进行中）
+    const inProgressRows = await this.pg.tenantQuery<{ cnt: string | number }>(
+      tenantSchema,
+      `SELECT COUNT(DISTINCT id) AS cnt
+       FROM opportunities
+       WHERE owner_user_id = $1
+         AND stage NOT IN ('已报名','已失单')`,
+      [salesUserId],
+    );
+    const inProgressCount = Number(inProgressRows[0]?.cnt || 0);
+
+    // 3. trialRate: Sprint Y 后端补 schedule + status 分析
+    return {
+      personalSigned: {
+        amount: formatPlainAmount(personalAmount),
+        count: personalCount,
+        rankText: '— / —',  // Sprint Y: 销售团队排名 GROUP BY owner_user_id
+      },
+      customersInProgress: { count: inProgressCount },
+      trialRate: { rate: '0', total: 0 },
+    };
+  }
+
+  private emptySalesHome(): SalesHomeKpiResult {
+    return {
+      personalSigned: { amount: '0', count: 0, rankText: '— / —' },
+      customersInProgress: { count: 0 },
+      trialRate: { rate: '0', total: 0 },
     };
   }
 }

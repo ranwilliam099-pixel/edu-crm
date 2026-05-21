@@ -19,6 +19,7 @@ import {
   RenewalKpiResult,
   ConsumptionKpiResult,
   StudentActivityKpiResult,
+  SalesHomeKpiResult,
 } from './kpi.service';
 
 /**
@@ -91,6 +92,25 @@ export class KpiController {
 
     // 其他 role 理论被 @Roles 挡住，但兜底防御：返 [] 让 SQL where false 命中无数据
     return [];
+  }
+
+  /**
+   * 2026-05-21 销售自视角 home KPI
+   *   GET /db/kpi/sales-home?tenantSchema=
+   *   Auth: JWT.sub → salesUserId（不接受 client 传 userId 防伪造）
+   *   RBAC: sales / sales_manager 可读自己 home 数据
+   */
+  @Get('sales-home')
+  @Roles('sales', 'sales_manager')
+  @HttpCode(HttpStatus.OK)
+  async salesHomeKpi(
+    @Query('tenantSchema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<SalesHomeKpiResult> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    const salesUserId = req.user?.sub;
+    if (!salesUserId) throw new BadRequestException('user sub required');
+    return this.kpi.getSalesHomeKpi(tenantSchema, salesUserId);
   }
 
   /**
