@@ -1,3 +1,13 @@
+> ⚠️ **本文件是 [edu-mp-sandbox/docs/fields-by-role.md](../../edu-mp-sandbox/docs/fields-by-role.md) 的同步副本（2026-05-21 D 方案落地）**
+>
+> **拍板权威是 [../../edu-mp-sandbox/docs/SSOT-拍板权威.md](../../edu-mp-sandbox/docs/SSOT-拍板权威.md) §1/4/5/6**
+>
+> **禁止在本文件独立修订**：拍板修订必须先改 SSOT → 再 sync 前端版 → 最后 sync 本副本。后端 dev / agent 查阅本文件 OK，但修订必走 SSOT。
+>
+> 同步时间：2026-05-21 | 备份旧版：`fields-by-role.md.backup-2026-05-21`（5/10 304 行旧版，缺 5/13~5/16 增量 — admin home 4 KPI 升级 / course-product OOUX 升级 / 跨校调动删 / 家长合规元数据）
+
+---
+
 # 教培小程序字段级权限审计（按角色）— 2026-05-10 终版
 
 > 通过 4 轮 16 题（架构）+ 28 题（home）+ 20 题（5 大对象）+ 4 题（18 对象打包）= 52 题拍完。
@@ -27,14 +37,37 @@
 ```yaml
 顶部:
   - 视角切换 chip（老板/校长）
-  - 校区 picker
+  - 校区 picker（admin 全部校区 default / 选某校区 → 下钻按校区 filter）
   - 问候语 + 今日日期
   - 机构名称
-KPI（4 卡）:
-  - 本月新签金额 ¥××.×K
-  - 本月消课金额 ¥××.×K
-  - 活跃学员数（含低余额提醒）
-  - 漏斗转化率
+
+# 5/16 用户拍板：4 KPI 组替代原 1 hero + 3 mini 结构
+KPI（4 组，每组主+次要数据，整卡 tap 下钻 Level 2）:
+  组 1 本月新签:
+    主要: 本月新签金额 ¥
+    次要: 签约人数 人
+    Level 2 下钻: /pages/b/kpi/signed/ — 销售 + 教务（5/16 Q1 修订：教务也参与新签）
+                  显示顺序：销售 list 在前 / 教务 list 在后（教务新签是「次要业绩」）
+  组 2 本月续约:
+    主要: 本月续约金额 ¥
+    次要: 续约人数 人
+    Level 2 下钻: /pages/b/kpi/renewal/ — 销售 + 教务
+                  显示顺序：教务 list 在前 / 销售 list 在后（5/16 Q1 修订：教务续约是「主要业绩」， 是教务核心 4 件事之一）
+  组 3 本月消课:
+    主要: 本月消课金额 ¥
+    次要: 全部待消课金额 ¥ — 未消课总金额（机构未确认收入语义）
+    Level 2 下钻: /pages/b/kpi/consumption/ — 仅教务聚合
+  组 4 学员状态:
+    主要: 活跃学员 人
+    次要: 不活跃学员 人
+    Level 2 下钻: /pages/b/kpi/student-activity/ — 活跃+不活跃学员明细 + 教务聚合
+
+OOUX 下钻链路 (5/16 拍板):
+  Level 1: home 4 KPI 组（每组 1 大 + 1 小）
+  Level 2: 4 个聚合 page（按销售/教务角色聚合 + 当前组主+次要数据 + 校区 picker）
+  Level 3: 点某销售/教务 → 该指标关联的学员明细（按业务场景：本指标关联 学员 not 全部负责学员）
+  Level 4: 点某学员 → /pages/b/student/detail/detail (OOUX 中心)
+
 震动提醒:
   - 低余额学员需续费
   - 退费审批待处理
@@ -48,19 +81,22 @@ KPI（4 卡）:
   - 校区管理 campus
   - 课程产品 products
   - 员工列表 staff
-手动 action:
-  - 跨校调动（人事/校区/资金）
-  - 看报表 export（本月/季/年）
-  - 漏斗 Top3 流失 + 一键付费提示
+手动 action (5/15 B-1 用户拍板修订):
+  # - 跨校调动 → 删除（5/15 拍板「不要」）
+  - 看报表 export（本月/季/年） → 推 Sprint Y
+  - 漏斗 Top3 流失 + 一键付费提示 → 推 Sprint Y
 不该有:
   - + 排课 / + 反馈 / 批改作业 / 考勤记录入口
   - roleEntries（5 home 合并后跳工作台入口删）
+  - 漏斗转化率 KPI（5/16 拍板新结构不含漏斗，漏斗走 tabbar 入口）
 ```
 
 ### 校长 home（boss 视角）
 
 ```yaml
-布局: mirror 老板 + 多本校业务控制项
+布局: mirror 老板 4 KPI 组结构（5/16 拍板）+ 多本校业务控制项
+校区 picker: boss 单校固定，不显示 picker（与 admin 区分）
+Level 2-4 下钻: 同 admin 4 KPI 组下钻链路，仅 scope 限本校
 chip: 锁住，点击提示「申请跨校权限」
 跨校拦截:
   - 其他校区 KPI / 老师 / 学员
@@ -255,10 +291,50 @@ KPI:
 - subscription：V10 拍板跨机构共享订阅
 - refer：V20 推荐机制（老师起点 / 也可教务起）
 
+### 家长注册合规元数据（2026-05-13 leader round 2 补登）
+
+合规元数据非业务字段，但通过 `POST /api/parents/register` body 写入后端 V40 backfill 加的 `consent_*` 列。
+登记在此防 5/10 字段矩阵漏对账（3 审 round 2 business validator P2 + security P2-C 共识）。
+
+| 字段 | 写入时机 | 后端列 | 用途 |
+|---|---|---|---|
+| `consentAt` | parent 注册成功 | `parents.consent_at` (timestamp) | 同意时间（个保法 §17 取证） |
+| `consentVersion` | parent 注册成功 | `parents.consent_version` (varchar) | 协议版本（升版触发 onShow 强制重勾） |
+| `consentTerms` | parent 注册成功 | `parents.consent_terms` (jsonb) | 同意的协议清单（user-terms/privacy-policy/minor-protection） |
+| `birthYear` | parent 注册成功 | `parents.birth_year` (smallint) | 18+ 校验留证（不存完整出生日期，最小化原则） |
+
+依据：
+- 个保法 §17 「敏感个人信息单独同意」需留证
+- 律师协议 §4.1.2「不满 18 周岁拒绝」需可审计
+- 个保法 §47 撤回同意场景下后端需知道用户曾同意过哪个版本
+
+权限：
+- 家长 ✅ 自己可查可撤回（C 端《我的 - 隐私设置》触发）
+- 老板/校长 👁 仅看 consentVersion + consentAt 不看 birthYear（PII 邻近信息）
+- 销售/老师/教务/财务 ❌ 不应触达 consent 元数据（不在业务字段矩阵）
+
+前端实现：`miniprogram/pages/c/auth/login.js` const `CONSENT_VERSION = 'v1.0-2026-05-13'`
+
 ### 后台 5 对象
 `campus / course-product / user / promotion / tenant`
 - campus：老板 ✅ / 校长 👁 本校
 - course-product：老板 ✅ / 校长 ✅ 本校 / 教务 👁
+  - **5/15 增量**：course-product 是 OOUX 中心对象之一（与 student 并列），从课程下钻到关联学员/老师/排课
+  - **聚合字段**（detail page 展示）：`studentCount` / `teacherCount` / `weeklyConsumedYuan`
+  - **金额可见角色**（5/15 r2 用户拍板）：**sales / academic / boss / admin** 4 角色可看 `standardPrice` + `weeklyConsumedYuan`（真实价格和产品定价）
+    - 与 L233 合同价格矩阵区分：合同金额（个体学员折扣后实付）属隐私二级；课程产品定价是机构经营层指标，4 角色可见
+    - **不可见角色**：teacher / finance / parent
+    - 当前实施 `boss.products.view` ACTION_ALLOW = `[admin, boss, academic]`，sales 加入推 Sprint X（需配 scope filter 防 sales 看其他销售的客户名单 + 后端学员 list 加 `?ownerSalesId=` 参数）
+  - **关联 list**（detail page 展示）：
+    - `students[]`（关联此课程的学员，按 contract.course_product_id 过滤 active）
+    - `teachers[]`（关联此课程的在职老师，通过 schedule.course_product_id 派生）
+  - **OOUX 下钻链路**：
+    1. tabbar「课程」(admin/boss) → `pages/b/boss/products/list` 课程 list（5/15 拍板加 tabbar 入口）
+    2. list 卡 tap → `pages/b/boss/products/detail?productId=xxx` 课程详情
+    3. detail 学员卡 tap → `pages/b/student/detail?id=xxx` student/detail（OOUX 一站式）
+    4. detail 老师卡 tap → `pages/b/schedule/calendar?teacherId=xxx` 老师课表（schedule 维度查阅）
+  - **后端 endpoint**：`GET /api/db/course-products/:productId/stats` 聚合返回上述字段
+  - **PII mask**：teacher.phone/idCard 一级隐私不返回（按 fields-by-role.md L210）；student.name 按 student.basic 矩阵
 - user：老板 ✅ / 校长 ✅ 本校 / 教务 👁 本校
 - promotion：仅 Admin 平台方（minxin.top），机构内 ❌
 - tenant 订阅：仅老板（admin）
