@@ -53,6 +53,15 @@ export interface Customer {
   studentName: string | null;
   gradeOrAge: string | null;
   intendedSubject: string | null;
+  // V55 (2026-05-21) JOIN students V55 字段（仅 findById 含）
+  studentGender?: string | null;
+  school?: string | null;
+  studentPhone?: string | null;
+  availableTime?: string[] | null;
+  // § 12B (2026-05-21) JOIN customers 家长字段（仅 findById 含）
+  parentName?: string | null;
+  parentGender?: string | null;
+  primaryMobile?: string | null;
   ownerUserId: string | null;
   stage: CustomerStage;
   source: string | null;
@@ -376,6 +385,21 @@ export class CustomerRepository {
       studentName: r.student_name || null,
       gradeOrAge: r.grade_or_age || null,
       intendedSubject: r.intended_subject || null,
+      // V55 (2026-05-21) — 仅 findById 含
+      studentGender: r.student_gender ?? null,
+      school: r.school ?? null,
+      studentPhone: r.student_phone ?? null,
+      availableTime: Array.isArray(r.available_time) ? (r.available_time as string[]) : null,
+      // § 12B (2026-05-21) — 仅 findById JOIN customers 含
+      parentName: r.c_parent_name ?? null,
+      parentGender: r.c_parent_gender ?? null,
+      primaryMobile: r.c_primary_mobile_encrypted || r.c_primary_mobile
+        ? this.decryptPrimaryMobile(
+            r.id,
+            r.c_primary_mobile_encrypted as Buffer | null,
+            r.c_primary_mobile as string | null,
+          )
+        : null,
       ownerUserId: r.owner_user_id,
       stage: r.stage as CustomerStage,
       source: r.source,
@@ -543,11 +567,23 @@ export class CustomerRepository {
   }
 
   async findById(tenantSchema: string, id: string): Promise<Customer | null> {
+    // § 12B (2026-05-21): detail 页需要两板块全字段
+    //   - students.gender / school / phone / available_time (V55)
+    //   - customers.parent_name / parent_gender / primary_mobile (家长信息)
+    //   primary_mobile_encrypted JOIN 拿来由 mapCustomerRow decryptPrimaryMobile 处理
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT o.*, s.student_name, s.grade_or_age, s.intended_subject
+      `SELECT o.*,
+              s.student_name, s.grade_or_age, s.intended_subject,
+              s.gender AS student_gender, s.school, s.phone AS student_phone,
+              s.available_time,
+              c.parent_name AS c_parent_name,
+              c.parent_gender AS c_parent_gender,
+              c.primary_mobile AS c_primary_mobile,
+              c.primary_mobile_encrypted AS c_primary_mobile_encrypted
          FROM opportunities o
          LEFT JOIN students s ON s.id = o.student_id
+         LEFT JOIN customers c ON c.id = s.customer_id
         WHERE o.id = $1`,
       [id],
     );
