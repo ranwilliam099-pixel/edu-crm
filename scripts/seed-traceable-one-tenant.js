@@ -105,9 +105,10 @@ function daysFromNow(d) { return new Date(NOW.getTime() + d * 86400000); }
 function thisMonthStr() { return NOW.toISOString().slice(0, 7); }
 
 // ====== 角色 user 规划 ======
+// 注: V2 schema users.campus_id NOT NULL FK campuses(id) — admin 用同一 campus 兼容 (拍板说 admin 跨校, V2 schema 未实现 NULL)
 const USERS = [
-  // i=0 admin (跨校)
-  { i: 0, role: 'admin',     name: '老板·张总',  phone: '13800001000', campus_id: null },
+  // i=0 admin (本 demo 单校, 占位 campus)
+  { i: 0, role: 'admin',     name: '老板·张总',  phone: '13800001000', campus_id: CAMPUS_ID },
   // i=1 boss (本校长)
   { i: 1, role: 'boss',      name: '校长·王主任', phone: '13800001001', campus_id: CAMPUS_ID },
   // i=2-3 sales (2 销售)
@@ -384,7 +385,12 @@ sql.push(`  ${TENANT_SCHEMA}.monthly_kpi_targets,`);
 sql.push(`  ${TENANT_SCHEMA}.audit_log`);
 sql.push(`RESTART IDENTITY CASCADE;`);
 sql.push('');
-sql.push(`-- (campuses 表保留 — 复用现有 campus_id=${CAMPUS_ID.slice(0,8)}...)`);
+sql.push(`-- (campuses 表保留 + UPSERT 占位行确保 FK 完整)`);
+sql.push(
+  `INSERT INTO campuses (id, name, status, created_by, updated_by)`
+  + `\n VALUES (${S(CAMPUS_ID)}, '示范校区·5月22种子', '启用', ${S(ADMIN_USER_ID)}, ${S(ADMIN_USER_ID)})`
+  + `\n ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;`
+);
 sql.push('');
 
 // ====== Step 2: users (10 个) ======
@@ -396,7 +402,7 @@ for (const u of USERS) {
   sql.push(`-- ${u.role} ${u.name} (id=${u.id.slice(0,8)}...)`);
   sql.push(
     `INSERT INTO users (id, name, mobile, role, campus_id, status, password_hash, password_updated_at, created_by, updated_by)`
-    + `\n VALUES (${S(u.id)}, ${S(u.name)}, ${S(u.phone)}, ${S(u.role)}, ${u.campus_id ? S(u.campus_id) : 'NULL'}, 'active', ${S(PASSWORD_HASH)}, NOW(), ${S(u.id)}, ${S(u.id)});`
+    + `\n VALUES (${S(u.id)}, ${S(u.name)}, ${S(u.phone)}, ${S(u.role)}, ${u.campus_id ? S(u.campus_id) : 'NULL'}, '启用', ${S(PASSWORD_HASH)}, NOW(), ${S(u.id)}, ${S(u.id)});`
   );
 }
 sql.push('');
@@ -410,7 +416,7 @@ for (const t of TEACHERS) {
   sql.push(`-- 老师 ${t.name} (id=${t.id.slice(0,8)}..., user=${t.user_id.slice(0,8)}...)`);
   sql.push(
     `INSERT INTO teachers (id, campus_id, name, phone, phone_encrypted, user_id, subjects, status, created_by, updated_by)`
-    + `\n VALUES (${S(t.id)}, ${S(t.campus_id)}, ${S(t.name)}, ${S(t.phone)}, ${B(t.phone_enc)}, ${S(t.user_id)}, ${J([t.subject])}, 'active', ${S(ADMIN_USER_ID)}, ${S(ADMIN_USER_ID)});`
+    + `\n VALUES (${S(t.id)}, ${S(t.campus_id)}, ${S(t.name)}, ${S(t.phone)}, ${B(t.phone_enc)}, ${S(t.user_id)}, ${J([t.subject])}, '在职', ${S(ADMIN_USER_ID)}, ${S(ADMIN_USER_ID)});`
   );
 }
 sql.push('');
