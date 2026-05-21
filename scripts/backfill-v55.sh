@@ -48,7 +48,7 @@ PG_USER_OS="${PG_USER_OS:-postgres}"   # OS 层用户（sudo -u）
 COS_BUCKET="${COS_BUCKET:-}"           # 若已配 coscmd，会自动探测
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIGRATION_FILE="${REPO_ROOT}/migrations/V55__invoices_payment_method_and_paid_at.sql"
+MIGRATION_FILE="${REPO_ROOT}/migrations/V55__customers_students_extra_fields.sql"
 
 # ===== 参数解析 =====
 APPLY=false

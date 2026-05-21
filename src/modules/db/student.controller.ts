@@ -8,6 +8,7 @@ import {
   NotFoundException,
   Optional,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -197,6 +198,42 @@ export class StudentController {
    *   - UX 友好：不抛 403，自动改为查"自己"（一致 listAll 设计）
    *   - 未绑定 teachers.user_id 的 teacher → 空列表（fail-safe，不抛错）
    */
+  /**
+   * 2026-05-21 销售可随时编辑学员字段（V55 新增 + 已有 6 字段）
+   *   PATCH /db/students/:id?tenantSchema=
+   *   Body: { studentName?, gradeOrAge?, intendedSubject?, gender?, school?, phone?, availableTime? }
+   *   RBAC: sales/sales_manager/boss/admin/academic/academic_admin 可改
+   *         （RbacGuard 已挡 finance/teacher/parent；service 层暂不校验 owner_sales_id 收紧, Sprint Y 补）
+   */
+  @Patch(':id')
+  @UseGuards(RbacGuard)
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin')
+  @HttpCode(HttpStatus.OK)
+  async updateStudent(
+    @Param('id') id: string,
+    @Query('tenantSchema') tenantSchema: string,
+    @Body()
+    body: {
+      studentName?: string;
+      gradeOrAge?: string | null;
+      intendedSubject?: string | null;
+      gender?: string | null;
+      school?: string | null;
+      phone?: string | null;
+      availableTime?: string[] | null;
+    },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ ok: true }> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!id || id.length !== 32) {
+      throw new BadRequestException('studentId must be 32-char ULID');
+    }
+    const operatorUserId = req.user?.sub;
+    if (!operatorUserId) throw new BadRequestException('user sub required');
+    await this.repo.update(tenantSchema, id, operatorUserId, body);
+    return { ok: true };
+  }
+
   /**
    * 2026-05-21 新增 — 学员档案完整详情（b/student/detail page 用）
    *   GET /db/students/:id?tenantSchema=tenant_xxx

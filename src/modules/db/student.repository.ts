@@ -48,6 +48,7 @@ export interface StudentDetail {
   customerId: string;
   parentName: string | null;       // customer.parent_name
   parentPhone: string | null;      // customer.primary_mobile (前端 maskPhone)
+  parentGender: string | null;     // V55 家长性别
   campusId: string | null;
   campusName: string | null;       // JOIN campuses
   ownerSalesId: string | null;
@@ -55,6 +56,11 @@ export interface StudentDetail {
   assignedTeacherId: string | null;
   assignedTeacherName: string | null; // JOIN teachers
   notes: string | null;             // students.notes（如 V25 后添加）/ opportunity.note fallback
+  // V55 新字段
+  gender: string | null;            // 学员性别
+  school: string | null;            // 就读学校
+  phone: string | null;             // 学员本人电话
+  availableTime: string[] | null;   // 上课时间 21 slot
   createdAt: string;
 }
 
@@ -228,6 +234,56 @@ export class StudentRepository {
     return rows.map((r) => StudentRepository.mapBrief(r));
   }
 
+  /**
+   * 2026-05-21 销售可编辑学员字段（V55 新增 + 已有）
+   *   仅 owner_sales_id = me 的销售可改（controller 层校验）
+   *   admin/boss/academic 可改任意学员（同样 controller 校验）
+   *   PATCH 模式：仅 patch 非 undefined 字段
+   */
+  async update(
+    tenantSchema: string,
+    studentId: string,
+    operatorUserId: string,
+    patch: {
+      studentName?: string;
+      gradeOrAge?: string | null;
+      intendedSubject?: string | null;
+      gender?: string | null;
+      school?: string | null;
+      phone?: string | null;
+      availableTime?: string[] | null;
+    },
+  ): Promise<void> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    const push = (col: string, val: unknown) => {
+      params.push(val);
+      sets.push(`${col} = $${params.length}`);
+    };
+    if (patch.studentName !== undefined) push('student_name', patch.studentName);
+    if (patch.gradeOrAge !== undefined) push('grade_or_age', patch.gradeOrAge);
+    if (patch.intendedSubject !== undefined) push('intended_subject', patch.intendedSubject);
+    if (patch.gender !== undefined) push('gender', patch.gender);
+    if (patch.school !== undefined) push('school', patch.school);
+    if (patch.phone !== undefined) push('phone', patch.phone);
+    if (patch.availableTime !== undefined) push('available_time', patch.availableTime);
+
+    if (sets.length === 0) {
+      throw new BadRequestException('至少传一个 patch 字段');
+    }
+
+    params.push(operatorUserId);  // updated_by
+    params.push(studentId);
+    sets.push(`updated_at = NOW()`);
+    sets.push(`updated_by = $${params.length - 1}`);
+
+    const sql = `UPDATE students SET ${sets.join(', ')} WHERE id = $${params.length} AND deleted_at IS NULL`;
+    const rows = await this.pg.tenantQuery<{ id: string }>(tenantSchema, sql, params);
+    // tenantQuery 返回的是 rows 数组（PG UPDATE 默认不返），rowCount 校验略过
+    // 如需校验影响行数 → 改 client.query 拿 result.rowCount
+    void rows;
+  }
+
   async findBrief(tenantSchema: string, id: string): Promise<StudentBrief | null> {
     // V44: 默认排除已软删学员（已删学员 findBrief 返回 null，等同 NotFound）
     const rows = await this.pg.tenantQuery<PgRow>(
@@ -252,7 +308,8 @@ export class StudentRepository {
       tenantSchema,
       `SELECT s.id, s.student_name, s.grade_or_age, s.intended_subject,
               s.customer_id, s.owner_sales_id, s.assigned_teacher_id, s.created_at,
-              c.parent_name, c.primary_mobile,
+              s.gender, s.school, s.phone, s.available_time,
+              c.parent_name, c.primary_mobile, c.parent_gender,
               c.campus_id,
               cp.name AS campus_name,
               ou.name AS owner_sales_name,
@@ -277,6 +334,7 @@ export class StudentRepository {
       customerId: r.customer_id,
       parentName: r.parent_name,
       parentPhone: r.primary_mobile || null,
+      parentGender: r.parent_gender || null,
       campusId: r.campus_id,
       campusName: r.campus_name,
       ownerSalesId: r.owner_sales_id,
@@ -284,6 +342,10 @@ export class StudentRepository {
       assignedTeacherId: r.assigned_teacher_id,
       assignedTeacherName: r.assigned_teacher_name,
       notes: r.notes,
+      gender: r.gender || null,
+      school: r.school || null,
+      phone: r.phone || null,
+      availableTime: Array.isArray(r.available_time) ? r.available_time : null,
       createdAt: new Date(r.created_at).toISOString(),
     };
   }

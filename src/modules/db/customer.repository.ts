@@ -129,11 +129,18 @@ export class CustomerRepository {
       primaryMobile: string;
       campusId: string;
       ownerSalesId: string;
+      // 2026-05-21 V55 新字段：家长性别
+      parentGender?: string;
       // student 可选 — 提供则一并建学生（关联 customer + opportunity）
       studentId?: string;
       studentName?: string;
-      gradeOrAge?: string;
+      gradeOrAge?: string;          // 含「未上学」枚举
       intendedSubject?: string;
+      // 2026-05-21 V55 新字段：学员
+      studentGender?: string;       // 男/女/其他
+      school?: string;              // 就读学校（含「未上学」字面值）
+      studentPhone?: string;        // 学员本人电话
+      availableTime?: string[];     // 21 slot keys: mon-am/.../sun-eve
       // opportunity 字段
       stage?: string;
       source?: string;
@@ -171,13 +178,14 @@ export class CustomerRepository {
         const mobileEncrypted = this.encryptMobile(mobilePlain);
         await client.query(
           `INSERT INTO customers (
-             id, parent_name,
+             id, parent_name, parent_gender,
              primary_mobile, primary_mobile_hash, primary_mobile_encrypted,
              campus_id, owner_id, created_by, updated_by
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7)`,
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $8)`,
           [
             payload.customerId,
             payload.parentName,
+            payload.parentGender || null,     // V55 家长性别
             mobilePlain,
             mobileHash,
             mobileEncrypted,
@@ -186,20 +194,27 @@ export class CustomerRepository {
           ],
         );
 
-        // 2. student（可选）
+        // 2. student（可选）— V55 加 gender/school/phone/available_time
         let createdStudentId: string | null = null;
         if (payload.studentName && payload.studentId) {
           await client.query(
             `INSERT INTO students
                (id, student_name, customer_id, grade_or_age, intended_subject,
+                gender, school, phone, available_time,
                 owner_sales_id, created_by, updated_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $6, $6)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $10)`,
             [
               payload.studentId,
               payload.studentName,
               payload.customerId,
               payload.gradeOrAge || null,
               payload.intendedSubject || null,
+              payload.studentGender || null,                          // V55
+              payload.school || null,                                 // V55
+              payload.studentPhone || null,                           // V55
+              payload.availableTime && payload.availableTime.length
+                ? payload.availableTime
+                : null,                                               // V55 TEXT[]
               payload.ownerSalesId,
             ],
           );
