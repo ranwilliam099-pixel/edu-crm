@@ -216,33 +216,61 @@ export class ContractRepository {
         'courseProductId 与 courseProductName 至少传一个（销售自填或选既有产品）',
       );
     }
-    const rows = await this.pg.tenantQuery<PgRow>(
-      tenantSchema,
-      `INSERT INTO contracts
-         (id, student_id, course_product_id, course_product_name, owner_user_id, opportunity_id, campus_id,
-          class_type, lesson_hours, standard_price, discount_amount, gift_hours,
-          total_amount, order_type, status, signed_at, created_by, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending',$15,$5,$5)
-       RETURNING *`,
-      [
-        payload.id,
-        payload.studentId,
-        payload.courseProductId || null,
-        payload.courseProductName || null,
-        payload.ownerUserId,
-        payload.opportunityId || null,
-        payload.campusId || null,
-        payload.classType || null,
-        payload.lessonHours,
-        payload.standardPrice,
-        payload.discountAmount ?? 0,
-        payload.giftHours ?? 0,
-        payload.totalAmount,
-        payload.orderType || '新签',
-        payload.signedAt || new Date().toISOString(),
-      ],
+    // 2026-05-21 真机 P0 业务流修：合同创建同 transaction 自动推进 opportunity.stage = '已报名'
+    //   旧行为：INSERT contracts 但 customer.stage 仍是「咨询中」(opportunity 未推进)
+    //   新行为：同 transaction 内 UPDATE 该 student 所有 active opportunity stage → '已报名'
+    //          customer 详情下次拉数据时（mapper 从 opportunity JOIN）自动显示「已签约」
+    //   原子性：合同写入 + opportunity 推进必须同 transaction，任一失败全 rollback
+    const result = await this.pg.transaction(
+      async (client) => {
+        // 1. INSERT contracts (原有)
+        const insertRes = await client.query(
+          `INSERT INTO contracts
+             (id, student_id, course_product_id, course_product_name, owner_user_id, opportunity_id, campus_id,
+              class_type, lesson_hours, standard_price, discount_amount, gift_hours,
+              total_amount, order_type, status, signed_at, created_by, updated_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending',$15,$5,$5)
+           RETURNING *`,
+          [
+            payload.id,
+            payload.studentId,
+            payload.courseProductId || null,
+            payload.courseProductName || null,
+            payload.ownerUserId,
+            payload.opportunityId || null,
+            payload.campusId || null,
+            payload.classType || null,
+            payload.lessonHours,
+            payload.standardPrice,
+            payload.discountAmount ?? 0,
+            payload.giftHours ?? 0,
+            payload.totalAmount,
+            payload.orderType || '新签',
+            payload.signedAt || new Date().toISOString(),
+          ],
+        );
+        // 2. UPDATE opportunity stage → '已报名'
+        //    精确路径：payload.opportunityId 提供时 update 这条
+        //    fallback：未提供时按 student_id 批量 update（销售可能未传 opportunityId）
+        //    where stage NOT IN ('已报名','已失单') 防止覆盖已失单状态
+        if (payload.opportunityId) {
+          await client.query(
+            `UPDATE opportunities SET stage = '已报名', updated_at = NOW(), updated_by = $1
+             WHERE id = $2 AND stage NOT IN ('已报名','已失单')`,
+            [payload.ownerUserId, payload.opportunityId],
+          );
+        } else {
+          await client.query(
+            `UPDATE opportunities SET stage = '已报名', updated_at = NOW(), updated_by = $1
+             WHERE student_id = $2 AND stage NOT IN ('已报名','已失单')`,
+            [payload.ownerUserId, payload.studentId],
+          );
+        }
+        return insertRes.rows[0];
+      },
+      { tenantSchema },
     );
-    return ContractRepository.mapRow(rows[0]);
+    return ContractRepository.mapRow(result);
   }
 
   /**
