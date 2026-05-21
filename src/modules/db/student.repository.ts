@@ -262,7 +262,7 @@ export class StudentRepository {
          FROM students s
          LEFT JOIN customers c ON c.id = s.customer_id
          LEFT JOIN public.campuses cp ON cp.id = c.campus_id
-         LEFT JOIN public.users ou ON ou.id = s.owner_sales_id
+         LEFT JOIN users ou ON ou.id = s.owner_sales_id
          LEFT JOIN teachers t ON t.id = s.assigned_teacher_id
         WHERE s.id = $1 AND s.deleted_at IS NULL`,
       [id],
