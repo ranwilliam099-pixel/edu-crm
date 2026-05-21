@@ -50,4 +50,9 @@ CREATE INDEX IF NOT EXISTS idx_monthly_kpi_target_month_role
 COMMENT ON TABLE monthly_kpi_targets IS
   'V56 (2026-05-22 SSOT §6.8) 月度消课目标 — 校长下发 / 老板聚合 / 目标硬上限 sum ≤ sum(本月可消课时)';
 
+-- 应用层 PG 用户 owner（生产实测：sudo -u postgres 创建表默认 owner=postgres
+-- 应用 eduapp 用户无权限 → query 抛 permission denied / fail-open 兜住但 4 字段永远 0）
+-- 对齐其他表 owner（teachers / students 等都是 eduapp）
+ALTER TABLE monthly_kpi_targets OWNER TO eduapp;
+
 COMMIT;
