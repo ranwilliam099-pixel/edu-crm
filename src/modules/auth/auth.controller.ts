@@ -287,7 +287,7 @@ export class AuthController {
         { tenantId: match.tenantId, role: match.role, campusId: match.campusId, phoneLast4: body.phone.slice(-4) },
         req,
       );
-      return this.signBUserToken(req, match);
+      return this.signBUserToken(req, match, body.phone);
     }
 
     // 2+ rows → 返候选 list（前端弹选择器 → 调 /login-confirm，D4 无 session 重发）
@@ -382,7 +382,7 @@ export class AuthController {
       { tenantId: selected.tenantId, role: selected.role, campusId: selected.campusId, endpoint: 'login-confirm', phoneLast4: body.phone.slice(-4) },
       req,
     );
-    return this.signBUserToken(req, selected);
+    return this.signBUserToken(req, selected, body.phone);
   }
 
   /**
@@ -397,6 +397,7 @@ export class AuthController {
   private async signBUserToken(
     req: AuthenticatedRequest,
     match: BUserMatch,
+    phone: string,
   ): Promise<{
     token: string;
     refreshToken: string;
@@ -446,6 +447,13 @@ export class AuthController {
       tenantId: match.tenantId,
       role: match.role as TenantRole,
       campusId,
+      // 2026-05-22 (SSOT §14.2 佐证 mine 页 fallback 占位):
+      //   BUserMatch 已带 userName/tenantName/campusName (phone-lookup.service.ts L29-50)
+      //   campusName 跨校 role (admin/hr campusId=null) 时为空串 → undefined 让前端走「全部校区」
+      name: match.userName,
+      tenantName: match.tenantName,
+      campusName: match.campusName || undefined,
+      phone,
     };
     // T6a B 端 token aud='b-app'
     const token = this.jwt.sign(signPayload, { jwtid: jti, audience: AUDIENCE_B_APP });
@@ -635,13 +643,19 @@ export class AuthController {
       }
 
       const accessJti = ulid();
-      const signPayload: Pick<JwtPayload, 'sub' | 'tenantId' | 'role' | 'campusId'> = {
+      const signPayload: Omit<JwtPayload, 'jti' | 'aud'> = {
         sub: oldRow.subjectId,
         tenantId: oldRow.tenantId,
         role: realUser.role,
         // realUser.campusId 类型为 string（user.repository.ts:25），但 JwtPayload.campusId
         // 允许 null（跨校 role 如 boss / admin / hr）— V2 schema users.campus_id 可空
         campusId: realUser.campusId ?? null,
+        // 2026-05-22 (SSOT §14.2): refresh 时仅补 name + phone (user.repository 已有)
+        // TODO Sprint Y: tenantName + campusName 需额外 query public.tenants + tenant.campuses
+        //   本次留前端 fallback 占位 (24h+ refresh 后才触发, UX 短暂占位可接受)
+        //   首次 login 走 signBUserToken 已含完整 4 字段
+        name: realUser.name,
+        phone: realUser.mobile,
       };
       const accessToken = this.jwt.sign(signPayload, {
         jwtid: accessJti,

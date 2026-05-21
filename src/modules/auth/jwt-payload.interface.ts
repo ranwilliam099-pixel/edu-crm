@@ -31,6 +31,14 @@ export interface JwtPayload {
   iat?: number;
   jti?: string;
   aud?: string;
+  // 2026-05-22 (SSOT §14.2 佐证: 用户截图 mine 页「当前机构 · 本校区」fallback 占位)
+  // 全 optional 防旧 token 兼容（旧 token 解析后字段 undefined → 前端 fallback 占位）
+  // mine 页 / nav 顶部直接用 payload.name / tenantName / campusName / phone
+  // 不再走「当前机构」「本校区」hardcoded fallback
+  name?: string;
+  tenantName?: string;
+  campusName?: string;
+  phone?: string;
 }
 
 /**
