@@ -156,7 +156,11 @@ export class CustomerRepository {
       throw new BadRequestException('当传 studentName 时必须传 32-char studentId');
     }
 
-    return this.pg.transaction(
+    // 2026-05-21 真机 P0 修：PG unique_violation (23505) 转 ConflictException (409)
+    //   之前透传成 GlobalExceptionFilter 500 → 前端「加载失败」无意义提示
+    //   现在按 constraint 名映射友好提示，保留 audit 上下文
+    try {
+      return await this.pg.transaction(
       async (client) => {
         // 1. customer（家长）
         //    V41 A02-4：primary_mobile 明文 + primary_mobile_hash（HMAC 等值查询）
@@ -236,6 +240,68 @@ export class CustomerRepository {
       },
       { tenantSchema },
     );
+    } catch (err) {
+      // 2026-05-21 真机 P0 修：PG unique_violation → 业务幂等
+      //
+      // 场景：第一次 POST 已成功（201 写入 customer），网络慢/双击/前端重试 → 第二次 POST 同手机号
+      //   旧行为：unique constraint 抛 pg error → GlobalExceptionFilter 500 → 前端「加载失败」
+      //   新行为：catch unique violation → SELECT existing → 返第一次的成功结果（真幂等）
+      //          前端体感「保存成功」，跳客户详情时按 customerId 拉数据
+      //
+      // 防销售跨人抢单：同手机号 + 不同 owner_user_id → 不返 existing（防 B 抢 A 客户）
+      //   返 ConflictException 但不暴露具体 owner（仅提示「请联系管理员核实归属」）
+      if (err && (err as { code?: string }).code === '23505') {
+        const constraint = (err as { constraint?: string }).constraint || '';
+        const detail = (err as { detail?: string }).detail || '';
+
+        // customer.primary_mobile_key 冲突 → 业务幂等
+        if (constraint.includes('primary_mobile') || detail.includes('primary_mobile')) {
+          const mobileHash = this.hashMobile(payload.primaryMobile);
+          const existingRows = await this.pg.tenantQuery<{
+            id: string;
+            owner_user_id: string | null;
+          }>(
+            tenantSchema,
+            `SELECT id, owner_user_id FROM customers
+             WHERE primary_mobile_hash = $1 LIMIT 1`,
+            [mobileHash],
+          );
+          if (existingRows.length > 0) {
+            const ex = existingRows[0];
+            // 同 owner（含 NULL 公海池被同人 claim）→ 真幂等成功
+            if (ex.owner_user_id === payload.ownerSalesId) {
+              this.logger.log(
+                `[customer.createSelfBuilt] idempotent return existing customer ${ex.id} (mobile dup, same owner ${payload.ownerSalesId})`,
+              );
+              return {
+                customerId: ex.id,
+                // 已存在的 opportunity / student 在此不返 — 前端跳详情时按 customerId 拉
+                opportunityId: '',
+                studentId: null,
+              };
+            }
+            // 不同 owner → 防销售抢单
+            this.logger.warn(
+              `[customer.createSelfBuilt] mobile dup blocked: tried by ${payload.ownerSalesId}, existing owner=${ex.owner_user_id}`,
+            );
+            throw new ConflictException('该客户已存在，请联系管理员核实归属');
+          }
+          // 查不到但报 unique violation（罕见 race condition）
+          throw new ConflictException('客户信息冲突，请重试');
+        }
+
+        // 其他 unique constraint（student / opportunity）→ 暂保留 409 提示
+        // Sprint Y backlog: student / opportunity 也做业务幂等
+        if (constraint.includes('student') || detail.includes('student')) {
+          throw new ConflictException('学员信息重复');
+        }
+        if (constraint.includes('opportunit') || detail.includes('opportunit')) {
+          throw new ConflictException('销售线索已存在');
+        }
+        throw new ConflictException('数据冲突，请检查输入');
+      }
+      throw err;
+    }
   }
 
   /**
