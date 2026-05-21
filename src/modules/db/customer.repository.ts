@@ -352,10 +352,26 @@ export class CustomerRepository {
   async listMine(
     tenantSchema: string,
     ownerUserId: string,
-    options: { stage?: CustomerStage; limit?: number; offset?: number } = {},
+    options: { stage?: CustomerStage | 'all'; limit?: number; offset?: number } = {},
   ): Promise<Customer[]> {
     const limit = options.limit ?? 50;
     const offset = options.offset ?? 0;
+    // 2026-05-21 真机 P0 修：stage='all' 拉全部（含已报名/已失单），前端 tab filter 用
+    //   旧默认行为：WHERE stage NOT IN ('已报名','已失单') 导致已签约客户从列表消失
+    //   新 'all' 选项：不加 stage 过滤，配合前端 stage tab 切换显示
+    if (options.stage === 'all') {
+      const rows = await this.pg.tenantQuery<PgRow>(
+        tenantSchema,
+        `SELECT o.*, s.student_name, s.grade_or_age, s.intended_subject
+           FROM opportunities o
+           LEFT JOIN students s ON s.id = o.student_id
+          WHERE o.owner_user_id = $1
+          ORDER BY o.urgent DESC, COALESCE(o.last_contact_at, o.created_at) DESC
+          LIMIT $2 OFFSET $3`,
+        [ownerUserId, limit, offset],
+      );
+      return rows.map((r) => this.mapCustomerRow(r));
+    }
     if (options.stage) {
       const rows = await this.pg.tenantQuery<PgRow>(
         tenantSchema,
