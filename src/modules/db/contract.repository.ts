@@ -210,12 +210,53 @@ export class ContractRepository {
     if (payload.totalAmount < 0) {
       throw new BadRequestException('totalAmount must be ≥ 0');
     }
-    // V29 销售自填检查：courseProductId 与 courseProductName 至少有一个
-    if (!payload.courseProductId && !payload.courseProductName) {
+    // 2026-05-21 用户拍板：签约课程必须从机构已创建产品选，禁止销售自填，价格强一致
+    //   1. courseProductId 必填（禁止销售自填新产品）
+    //   2. SELECT course_products WHERE id=$1 校验存在 + status='在售'
+    //   3. payload.standardPrice 与 course_products.standard_price 强一致（防 client 改价）
+    //   4. payload.lessonHours 与 course_products.lesson_package 强一致
+    //   5. courseProductName / classType 从产品表回填（不接受 client 传值）
+    if (!payload.courseProductId || payload.courseProductId.length !== 32) {
       throw new BadRequestException(
-        'courseProductId 与 courseProductName 至少传一个（销售自填或选既有产品）',
+        '必须从机构已创建课程产品中选择（courseProductId 32-char ULID 必填），不允许销售自填',
       );
     }
+    const productRows = await this.pg.tenantQuery<{
+      id: string;
+      product_name: string;
+      class_type: string | null;
+      lesson_package: number;
+      standard_price: number | string;
+      status: string;
+    }>(
+      tenantSchema,
+      `SELECT id, product_name, class_type, lesson_package, standard_price, status
+       FROM course_products WHERE id = $1 LIMIT 1`,
+      [payload.courseProductId],
+    );
+    if (productRows.length === 0) {
+      throw new BadRequestException(`课程产品不存在：${payload.courseProductId}`);
+    }
+    const product = productRows[0];
+    if (product.status !== '在售' && product.status !== 'active') {
+      throw new BadRequestException(
+        `课程产品已下架（${product.product_name} status=${product.status}），不能签约`,
+      );
+    }
+    const productPrice = Number(product.standard_price);
+    if (Math.abs(productPrice - payload.standardPrice) > 0.01) {
+      throw new BadRequestException(
+        `单价不一致：产品标价 ¥${productPrice.toFixed(2)} 与传入 ¥${payload.standardPrice.toFixed(2)}（防销售改价；前端请从产品下拉自动填）`,
+      );
+    }
+    if (Number(product.lesson_package) !== payload.lessonHours) {
+      throw new BadRequestException(
+        `课时数不一致：产品 ${product.lesson_package} 课时 与传入 ${payload.lessonHours}（产品标准课时包，不可改）`,
+      );
+    }
+    // 用产品表 product_name / class_type 强制回填（client 传值忽略）
+    const enforcedProductName = product.product_name;
+    const enforcedClassType = product.class_type || payload.classType || null;
     // 2026-05-21 真机 P0 业务流修：合同创建同 transaction 自动推进 opportunity.stage = '已报名'
     //   旧行为：INSERT contracts 但 customer.stage 仍是「咨询中」(opportunity 未推进)
     //   新行为：同 transaction 内 UPDATE 该 student 所有 active opportunity stage → '已报名'
@@ -234,14 +275,14 @@ export class ContractRepository {
           [
             payload.id,
             payload.studentId,
-            payload.courseProductId || null,
-            payload.courseProductName || null,
+            payload.courseProductId,        // 已校验非空 32-char
+            enforcedProductName,             // 用产品表 product_name 强制（不接受 client 传值）
             payload.ownerUserId,
             payload.opportunityId || null,
             payload.campusId || null,
-            payload.classType || null,
-            payload.lessonHours,
-            payload.standardPrice,
+            enforcedClassType,               // 用产品表 class_type 强制
+            payload.lessonHours,             // 已校验 = product.lesson_package
+            payload.standardPrice,           // 已校验 = product.standard_price
             payload.discountAmount ?? 0,
             payload.giftHours ?? 0,
             payload.totalAmount,
