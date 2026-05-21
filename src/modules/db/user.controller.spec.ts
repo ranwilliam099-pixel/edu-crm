@@ -95,6 +95,8 @@ describe('UserController', () => {
       mockRedis,
       mockRefreshTokenService,
       mockAuditLog,
+      // 2026-05-22 (SSOT §6.7): admin 建 teacher 联动 — mock 简单 spy
+      { insert: jest.fn().mockResolvedValue(undefined) } as any,
     );
   });
 

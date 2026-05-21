@@ -79,6 +79,8 @@ describe('UserController.createUser - Sprint X.2 (D2 SSOT §12.4)', () => {
       redis as unknown as RedisService,
       refreshToken as unknown as RefreshTokenService,
       auditLog as unknown as AuditLogRepository,
+      // 2026-05-22 (SSOT §6.7): admin 建 teacher 联动 INSERT teachers — mock 简单 spy
+      { insert: jest.fn().mockResolvedValue(undefined) } as any,
     );
   });
 
@@ -238,6 +240,8 @@ describe('UserController.deactivate - Sprint X.2 (D6 JWT 黑名单)', () => {
       redis as unknown as RedisService,
       refreshToken as unknown as RefreshTokenService,
       auditLog as unknown as AuditLogRepository,
+      // 2026-05-22 (SSOT §6.7): admin 建 teacher 联动 INSERT teachers — mock 简单 spy
+      { insert: jest.fn().mockResolvedValue(undefined) } as any,
     );
   });
 

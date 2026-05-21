@@ -21,6 +21,7 @@ import {
   InactiveWithPending,
   User,
 } from './user.repository';
+import { TeacherRepository } from './teacher.repository';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { RbacGuard } from '../../guards/rbac.guard';
@@ -60,6 +61,8 @@ export class UserController {
     private readonly redis: RedisService,
     private readonly refreshTokenService: RefreshTokenService,
     private readonly auditLog: AuditLogRepository,
+    // 2026-05-22 (SSOT §6.7) — admin 建 teacher role user 时自动联动 INSERT teachers
+    private readonly teacherRepo: TeacherRepository,
   ) {}
 
   /**
@@ -211,6 +214,65 @@ export class UserController {
       userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
       requestId: (req.headers['x-request-id'] as string | undefined) ?? null,
     });
+
+    // 2026-05-22 (SSOT §6.7 拍板)：role='teacher' 自动联动 INSERT teachers 双轨档案
+    //   实证：5/22 用户截图「张老师」users 表存在但 teachers 表无 row → feedback.controller
+    //         self-check 403「no teachers row bound to user」拒写月报/反馈
+    //   软件少内部审核 (§2.10)：不要求 admin 单独走教务申请建 teacher 档案 — 自动联动
+    //   失败 fallback：try/catch + audit_log 留痕 + backfill SQL 兜底（不引入 transaction
+    //   复杂度，双写失败概率极低）
+    if (body.role === 'teacher') {
+      try {
+        const teacherId = ulid().padEnd(32, '0').slice(0, 32);
+        await this.teacherRepo.insert(
+          body.tenantSchema,
+          {
+            id: teacherId,
+            campusId: finalCampusId,
+            name: created.name,
+            phone: created.mobile,
+            userId: created.id,
+            subjects: [],
+            status: '在职',
+          },
+          operatorUserId,
+        );
+        await this.auditLog.log(body.tenantSchema, {
+          actorUserId: operatorUserId,
+          actorRole: normalizeActorRole(req.user?.role),
+          action: 'teacher.auto-created-by-user-creation',
+          targetType: 'teacher',
+          targetId: teacherId,
+          before: null,
+          after: { userId: created.id, name: created.name, campusId: finalCampusId },
+          ip: req.ip ?? null,
+          userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+          requestId: (req.headers['x-request-id'] as string | undefined) ?? null,
+        });
+      } catch (err) {
+        // 不阻塞 user 创建主流程（user row 已存，teacher 联动失败由 backfill 兜底）
+        this.logger.error(
+          `[user.create-teacher-link] userId=${created.id} 联动 INSERT teachers 失败: ` +
+            `${(err as Error).message} — 需 backfill SQL 修补`,
+        );
+        try {
+          await this.auditLog.log(body.tenantSchema, {
+            actorUserId: operatorUserId,
+            actorRole: normalizeActorRole(req.user?.role),
+            action: 'teacher.auto-create-failed',
+            targetType: 'user',
+            targetId: created.id,
+            before: null,
+            after: { error: (err as Error).message, needsBackfill: true },
+            ip: req.ip ?? null,
+            userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+            requestId: (req.headers['x-request-id'] as string | undefined) ?? null,
+          });
+        } catch {
+          /* audit fail-open */
+        }
+      }
+    }
 
     return { user: created, initialPassword };
   }
