@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   ForbiddenException,
   Get,
@@ -7,6 +8,7 @@ import {
   HttpStatus,
   Logger,
   Optional,
+  Post,
   Query,
   Req,
   UseGuards,
@@ -185,6 +187,22 @@ export class KpiController {
 
     const result = await this.kpi.getTeacherHomeKpi(tenantSchema, userId);
 
+    // 2026-05-22 SSOT §6.8 KPI 4 字段合并（target / scheduled / attended / forecast）
+    //   注: teacher 视角 scopeId 不用，service 内部用 userId 反查 teacher_id 后按 teacher 维度算
+    try {
+      result.kpiSummary = await this.kpi.getMonthlyKpiSummary(
+        tenantSchema,
+        'teacher',
+        userId,
+        null,
+      );
+    } catch (e) {
+      // fail-open: 4 字段聚合失败不阻塞 home（kpiSummary undefined 前端 fallback 0）
+      this.logger.warn(
+        `[kpi.teacher-home] kpiSummary merge failed: ${(e as Error).message}`,
+      );
+    }
+
     // audit_log fail-open（success 路径写一次；不写 sub-card 明细）
     await this.tryAuditKpiRead(
       tenantSchema,
@@ -237,11 +255,117 @@ export class KpiController {
 
     const result = await this.kpi.getAcademicHomeKpi(tenantSchema, callerCampusId);
 
+    // 2026-05-22 SSOT §6.8 KPI 4 字段合并（target / scheduled / attended / forecast）
+    //   academic 视角 scopeId = callerCampusId（本校所有 schedule 聚合）
+    try {
+      result.kpiSummary = await this.kpi.getMonthlyKpiSummary(
+        tenantSchema,
+        'academic',
+        userId,
+        callerCampusId,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[kpi.academic-home] kpiSummary merge failed: ${(e as Error).message}`,
+      );
+    }
+
     await this.tryAuditKpiRead(
       tenantSchema,
       req,
       'kpi.academic_home.read.success',
       userId,
+    );
+
+    return result;
+  }
+
+  // ============================================================
+  // 2026-05-22 SSOT §6.8 set-target endpoint — 校长下发月度目标
+  // ============================================================
+  /**
+   * POST /api/db/kpi/set-target — 校长（boss）下发本校 academic / teacher 月度消课目标
+   *
+   * Body: { tenantSchema, targetRole: 'academic' | 'teacher', targetUserId, month,
+   *         targetLessons, note?, campusId? }
+   *
+   * RBAC (SSOT §6.8 + §2.10):
+   *   - @Roles('boss', 'admin') — 主入口校长 / 老板兜底（不日常下发）
+   *   - boss campusId 强制 = jwt.campusId (A04 防 client scope)
+   *   - admin 可任意 campusId（跨校）
+   *
+   * 目标硬上限 (SSOT §6.8): sum(月度目标) ≤ sum(本月可消课时)
+   *   → V1 不强校验（拍板说线下沟通解决），audit_log 留痕
+   *   → Sprint Y backlog: 加 controller 层硬上限校验
+   *
+   * 谁设定谁调整（SSOT §6.8）:
+   *   - UPSERT 模式: 同人同月 → UPDATE target_lessons
+   *   - audit_log 'kpi.target.set' / 'kpi.target.updated'
+   *
+   * 软件少内部审核（§2.10）: 校长直接设定，无审批流程
+   */
+  @Post('set-target')
+  @Roles('boss', 'admin')
+  @HttpCode(HttpStatus.OK)
+  async setMonthlyTarget(
+    @Body()
+    body: {
+      tenantSchema: string;
+      campusId?: string;
+      targetRole: 'academic' | 'teacher';
+      targetUserId: string;
+      month: string;
+      targetLessons: number;
+      note?: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ id: string; updated: boolean }> {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!body.targetRole || (body.targetRole !== 'academic' && body.targetRole !== 'teacher')) {
+      throw new BadRequestException(`targetRole must be 'academic' or 'teacher'`);
+    }
+    if (!body.targetUserId || body.targetUserId.length !== 32) {
+      throw new BadRequestException('targetUserId must be 32-char ULID');
+    }
+    if (!body.month || !/^\d{4}-\d{2}$/.test(body.month)) {
+      throw new BadRequestException(`month must be 'YYYY-MM' format`);
+    }
+    if (typeof body.targetLessons !== 'number' || body.targetLessons < 0) {
+      throw new BadRequestException('targetLessons must be >= 0');
+    }
+    const setByUserId = req.user?.sub;
+    if (!setByUserId) throw new BadRequestException('user sub required');
+
+    // A04 防御: boss 强制 jwt.campusId / admin 可任意
+    let finalCampusId = body.campusId;
+    if (req.user?.role === 'boss') {
+      finalCampusId = req.user.campusId || finalCampusId;
+      if (body.campusId && body.campusId !== req.user.campusId) {
+        throw new ForbiddenException(
+          'BOSS_CROSS_CAMPUS_DENIED: boss 只能下发本校目标 (jwt.campusId)',
+        );
+      }
+    }
+    if (!finalCampusId || finalCampusId.length !== 32) {
+      throw new BadRequestException('campusId required (32-char ULID)');
+    }
+
+    const result = await this.kpi.setMonthlyTarget(body.tenantSchema, {
+      campusId: finalCampusId,
+      targetRole: body.targetRole,
+      targetUserId: body.targetUserId,
+      month: body.month,
+      targetLessons: body.targetLessons,
+      setByBossUserId: setByUserId,
+      note: body.note,
+    });
+
+    // audit_log (SSOT §2.10 「留痕不审核」)
+    await this.tryAuditKpiRead(
+      body.tenantSchema,
+      req,
+      result.updated ? 'kpi.target.updated' : 'kpi.target.set',
+      setByUserId,
     );
 
     return result;

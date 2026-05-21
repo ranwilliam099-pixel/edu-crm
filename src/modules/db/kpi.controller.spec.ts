@@ -26,6 +26,9 @@ describe('KpiController (P4-X 2026-05-20)', () => {
     getSalesHomeKpi: jest.Mock;
     getTeacherHomeKpi: jest.Mock;
     getAcademicHomeKpi: jest.Mock;
+    // 2026-05-22 SSOT §6.8 KPI 4 字段
+    getMonthlyKpiSummary: jest.Mock;
+    setMonthlyTarget: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
 
@@ -139,6 +142,11 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       getSalesHomeKpi: jest.fn(),
       getTeacherHomeKpi: jest.fn(),
       getAcademicHomeKpi: jest.fn(),
+      // 2026-05-22 SSOT §6.8 KPI 4 字段 mock (默认返 0)
+      getMonthlyKpiSummary: jest.fn().mockResolvedValue({
+        target: 0, scheduled: 0, attended: 0, forecast: 0,
+      }),
+      setMonthlyTarget: jest.fn(),
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = new KpiController(

@@ -111,6 +111,22 @@ export interface TeacherHomeKpiResult {
   monthlyReferrals: { count: number };
   monthlyAttendance: { taught: number; leave: number; swap: number };
   todos: TeacherHomeTodo[];
+  // 2026-05-22 SSOT §6.8 KPI 4 字段（V56 monthly_kpi_targets 表数据源）
+  kpiSummary?: MonthlyKpiSummary;
+}
+
+/**
+ * 2026-05-22 SSOT §6.8 KPI 4 字段 — 月度统一指标
+ *   target     消课目标（monthly_kpi_targets.target_lessons / 无下发则 0）
+ *   scheduled  已排课节数（COUNT schedule WHERE start_at in 本月）
+ *   attended   已消课节数（schedule.status='attended'）
+ *   forecast   预计消课 = scheduled - attended - absent（未来还会消的）
+ */
+export interface MonthlyKpiSummary {
+  target: number;
+  scheduled: number;
+  attended: number;
+  forecast: number;
 }
 
 /**
@@ -143,6 +159,21 @@ export interface AcademicHomeKpiResult {
   monthlyReferrals: { count: number };
   unreadConsultations: { count: number };
   todos: AcademicHomeTodo[];
+  // 2026-05-22 SSOT §6.8 KPI 4 字段（V56 monthly_kpi_targets 表数据源）
+  kpiSummary?: MonthlyKpiSummary;
+}
+
+/**
+ * 2026-05-22 SSOT §6.8 校长下发月度目标 DTO
+ */
+export interface SetMonthlyTargetDto {
+  campusId: string;
+  targetRole: 'academic' | 'teacher';
+  targetUserId: string;
+  month: string;          // 'YYYY-MM' 格式
+  targetLessons: number;
+  setByBossUserId: string;
+  note?: string;
 }
 
 /**
@@ -1101,6 +1132,127 @@ export class KpiService {
       monthlyReferrals: { count: 0 },
       unreadConsultations: { count: 0 },
       todos: [],
+    };
+  }
+
+  // ============================================================
+  // 2026-05-22 SSOT §6.8 KPI 4 字段 — 月度消课目标 / 已排 / 已消 / 预计
+  // ============================================================
+
+  /**
+   * 算 4 字段（target / scheduled / attended / forecast）
+   *
+   * target     从 V56 monthly_kpi_targets 表查（无下发返 0）
+   * scheduled  COUNT schedules WHERE start_at in 本月
+   * attended   COUNT WHERE status='attended'
+   * forecast   scheduled - attended - absent（未来还会消）
+   *
+   * fail-open 哲学：任一 query 失败返 0 不阻塞 home 加载
+   *
+   * @param role 'teacher' (查自己 teacher_id 的课) 或 'academic' (查本 campusId 的课)
+   * @param scopeId teacher 时是 teacher.id / academic 时是 campusId
+   */
+  async getMonthlyKpiSummary(
+    tenantSchema: string,
+    role: 'teacher' | 'academic',
+    targetUserId: string,
+    scopeId: string | null,
+  ): Promise<MonthlyKpiSummary> {
+    const month = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
+    const result: MonthlyKpiSummary = { target: 0, scheduled: 0, attended: 0, forecast: 0 };
+
+    // Step 1: target — V56 monthly_kpi_targets
+    try {
+      const rows = await this.pg.tenantQuery<{ target_lessons: string }>(
+        tenantSchema,
+        `SELECT target_lessons FROM monthly_kpi_targets
+           WHERE target_user_id = $1 AND month = $2 LIMIT 1`,
+        [targetUserId, month],
+      );
+      result.target = rows[0] ? parseInt(rows[0].target_lessons, 10) : 0;
+    } catch (e) {
+      // V56 未 backfill / 表不存在 → fail-open 返 0
+      this.logger.warn(
+        `[KPI-summary] target query failed (V56 not deployed?): ${(e as Error).message}`,
+      );
+    }
+
+    // Step 2 + 3: scheduled + attended + absent (一次 SQL group)
+    try {
+      const conditions = role === 'teacher'
+        ? `teacher_id = $1`
+        : (scopeId ? `campus_id = $1` : `1=1`); // academic 无 campusId 时全 tenant scope
+      const param = role === 'teacher' ? targetUserId : (scopeId || '');
+      if (param) {
+        const aggRows = await this.pg.tenantQuery<{
+          scheduled: string;
+          attended: string;
+          absent: string;
+        }>(
+          tenantSchema,
+          `SELECT
+             COUNT(*) AS scheduled,
+             COUNT(*) FILTER (WHERE status = 'attended') AS attended,
+             COUNT(*) FILTER (WHERE status = 'absent') AS absent
+           FROM schedules
+           WHERE ${conditions}
+             AND TO_CHAR(start_at, 'YYYY-MM') = $2
+             AND status != '已取消'`,
+          [param, month],
+        );
+        const r = aggRows[0] || { scheduled: '0', attended: '0', absent: '0' };
+        result.scheduled = parseInt(r.scheduled, 10) || 0;
+        result.attended = parseInt(r.attended, 10) || 0;
+        const absent = parseInt(r.absent, 10) || 0;
+        result.forecast = Math.max(0, result.scheduled - result.attended - absent);
+      }
+    } catch (e) {
+      this.logger.warn(
+        `[KPI-summary] schedules agg failed: ${(e as Error).message}`,
+      );
+    }
+    return result;
+  }
+
+  /**
+   * 校长（boss）下发月度目标 — UPSERT 模式（同人同月已有 → UPDATE）
+   *
+   * 目标硬上限校验：sum(本 campus 本月目标) ≤ sum(本月已排 schedule * 实际单价)
+   *   → 调用方 (controller) 实施硬上限校验（拍板 §6.8）
+   *   → 本 method 只负责 INSERT/UPDATE，不校验业务上限
+   */
+  async setMonthlyTarget(
+    tenantSchema: string,
+    dto: SetMonthlyTargetDto,
+  ): Promise<{ id: string; updated: boolean }> {
+    // UPSERT — 同 (target_user_id, month) UNIQUE INDEX 触发
+    const id = (require('ulid').ulid() as string).padEnd(32, '0').slice(0, 32);
+    const rows = await this.pg.tenantQuery<{ id: string; existing: boolean }>(
+      tenantSchema,
+      `INSERT INTO monthly_kpi_targets
+         (id, campus_id, target_role, target_user_id, month, target_lessons,
+          set_by_boss_user_id, note, set_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+       ON CONFLICT (target_user_id, month) DO UPDATE
+         SET target_lessons = EXCLUDED.target_lessons,
+             set_by_boss_user_id = EXCLUDED.set_by_boss_user_id,
+             note = EXCLUDED.note,
+             updated_at = NOW()
+       RETURNING id, (xmax::text::int > 0) AS existing`,
+      [
+        id,
+        dto.campusId,
+        dto.targetRole,
+        dto.targetUserId,
+        dto.month,
+        dto.targetLessons,
+        dto.setByBossUserId,
+        dto.note || null,
+      ],
+    );
+    return {
+      id: rows[0]?.id || id,
+      updated: rows[0]?.existing || false,
     };
   }
 }
