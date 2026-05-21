@@ -238,9 +238,17 @@ export class ContractRepository {
       throw new BadRequestException(`课程产品不存在：${payload.courseProductId}`);
     }
     const product = productRows[0];
-    if (product.status !== '在售' && product.status !== 'active') {
+    // 2026-05-21 真机 fix: status 真实枚举是 '上架'/'下架' (V2 migration CHECK 约束)
+    //   之前写的 '在售'/'active' 是误识别，会让所有真实「上架」产品被拒
+    //   接受 '上架' / 'active' (legacy) ；拒绝 '下架' / 其他
+    if (product.status === '下架') {
       throw new BadRequestException(
-        `课程产品已下架（${product.product_name} status=${product.status}），不能签约`,
+        `课程产品已下架（${product.product_name}），不能签约`,
+      );
+    }
+    if (product.status !== '上架' && product.status !== 'active') {
+      throw new BadRequestException(
+        `课程产品状态异常（${product.product_name} status=${product.status}），不能签约`,
       );
     }
     const productPrice = Number(product.standard_price);

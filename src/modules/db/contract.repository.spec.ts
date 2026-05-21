@@ -37,7 +37,7 @@ describe('ContractRepository', () => {
   };
 
   // 2026-05-21 用户拍板：签约课程必须从机构已创建产品选，禁止销售自填，价格强一致
-  //   - SELECT course_products WHERE id=$1 校验存在 + status='在售'
+  //   - SELECT course_products WHERE id=$1 校验存在 + status='上架' (V2 schema CHECK)
   //   - standardPrice / lessonHours 与产品强一致
   //   - INSERT contracts + UPDATE opportunities 同 transaction
   const PRODUCT_ROW = {
@@ -46,7 +46,7 @@ describe('ContractRepository', () => {
     class_type: '一对一',
     lesson_package: 30,
     standard_price: 1999,
-    status: '在售',
+    status: '上架',
   };
 
   /**
@@ -171,7 +171,7 @@ describe('ContractRepository', () => {
     });
 
     it('2026-05-21 拍板：product 已下架 → BadRequest', async () => {
-      pg.tenantQuery.mockResolvedValueOnce([{ ...PRODUCT_ROW, status: '已下架' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ ...PRODUCT_ROW, status: '下架' }]);
       await expect(
         repo.create(TENANT, {
           id: CONTRACT_ID,
