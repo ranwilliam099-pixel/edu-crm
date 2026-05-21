@@ -35,6 +35,29 @@ export interface StudentBrief {
   contractClassType?: string | null;
 }
 
+/**
+ * 2026-05-21 新增：完整学员详情（学员档案 page b/student/detail 用）
+ *   GET /db/students/:id 返回，JOIN customer 拿主家长 + JOIN campus 拿校区名 + JOIN users 拿 owner/teacher 名
+ *   字段 mask 由 controller 层 RoleFieldFilter 处理（finance 不展示 parent_phone）
+ */
+export interface StudentDetail {
+  id: string;
+  studentName: string;
+  gradeOrAge: string | null;
+  intendedSubject: string | null;
+  customerId: string;
+  parentName: string | null;       // customer.parent_name
+  parentPhone: string | null;      // customer.primary_mobile (前端 maskPhone)
+  campusId: string | null;
+  campusName: string | null;       // JOIN campuses
+  ownerSalesId: string | null;
+  ownerSalesName: string | null;   // JOIN users
+  assignedTeacherId: string | null;
+  assignedTeacherName: string | null; // JOIN teachers
+  notes: string | null;             // students.notes（如 V25 后添加）/ opportunity.note fallback
+  createdAt: string;
+}
+
 export interface StudentTransferResult {
   studentId: string;
   fromUserId: string | null;
@@ -215,6 +238,54 @@ export class StudentRepository {
       [id],
     );
     return rows.length === 0 ? null : StudentRepository.mapBrief(rows[0]);
+  }
+
+  /**
+   * 2026-05-21 新增：学员档案完整详情
+   *   GET /db/students/:id endpoint 用，b/student/detail page 拿基础信息
+   *   JOIN: customers / public.campuses / public.users (owner_sales) / teachers (assigned)
+   *   primary_mobile 直读明文列（V41 双写仍保留明文，前端 maskPhone 处理）
+   *   注：finance role 完整 mask 由 controller 层 RoleFieldFilter 处理
+   */
+  async findFullDetail(tenantSchema: string, id: string): Promise<StudentDetail | null> {
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT s.id, s.student_name, s.grade_or_age, s.intended_subject,
+              s.customer_id, s.owner_sales_id, s.assigned_teacher_id, s.created_at,
+              c.parent_name, c.primary_mobile,
+              c.campus_id,
+              cp.name AS campus_name,
+              ou.name AS owner_sales_name,
+              t.name AS assigned_teacher_name,
+              (SELECT o.note FROM opportunities o
+                 WHERE o.student_id = s.id ORDER BY o.created_at DESC LIMIT 1) AS notes
+         FROM students s
+         LEFT JOIN customers c ON c.id = s.customer_id
+         LEFT JOIN public.campuses cp ON cp.id = c.campus_id
+         LEFT JOIN public.users ou ON ou.id = s.owner_sales_id
+         LEFT JOIN teachers t ON t.id = s.assigned_teacher_id
+        WHERE s.id = $1 AND s.deleted_at IS NULL`,
+      [id],
+    );
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      id: r.id,
+      studentName: r.student_name,
+      gradeOrAge: r.grade_or_age,
+      intendedSubject: r.intended_subject,
+      customerId: r.customer_id,
+      parentName: r.parent_name,
+      parentPhone: r.primary_mobile || null,
+      campusId: r.campus_id,
+      campusName: r.campus_name,
+      ownerSalesId: r.owner_sales_id,
+      ownerSalesName: r.owner_sales_name,
+      assignedTeacherId: r.assigned_teacher_id,
+      assignedTeacherName: r.assigned_teacher_name,
+      notes: r.notes,
+      createdAt: new Date(r.created_at).toISOString(),
+    };
   }
 
   /**

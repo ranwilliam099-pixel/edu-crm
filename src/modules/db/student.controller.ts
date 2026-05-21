@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Optional,
   Param,
   Post,
@@ -12,7 +13,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { StudentRepository, StudentBrief, StudentTransferResult } from './student.repository';
+import { StudentRepository, StudentBrief, StudentDetail, StudentTransferResult } from './student.repository';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { RbacGuard } from '../../guards/rbac.guard';
@@ -196,6 +197,42 @@ export class StudentController {
    *   - UX 友好：不抛 403，自动改为查"自己"（一致 listAll 设计）
    *   - 未绑定 teachers.user_id 的 teacher → 空列表（fail-safe，不抛错）
    */
+  /**
+   * 2026-05-21 新增 — 学员档案完整详情（b/student/detail page 用）
+   *   GET /db/students/:id?tenantSchema=tenant_xxx
+   *   返回 StudentDetail (学员 + 主家长 + 校区 + owner 销售 + 主带老师 JOIN)
+   *   RBAC: admin/boss/sales/sales_manager/academic/academic_admin/teacher 都可读
+   *     - finance 角色禁访（学员档案不涉及财务）
+   *     - parent 走 c/student-profile 不走 B 端
+   *   注：parentPhone 前端 maskPhone 处理，finance role 此处禁访所以无需后端 mask
+   */
+  @Get(':id')
+  @UseGuards(RbacGuard)
+  @Roles(
+    'admin',
+    'boss',
+    'sales',
+    'sales_manager',
+    'academic',
+    'academic_admin',
+    'teacher',
+  )
+  @HttpCode(HttpStatus.OK)
+  async findById(
+    @Param('id') id: string,
+    @Query('tenantSchema') tenantSchema: string,
+  ): Promise<StudentDetail> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!id || id.length !== 32) {
+      throw new BadRequestException('studentId must be 32-char ULID');
+    }
+    const detail = await this.repo.findFullDetail(tenantSchema, id);
+    if (!detail) {
+      throw new NotFoundException(`student ${id} not found`);
+    }
+    return detail;
+  }
+
   @Get('by-teacher/:teacherId')
   @UseGuards(RbacGuard)
   @Roles(
