@@ -5,6 +5,8 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
+  Optional,
   Query,
   Req,
   UseGuards,
@@ -20,7 +22,14 @@ import {
   ConsumptionKpiResult,
   StudentActivityKpiResult,
   SalesHomeKpiResult,
+  TeacherHomeKpiResult,
+  AcademicHomeKpiResult,
 } from './kpi.service';
+import {
+  ActorRole,
+  AuditLogRepository,
+  normalizeActorRole,
+} from './audit-log.repository';
 
 /**
  * KpiController — 4 KPI dashboard endpoint（2026-05-20 P4-X 拍板）
@@ -48,7 +57,44 @@ import {
 @Controller('db/kpi')
 @UseGuards(TenantScopeGuard, RbacGuard)
 export class KpiController {
-  constructor(private readonly kpi: KpiService) {}
+  private readonly logger = new Logger(KpiController.name);
+
+  constructor(
+    private readonly kpi: KpiService,
+    // 2026-05-22 Sprint Y: 老师/教务/财务 home audit_log read 写入
+    // @Optional unit spec 兼容；fail-open log() 内部已 catch
+    @Optional() private readonly auditLog?: AuditLogRepository,
+  ) {}
+
+  /**
+   * Sprint Y helper: 抽取 audit_log 写入 context（KPI read 路径）
+   * KPI 读路径 audit_log 仅记 success/forbidden 两种事件名 + actor 元数据
+   * （不记 before/after — KPI 聚合无业务前后状态，target_id 用 actorUserId 标识）
+   */
+  private async tryAuditKpiRead(
+    tenantSchema: string,
+    req: AuthenticatedRequest,
+    action: string,
+    targetId: string | null,
+  ): Promise<void> {
+    if (!this.auditLog) return;
+    try {
+      await this.auditLog.log(tenantSchema, {
+        actorUserId: req.user?.sub ?? null,
+        actorRole: normalizeActorRole(req.user?.role),
+        action,
+        targetType: 'kpi',
+        targetId,
+        before: null,
+        after: null,
+        ip: req.ip ?? null,
+        userAgent: (req.headers?.['user-agent'] as string | undefined) ?? null,
+        requestId: (req.headers?.['x-request-id'] as string | undefined) ?? null,
+      });
+    } catch {
+      // fail-open: audit_log 写失败不阻塞 KPI 读
+    }
+  }
 
   /**
    * 解析 campusIds query：
@@ -111,6 +157,94 @@ export class KpiController {
     const salesUserId = req.user?.sub;
     if (!salesUserId) throw new BadRequestException('user sub required');
     return this.kpi.getSalesHomeKpi(tenantSchema, salesUserId);
+  }
+
+  /**
+   * 2026-05-22 Sprint Y 老师自视角 home KPI（SSOT §3.5 拍板）
+   *   GET /db/kpi/teacher-home?tenantSchema=
+   *   Auth: JWT.sub → users.id → teachers WHERE user_id = sub → teachers.id
+   *   RBAC: @Roles('teacher')（老师只看自己；admin/boss 走 §3.1 admin KPI 不走 home）
+   *
+   *   audit_log 写入:
+   *     - success: kpi.teacher_home.read.success
+   *     - forbidden (RbacGuard 拦): RbacGuard 自动写 kpi.*.read.forbidden
+   *     - bad request: 不写 audit（参数错误属客户端问题）
+   *
+   *   service 内部 sub-query 全 fail-open（单卡失败返 0，不阻塞 home 整体）
+   */
+  @Get('teacher-home')
+  @Roles('teacher')
+  @HttpCode(HttpStatus.OK)
+  async teacherHomeKpi(
+    @Query('tenantSchema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<TeacherHomeKpiResult> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    const userId = req.user?.sub;
+    if (!userId) throw new BadRequestException('user sub required');
+
+    const result = await this.kpi.getTeacherHomeKpi(tenantSchema, userId);
+
+    // audit_log fail-open（success 路径写一次；不写 sub-card 明细）
+    await this.tryAuditKpiRead(
+      tenantSchema,
+      req,
+      'kpi.teacher_home.read.success',
+      userId,
+    );
+
+    return result;
+  }
+
+  /**
+   * 2026-05-22 Sprint Y 教务自视角 home KPI（SSOT §3.4 拍板）
+   *   GET /db/kpi/academic-home?tenantSchema=
+   *   Auth: JWT.sub + JWT.campusId（必填，academic 单校 role）
+   *   RBAC: @Roles('academic', 'academic_admin')
+   *
+   *   A04 防御: campusId 不接受 query 参数 — 强制使用 jwt.campusId（client 不可控制 scope）
+   *   若 jwt.campusId 缺失 → ForbiddenException（academic 必有 campusId by 拍板）
+   *
+   *   audit_log:
+   *     - success: kpi.academic_home.read.success
+   *     - forbidden (无 campusId): kpi.academic_home.read.forbidden
+   *     - bad request (无 tenantSchema): 不写（client 错误）
+   */
+  @Get('academic-home')
+  @Roles('academic', 'academic_admin')
+  @HttpCode(HttpStatus.OK)
+  async academicHomeKpi(
+    @Query('tenantSchema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<AcademicHomeKpiResult> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    const userId = req.user?.sub;
+    if (!userId) throw new BadRequestException('user sub required');
+
+    const callerCampusId = req.user?.campusId;
+    if (!callerCampusId) {
+      // academic / academic_admin 必有 campusId（拍板 9 角色清单 + JwtPayload CROSS_CAMPUS_ROLES 限定）
+      await this.tryAuditKpiRead(
+        tenantSchema,
+        req,
+        'kpi.academic_home.read.forbidden',
+        userId,
+      );
+      throw new ForbiddenException(
+        'ACADEMIC_MISSING_CAMPUS_ID: academic role 必须 jwt.campusId 非空',
+      );
+    }
+
+    const result = await this.kpi.getAcademicHomeKpi(tenantSchema, callerCampusId);
+
+    await this.tryAuditKpiRead(
+      tenantSchema,
+      req,
+      'kpi.academic_home.read.success',
+      userId,
+    );
+
+    return result;
   }
 
   /**

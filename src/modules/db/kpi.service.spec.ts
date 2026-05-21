@@ -481,4 +481,224 @@ describe('KpiService (P4-X 2026-05-20)', () => {
       expect(params).toEqual([]);
     });
   });
+
+  // ============================================================
+  // 2026-05-22 Sprint Y — getTeacherHomeKpi
+  // ============================================================
+  describe('getTeacherHomeKpi (Sprint Y)', () => {
+    const USER_ID = 'teacher000000000000000000000U001';
+    const TEACHER_ID = 'teacher000000000000000000000T001';
+
+    function mockTeacherResolve(teacherId: string | null) {
+      // Step 0 query: teachers WHERE user_id = $1
+      if (teacherId === null) {
+        pg.tenantQuery.mockResolvedValueOnce([]);
+      } else {
+        pg.tenantQuery.mockResolvedValueOnce([{ id: teacherId }]);
+      }
+    }
+
+    function mockAllStepsEmpty() {
+      // Step 1: todayLessons
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0', last_minutes: null }]);
+      // Step 2a: primaryStudents count
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      // Step 2b: pendingFeedback
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      // Step 3: monthlyReferrals
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      // Step 4a: taught
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      // Step 4b: leave/swap
+      pg.tenantQuery.mockResolvedValueOnce([{ leave_cnt: '0', swap_cnt: '0' }]);
+      // Step 5a: today todos
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      // Step 5b: overdue todos
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      // Step 5c: monthly report todos
+      pg.tenantQuery.mockResolvedValueOnce([]);
+    }
+
+    it('userId 为空字符串 → 直接返 emptyTeacherHome (不调 PG)', async () => {
+      const r = await svc.getTeacherHomeKpi(TENANT, '');
+      expect(pg.tenantQuery).not.toHaveBeenCalled();
+      expect(r.todayLessons.count).toBe(0);
+      expect(r.primaryStudents.count).toBe(0);
+      expect(r.monthlyReferrals.count).toBe(0);
+      expect(r.monthlyAttendance).toEqual({ taught: 0, leave: 0, swap: 0 });
+      expect(r.todos).toEqual([]);
+    });
+
+    it('teacher 档案不存在 → 全部 0 返回（不抛错）', async () => {
+      mockTeacherResolve(null);
+      const r = await svc.getTeacherHomeKpi(TENANT, USER_ID);
+      expect(pg.tenantQuery).toHaveBeenCalledTimes(1); // 仅 Step 0
+      expect(r.todayLessons.count).toBe(0);
+      expect(r.todos).toEqual([]);
+    });
+
+    it('happy path: 全部 SQL 都返数据 → 正确聚合', async () => {
+      mockTeacherResolve(TEACHER_ID);
+      // Step 1: 今日 3 节课 + 最近一节 60min 前
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '3', last_minutes: '60.0' }]);
+      // Step 2a: 12 主带学员
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '12' }]);
+      // Step 2b: 2 未填反馈
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '2' }]);
+      // Step 3: 4 推荐成功
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '4' }]);
+      // Step 4a: 28 已完成
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '28' }]);
+      // Step 4b: 2 请假 / 1 调课
+      pg.tenantQuery.mockResolvedValueOnce([{ leave_cnt: '2', swap_cnt: '1' }]);
+      // Step 5a: 今日 1 节待上课
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: 'S0000000000000000000000000000001',
+          start_at: '2026-05-22T10:00:00Z',
+          notes: '数学单元复习',
+        },
+      ]);
+      // Step 5b: 超 24h 未填反馈 1 节
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: 'S0000000000000000000000000000002',
+          start_at: '2026-05-20T10:00:00Z',
+        },
+      ]);
+      // Step 5c: 1 月报待 finalize
+      pg.tenantQuery.mockResolvedValueOnce([
+        { id: 'R0000000000000000000000000000001', month: '2026-04-01' },
+      ]);
+
+      const r = await svc.getTeacherHomeKpi(TENANT, USER_ID);
+
+      expect(r.todayLessons).toEqual({ count: 3, lastLessonAgoMin: 60 });
+      expect(r.primaryStudents).toEqual({ count: 12, pendingFeedback: 2 });
+      expect(r.monthlyReferrals).toEqual({ count: 4 });
+      expect(r.monthlyAttendance).toEqual({ taught: 28, leave: 2, swap: 1 });
+      expect(r.todos).toHaveLength(3);
+      expect(r.todos[0]).toMatchObject({
+        type: 'today_lesson',
+        title: '今日待上课',
+        meta: '数学单元复习',
+      });
+      expect(r.todos[1]).toMatchObject({
+        type: 'feedback_overdue',
+        title: '超 24h 未填反馈',
+      });
+      expect(r.todos[2]).toMatchObject({
+        type: 'monthly_report',
+        title: '月报待 finalize',
+        meta: '2026-04-01',
+      });
+    });
+
+    it('部分聚合失败 (Step 1 PG 抛错) → 其他卡片仍渲染 + 该卡 = 0', async () => {
+      mockTeacherResolve(TEACHER_ID);
+      // Step 1: 抛错
+      pg.tenantQuery.mockRejectedValueOnce(new Error('PG timeout'));
+      // Step 2-5: 正常返
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '5' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '2' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '20' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ leave_cnt: '0', swap_cnt: '0' }]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+
+      const r = await svc.getTeacherHomeKpi(TENANT, USER_ID);
+
+      // Step 1 失败 → todayLessons 全 0
+      expect(r.todayLessons).toEqual({ count: 0, lastLessonAgoMin: 0 });
+      // 其他卡正常
+      expect(r.primaryStudents.count).toBe(5);
+      expect(r.monthlyReferrals.count).toBe(2);
+      expect(r.monthlyAttendance.taught).toBe(20);
+    });
+
+    it('SQL 包含正确的 teacher_id 参数 + 30 天滚动窗口', async () => {
+      mockTeacherResolve(TEACHER_ID);
+      mockAllStepsEmpty();
+
+      await svc.getTeacherHomeKpi(TENANT, USER_ID);
+
+      // Step 1 (今日课表)
+      const todaySql = pg.tenantQuery.mock.calls[1][1] as string;
+      expect(todaySql).toContain('start_at::date = CURRENT_DATE');
+      expect(todaySql).toContain(`status != '已取消'`);
+      expect(pg.tenantQuery.mock.calls[1][2]).toEqual([TEACHER_ID]);
+
+      // Step 2a (主带学员 binding)
+      const psSql = pg.tenantQuery.mock.calls[2][1] as string;
+      expect(psSql).toContain(`student_teacher_bindings`);
+      expect(psSql).toContain(`status = 'active'`);
+
+      // Step 3 (推荐 30d 内)
+      const refSql = pg.tenantQuery.mock.calls[4][1] as string;
+      expect(refSql).toContain(`parent_referrals`);
+      expect(refSql).toContain(`status = 'rated'`);
+      expect(refSql).toContain(`rated_at >= NOW() - INTERVAL '30 days'`);
+
+      // Step 4a (本月 taught)
+      const taughtSql = pg.tenantQuery.mock.calls[5][1] as string;
+      expect(taughtSql).toContain(`status = '已完成'`);
+      expect(taughtSql).toContain(`start_at >= NOW() - INTERVAL '30 days'`);
+    });
+
+    it('lastLessonAgoMin 为 null（无今日课）→ 返 0 不抛错', async () => {
+      mockTeacherResolve(TEACHER_ID);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0', last_minutes: null }]);
+      // 其他 step 略
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ leave_cnt: '0', swap_cnt: '0' }]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+
+      const r = await svc.getTeacherHomeKpi(TENANT, USER_ID);
+
+      expect(r.todayLessons.lastLessonAgoMin).toBe(0);
+      expect(r.todayLessons.count).toBe(0);
+    });
+
+    it('todos 顺序：today_lesson → feedback_overdue → monthly_report', async () => {
+      mockTeacherResolve(TEACHER_ID);
+      // Step 1-4 略（全 0）
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0', last_minutes: null }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '0' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ leave_cnt: '0', swap_cnt: '0' }]);
+      // Step 5: 每类 1 个
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: 'S001',
+          start_at: '2026-05-22T15:00:00Z',
+          notes: null,
+        },
+      ]);
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: 'S002',
+          start_at: '2026-05-20T15:00:00Z',
+        },
+      ]);
+      pg.tenantQuery.mockResolvedValueOnce([
+        { id: 'R001', month: '2026-04-01' },
+      ]);
+
+      const r = await svc.getTeacherHomeKpi(TENANT, USER_ID);
+      expect(r.todos.map((t) => t.type)).toEqual([
+        'today_lesson',
+        'feedback_overdue',
+        'monthly_report',
+      ]);
+    });
+  });
 });

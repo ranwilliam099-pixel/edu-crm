@@ -87,6 +87,65 @@ export interface SalesHomeKpiResult {
 }
 
 /**
+ * 2026-05-22 Sprint Y 老师视角 home KPI（SSOT §3.5 拍板）
+ *   todayLessons          今日课时 + 最近一节课距今多久（schedules.teacher_id=me, start_at::date=今）
+ *   primaryStudents       主带学员数 + 本周未填反馈（student_teacher_bindings active）
+ *   monthlyReferrals      本月家长推荐成功（parent_referrals.teacher_id=me, status=rated, rated_at 30d 内）
+ *   monthlyAttendance     本月上课 / 请假 / 调课（schedules 30d 内 by teacher_id + leaves 30d 内）
+ *   todos                 待办事项数组（今日课表 + 超 24h 未填反馈 + 月报 finalize）
+ *
+ * teacherId 推导：JWT.sub = users.id → teachers WHERE user_id = sub → teachers.id
+ *   （5/9 拍板：teachers.user_id NULLABLE，登录账户的老师必有 user_id）
+ *   若 user_id 找不到对应 teacher → 全部返 0 fallback（避免抛错破坏 home 体验）
+ */
+export interface TeacherHomeTodo {
+  id: string;          // ULID 或 stable hash（前端 list key）
+  title: string;       // 主标题
+  meta?: string;       // 副标题（学员名 / 学科 etc）
+  time?: string;       // ISO timestamp 字符串（前端格式化）
+  type: 'today_lesson' | 'feedback_overdue' | 'monthly_report' | 'referral_pending';
+}
+export interface TeacherHomeKpiResult {
+  todayLessons: { count: number; lastLessonAgoMin: number };
+  primaryStudents: { count: number; pendingFeedback: number };
+  monthlyReferrals: { count: number };
+  monthlyAttendance: { taught: number; leave: number; swap: number };
+  todos: TeacherHomeTodo[];
+}
+
+/**
+ * 2026-05-22 Sprint Y 教务视角 home KPI（SSOT §3.4 拍板）
+ *   handoverBacklog       待接交接单（opportunity stage='已报名' 但无 schedule）+ 本周已排完
+ *   expiringContracts     30 天到期合同（student_course_packages.expires_at < NOW + 30d）
+ *   monthlyReferrals      本月转介绍（parent_referrals.status='rated' 30d 内 + 本校 scope）
+ *   unreadConsultations   未读家长咨询（占位 0，parent_communication 表 Sprint 后续）
+ *   todos                 待办: 销售刚交接未排课 / 30 天到期推续费 / 老师请假需调课
+ *
+ * scope: academic / academic_admin 本校 = jwt.campusId
+ *   - admin / boss 走 §3.1/§3.2 admin KPI；academic 角色才进本 endpoint
+ *   - 本校 scope: campus_id IN ($jwt.campusId)（A04 防 client-controlled scope）
+ *   - academic_admin 可批办，但仍限本校（SSOT §3.4 「本校 scope」）
+ */
+export interface AcademicHomeTodo {
+  id: string;
+  title: string;
+  meta?: string;
+  time?: string;
+  type:
+    | 'sales_handover'        // 销售刚交接未排课
+    | 'contract_expiring'     // 30 天到期合同
+    | 'teacher_leave_pending' // 老师请假未排课
+    | 'trial_followup';       // 家长试听到期咨询
+}
+export interface AcademicHomeKpiResult {
+  handoverBacklog: { count: number; weeklyScheduled: number };
+  expiringContracts: { count: number };
+  monthlyReferrals: { count: number };
+  unreadConsultations: { count: number };
+  todos: AcademicHomeTodo[];
+}
+
+/**
  * 格式化金额：1234567 → '¥1,234,567'
  */
 function formatAmountText(yuan: number): string {
@@ -570,6 +629,478 @@ export class KpiService {
       personalSigned: { amount: '0', count: 0, rankText: '— / —' },
       customersInProgress: { count: 0 },
       trialRate: { rate: '0', total: 0 },
+    };
+  }
+
+  /**
+   * 2026-05-22 Sprint Y 老师 home KPI（SSOT §3.5 拍板）
+   *
+   * 子查询独立 try-catch + fail-open：单个聚合失败不影响其他卡片渲染。
+   * 若 teacher record 找不到（user_id ≠ teachers.user_id）整体返空，前端展示「-」占位。
+   *
+   * @param tenantSchema 租户 schema
+   * @param userId       JWT.sub 用户 ID（公网 RBAC 限 teacher，controller 保证）
+   */
+  async getTeacherHomeKpi(
+    tenantSchema: string,
+    userId: string,
+  ): Promise<TeacherHomeKpiResult> {
+    if (!userId) {
+      return this.emptyTeacherHome();
+    }
+
+    // Step 0: user_id → teacher_id（teachers.user_id NULLABLE，登录账户的老师必有 user_id）
+    let teacherId: string | null = null;
+    try {
+      const teacherRows = await this.pg.tenantQuery<{ id: string }>(
+        tenantSchema,
+        `SELECT id FROM teachers WHERE user_id = $1 AND status != '归档' LIMIT 1`,
+        [userId],
+      );
+      teacherId = teacherRows[0]?.id ?? null;
+    } catch (e) {
+      this.logger.error(
+        `[KPI-teacher-home] resolve teacherId failed for ${userId}: ${(e as Error).message}`,
+      );
+    }
+    if (!teacherId) {
+      // teacher 档案不存在或被归档 → 全部 0 返回（不抛错，home 兜底渲染）
+      this.logger.warn(
+        `[KPI-teacher-home] no active teacher for user_id=${userId} in ${tenantSchema}`,
+      );
+      return this.emptyTeacherHome();
+    }
+
+    // Step 1: 今日课时 + 最近一节课距今多久
+    let todayLessons = { count: 0, lastLessonAgoMin: 0 };
+    try {
+      const todayRows = await this.pg.tenantQuery<{ cnt: string; last_minutes: string | null }>(
+        tenantSchema,
+        `SELECT
+           COUNT(*) AS cnt,
+           EXTRACT(EPOCH FROM (NOW() - MAX(start_at))) / 60 AS last_minutes
+         FROM schedules
+         WHERE teacher_id = $1
+           AND start_at::date = CURRENT_DATE
+           AND status != '已取消'`,
+        [teacherId],
+      );
+      const cnt = parseInt(todayRows[0]?.cnt || '0', 10);
+      const last = todayRows[0]?.last_minutes
+        ? Math.max(0, Math.round(Number(todayRows[0].last_minutes)))
+        : 0;
+      todayLessons = { count: cnt, lastLessonAgoMin: last };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-teacher-home] todayLessons failed: ${(e as Error).message}`,
+      );
+    }
+
+    // Step 2: 主带学员数 + 本周未填反馈
+    //   主带学员 = student_teacher_bindings.status='active' 且 teacher_id=me
+    //   本周未填反馈 = schedules 本周（CURRENT_DATE - 7d）有 schedule, 但 lesson_feedbacks 无对应
+    let primaryStudents = { count: 0, pendingFeedback: 0 };
+    try {
+      const psRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(DISTINCT student_id) AS cnt
+         FROM student_teacher_bindings
+         WHERE teacher_id = $1 AND status = 'active'`,
+        [teacherId],
+      );
+      const pCount = parseInt(psRows[0]?.cnt || '0', 10);
+
+      const pendingRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(*) AS cnt
+         FROM schedules s
+         WHERE s.teacher_id = $1
+           AND s.start_at >= NOW() - INTERVAL '7 days'
+           AND s.start_at < NOW()
+           AND s.status IN ('已完成','已排课')
+           AND NOT EXISTS (
+             SELECT 1 FROM lesson_feedbacks lf
+             WHERE lf.schedule_id = s.id AND lf.teacher_id = $1
+           )`,
+        [teacherId],
+      );
+      const pendingFeedback = parseInt(pendingRows[0]?.cnt || '0', 10);
+
+      primaryStudents = { count: pCount, pendingFeedback };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-teacher-home] primaryStudents failed: ${(e as Error).message}`,
+      );
+    }
+
+    // Step 3: 本月推荐成功（parent_referrals.teacher_id=me, status=rated, rated_at 30d 内）
+    let monthlyReferrals = { count: 0 };
+    try {
+      const refRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(*) AS cnt
+         FROM parent_referrals
+         WHERE teacher_id = $1
+           AND status = 'rated'
+           AND rated_at >= NOW() - INTERVAL '30 days'`,
+        [teacherId],
+      );
+      monthlyReferrals = { count: parseInt(refRows[0]?.cnt || '0', 10) };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-teacher-home] monthlyReferrals failed: ${(e as Error).message}`,
+      );
+    }
+
+    // Step 4: 本月考勤（taught / leave / swap）
+    //   taught = schedules.status='已完成' 30d 内
+    //   leave  = leaves type='leave' 30d 内（按 schedule.teacher_id 反查）
+    //   swap   = leaves type='reschedule' 30d 内
+    let monthlyAttendance = { taught: 0, leave: 0, swap: 0 };
+    try {
+      const taughtRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(*) AS cnt
+         FROM schedules
+         WHERE teacher_id = $1
+           AND status = '已完成'
+           AND start_at >= NOW() - INTERVAL '30 days'`,
+        [teacherId],
+      );
+      const leaveRows = await this.pg.tenantQuery<{ leave_cnt: string; swap_cnt: string }>(
+        tenantSchema,
+        `SELECT
+           COUNT(*) FILTER (WHERE l.type = 'leave') AS leave_cnt,
+           COUNT(*) FILTER (WHERE l.type = 'reschedule') AS swap_cnt
+         FROM leaves l
+         JOIN schedules s ON s.id = l.lesson_id
+         WHERE s.teacher_id = $1
+           AND l.created_at >= NOW() - INTERVAL '30 days'`,
+        [teacherId],
+      );
+      monthlyAttendance = {
+        taught: parseInt(taughtRows[0]?.cnt || '0', 10),
+        leave: parseInt(leaveRows[0]?.leave_cnt || '0', 10),
+        swap: parseInt(leaveRows[0]?.swap_cnt || '0', 10),
+      };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-teacher-home] monthlyAttendance failed: ${(e as Error).message}`,
+      );
+    }
+
+    // Step 5: 待办（todos）— 今日剩余课表 + 超 24h 未填反馈 + 待 finalize 月报
+    const todos: TeacherHomeTodo[] = [];
+    try {
+      // 今日剩余课表（start_at >= NOW，CURRENT_DATE 当天）
+      const todayTodoRows = await this.pg.tenantQuery<{
+        id: string;
+        start_at: string;
+        notes: string | null;
+      }>(
+        tenantSchema,
+        `SELECT id, start_at, notes
+         FROM schedules
+         WHERE teacher_id = $1
+           AND start_at >= NOW()
+           AND start_at::date = CURRENT_DATE
+           AND status != '已取消'
+         ORDER BY start_at ASC LIMIT 5`,
+        [teacherId],
+      );
+      for (const r of todayTodoRows) {
+        todos.push({
+          id: `lesson-${r.id}`,
+          title: '今日待上课',
+          meta: r.notes ?? '',
+          time: new Date(r.start_at).toISOString(),
+          type: 'today_lesson',
+        });
+      }
+
+      // 超 24h 未填反馈
+      const overdueRows = await this.pg.tenantQuery<{ id: string; start_at: string }>(
+        tenantSchema,
+        `SELECT s.id, s.start_at
+         FROM schedules s
+         WHERE s.teacher_id = $1
+           AND s.start_at < NOW() - INTERVAL '24 hours'
+           AND s.start_at >= NOW() - INTERVAL '14 days'
+           AND s.status IN ('已完成','已排课')
+           AND NOT EXISTS (
+             SELECT 1 FROM lesson_feedbacks lf
+             WHERE lf.schedule_id = s.id AND lf.teacher_id = $1
+           )
+         ORDER BY s.start_at DESC LIMIT 5`,
+        [teacherId],
+      );
+      for (const r of overdueRows) {
+        todos.push({
+          id: `feedback-${r.id}`,
+          title: '超 24h 未填反馈',
+          meta: '请尽快补填课后反馈',
+          time: new Date(r.start_at).toISOString(),
+          type: 'feedback_overdue',
+        });
+      }
+
+      // 待 finalize 月报（status='auto_generated' AND finalized_at IS NULL）
+      const reportRows = await this.pg.tenantQuery<{ id: string; month: string }>(
+        tenantSchema,
+        `SELECT id, month FROM monthly_reports
+         WHERE teacher_id = $1
+           AND status = 'auto_generated'
+           AND finalized_at IS NULL
+         ORDER BY month DESC LIMIT 3`,
+        [teacherId],
+      );
+      for (const r of reportRows) {
+        todos.push({
+          id: `report-${r.id}`,
+          title: '月报待 finalize',
+          meta: r.month,
+          type: 'monthly_report',
+        });
+      }
+    } catch (e) {
+      this.logger.error(
+        `[KPI-teacher-home] todos failed: ${(e as Error).message}`,
+      );
+    }
+
+    return {
+      todayLessons,
+      primaryStudents,
+      monthlyReferrals,
+      monthlyAttendance,
+      todos,
+    };
+  }
+
+  private emptyTeacherHome(): TeacherHomeKpiResult {
+    return {
+      todayLessons: { count: 0, lastLessonAgoMin: 0 },
+      primaryStudents: { count: 0, pendingFeedback: 0 },
+      monthlyReferrals: { count: 0 },
+      monthlyAttendance: { taught: 0, leave: 0, swap: 0 },
+      todos: [],
+    };
+  }
+
+  /**
+   * 2026-05-22 Sprint Y 教务 home KPI（SSOT §3.4）
+   *
+   * @param tenantSchema 租户 schema
+   * @param campusId     本校 scope（jwt.campusId，必填）— A04 防 client-controlled scope
+   *
+   * 单卡 fail-open：sub-query 抛错 → 该卡 0 返回不影响整体 home。
+   */
+  async getAcademicHomeKpi(
+    tenantSchema: string,
+    campusId: string,
+  ): Promise<AcademicHomeKpiResult> {
+    if (!campusId) {
+      // 跨校组 academic 拍板不存在（academic/academic_admin 都是单校），但兜底返空
+      return this.emptyAcademicHome();
+    }
+
+    // 1. handoverBacklog: 销售刚交接未排课（opportunity stage='已报名' + 无 schedule）+ 本周已排完
+    //    "已报名" 即销售签单完毕；下一步必须由教务排课才能开始消课
+    //    join contracts 取 student_id 反查 schedules.teacher_id（无 schedule 即未排课）
+    let handoverBacklog = { count: 0, weeklyScheduled: 0 };
+    try {
+      const backlogRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(DISTINCT c.id) AS cnt
+         FROM contracts c
+         JOIN students s ON s.id = c.student_id
+         WHERE c.status = 'active'
+           AND c.signed_at >= NOW() - INTERVAL '30 days'
+           AND c.deleted_at IS NULL
+           AND s.campus_id = $1
+           AND NOT EXISTS (
+             SELECT 1 FROM schedule_students ss
+             WHERE ss.student_id = c.student_id
+           )`,
+        [campusId],
+      );
+      const scheduledRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(DISTINCT s.id) AS cnt
+         FROM schedules s
+         JOIN schedule_students ss ON ss.schedule_id = s.id
+         JOIN students st ON st.id = ss.student_id
+         WHERE s.created_at >= NOW() - INTERVAL '7 days'
+           AND st.campus_id = $1
+           AND s.status != '已取消'`,
+        [campusId],
+      );
+      handoverBacklog = {
+        count: parseInt(backlogRows[0]?.cnt || '0', 10),
+        weeklyScheduled: parseInt(scheduledRows[0]?.cnt || '0', 10),
+      };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-academic-home] handoverBacklog failed: ${(e as Error).message}`,
+      );
+    }
+
+    // 2. expiringContracts: 30 天到期合同（student_course_packages.expires_at <= NOW + 30d 且 status='active'）
+    let expiringContracts = { count: 0 };
+    try {
+      const expRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(DISTINCT scp.id) AS cnt
+         FROM student_course_packages scp
+         JOIN students st ON st.id = scp.student_id
+         WHERE scp.status = 'active'
+           AND scp.expires_at <= NOW() + INTERVAL '30 days'
+           AND scp.expires_at > NOW()
+           AND st.campus_id = $1`,
+        [campusId],
+      );
+      expiringContracts = { count: parseInt(expRows[0]?.cnt || '0', 10) };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-academic-home] expiringContracts failed: ${(e as Error).message}`,
+      );
+    }
+
+    // 3. monthlyReferrals: 本月推荐成功（parent_referrals 30d 内 status='rated' + 本校 scope）
+    //    通过 teacher_id JOIN teachers 限本校 campus_id
+    let monthlyReferrals = { count: 0 };
+    try {
+      const refRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(*) AS cnt
+         FROM parent_referrals pr
+         JOIN teachers t ON t.id = pr.teacher_id
+         WHERE pr.status = 'rated'
+           AND pr.rated_at >= NOW() - INTERVAL '30 days'
+           AND t.campus_id = $1`,
+        [campusId],
+      );
+      monthlyReferrals = { count: parseInt(refRows[0]?.cnt || '0', 10) };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-academic-home] monthlyReferrals failed: ${(e as Error).message}`,
+      );
+    }
+
+    // 4. unreadConsultations: 未读家长咨询占位 — parent_communication 表 5/16 Sprint Y 后续
+    //    SSOT §3.4 列入 KPI 但当前 schema 未实现 → 返 0 兜底
+    const unreadConsultations = { count: 0 };
+
+    // 5. todos: 待办（聚合 3 类，每类 LIMIT 5 防爆）
+    const todos: AcademicHomeTodo[] = [];
+    try {
+      // 5a. 销售刚交接未排课 — 取 contracts 30d 内签 + 无 schedule_students 的学员
+      const handoverRows = await this.pg.tenantQuery<{
+        id: string;
+        student_name: string;
+        signed_at: string;
+      }>(
+        tenantSchema,
+        `SELECT c.id, s.name AS student_name, c.signed_at
+         FROM contracts c
+         JOIN students s ON s.id = c.student_id
+         WHERE c.status = 'active'
+           AND c.signed_at >= NOW() - INTERVAL '30 days'
+           AND c.deleted_at IS NULL
+           AND s.campus_id = $1
+           AND NOT EXISTS (
+             SELECT 1 FROM schedule_students ss
+             WHERE ss.student_id = c.student_id
+           )
+         ORDER BY c.signed_at DESC LIMIT 5`,
+        [campusId],
+      );
+      for (const r of handoverRows) {
+        todos.push({
+          id: `handover-${r.id}`,
+          title: '销售已交接，需排课',
+          meta: r.student_name,
+          time: new Date(r.signed_at).toISOString(),
+          type: 'sales_handover',
+        });
+      }
+
+      // 5b. 30 天到期合同 — 取 student_course_packages.expires_at <= NOW + 30d 的学员
+      const expiringRows = await this.pg.tenantQuery<{
+        id: string;
+        student_name: string;
+        expires_at: string;
+      }>(
+        tenantSchema,
+        `SELECT scp.id, st.name AS student_name, scp.expires_at
+         FROM student_course_packages scp
+         JOIN students st ON st.id = scp.student_id
+         WHERE scp.status = 'active'
+           AND scp.expires_at <= NOW() + INTERVAL '30 days'
+           AND scp.expires_at > NOW()
+           AND st.campus_id = $1
+         ORDER BY scp.expires_at ASC LIMIT 5`,
+        [campusId],
+      );
+      for (const r of expiringRows) {
+        todos.push({
+          id: `expiring-${r.id}`,
+          title: '合同 30 天内到期',
+          meta: r.student_name,
+          time: new Date(r.expires_at).toISOString(),
+          type: 'contract_expiring',
+        });
+      }
+
+      // 5c. 老师请假未处理（leaves.status='pending' + 涉本校 schedules.teacher 的请假）
+      const teacherLeaveRows = await this.pg.tenantQuery<{
+        id: string;
+        teacher_name: string;
+        new_start_at: string | null;
+        created_at: string;
+      }>(
+        tenantSchema,
+        `SELECT l.id, t.name AS teacher_name, l.new_start_at, l.created_at
+         FROM leaves l
+         JOIN schedules s ON s.id = l.lesson_id
+         JOIN teachers t ON t.id = s.teacher_id
+         WHERE l.status = 'pending'
+           AND l.type = 'reschedule'
+           AND t.campus_id = $1
+         ORDER BY l.created_at DESC LIMIT 5`,
+        [campusId],
+      );
+      for (const r of teacherLeaveRows) {
+        todos.push({
+          id: `leave-${r.id}`,
+          title: '老师调课待审',
+          meta: r.teacher_name,
+          time: new Date(r.new_start_at || r.created_at).toISOString(),
+          type: 'teacher_leave_pending',
+        });
+      }
+    } catch (e) {
+      this.logger.error(
+        `[KPI-academic-home] todos failed: ${(e as Error).message}`,
+      );
+    }
+
+    return {
+      handoverBacklog,
+      expiringContracts,
+      monthlyReferrals,
+      unreadConsultations,
+      todos,
+    };
+  }
+
+  private emptyAcademicHome(): AcademicHomeKpiResult {
+    return {
+      handoverBacklog: { count: 0, weeklyScheduled: 0 },
+      expiringContracts: { count: 0 },
+      monthlyReferrals: { count: 0 },
+      unreadConsultations: { count: 0 },
+      todos: [],
     };
   }
 }

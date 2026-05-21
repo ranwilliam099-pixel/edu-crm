@@ -6,7 +6,10 @@ import {
   RenewalKpiResult,
   ConsumptionKpiResult,
   StudentActivityKpiResult,
+  TeacherHomeKpiResult,
+  AcademicHomeKpiResult,
 } from './kpi.service';
+import { AuditLogRepository } from './audit-log.repository';
 import {
   AuthenticatedRequest,
   JwtPayload,
@@ -20,7 +23,11 @@ describe('KpiController (P4-X 2026-05-20)', () => {
     getRenewalKpi: jest.Mock;
     getConsumptionKpi: jest.Mock;
     getStudentActivityKpi: jest.Mock;
+    getSalesHomeKpi: jest.Mock;
+    getTeacherHomeKpi: jest.Mock;
+    getAcademicHomeKpi: jest.Mock;
   };
+  let auditLog: { log: jest.Mock };
 
   const TENANT_A = 'TENANTA00000000000000000000000A1';
   const TENANT_SCHEMA = 'tenant_tenanta00000000000000000000000a1';
@@ -129,8 +136,15 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       getRenewalKpi: jest.fn(),
       getConsumptionKpi: jest.fn(),
       getStudentActivityKpi: jest.fn(),
+      getSalesHomeKpi: jest.fn(),
+      getTeacherHomeKpi: jest.fn(),
+      getAcademicHomeKpi: jest.fn(),
     };
-    controller = new KpiController(kpi as unknown as KpiService);
+    auditLog = { log: jest.fn().mockResolvedValue(undefined) };
+    controller = new KpiController(
+      kpi as unknown as KpiService,
+      auditLog as unknown as AuditLogRepository,
+    );
   });
 
   // ============================================================
@@ -455,6 +469,121 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
         campusIds: [],
       });
+    });
+  });
+
+  // ============================================================
+  // 2026-05-22 Sprint Y — GET /db/kpi/teacher-home
+  // ============================================================
+  describe('teacherHomeKpi GET /db/kpi/teacher-home (Sprint Y)', () => {
+    const TEACHER_SUB = 'teacher000000000000000000000T001';
+
+    function teacherHomeFixture(): TeacherHomeKpiResult {
+      return {
+        todayLessons: { count: 3, lastLessonAgoMin: 60 },
+        primaryStudents: { count: 12, pendingFeedback: 2 },
+        monthlyReferrals: { count: 4 },
+        monthlyAttendance: { taught: 28, leave: 2, swap: 1 },
+        todos: [
+          {
+            id: 'lesson-S001',
+            title: '今日待上课',
+            meta: '',
+            time: new Date().toISOString(),
+            type: 'today_lesson',
+          },
+        ],
+      };
+    }
+
+    it('happy path: teacher role + tenantSchema + sub → service 收 userId + 返 fixture', async () => {
+      kpi.getTeacherHomeKpi.mockResolvedValueOnce(teacherHomeFixture());
+      const r = await controller.teacherHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('teacher', TEACHER_SUB, CAMPUS_A)),
+      );
+      expect(r.todayLessons.count).toBe(3);
+      expect(r.primaryStudents.count).toBe(12);
+      expect(r.monthlyAttendance.taught).toBe(28);
+      expect(r.todos).toHaveLength(1);
+      expect(kpi.getTeacherHomeKpi).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        TEACHER_SUB,
+      );
+    });
+
+    it('audit_log 写入 kpi.teacher_home.read.success（success 路径）', async () => {
+      kpi.getTeacherHomeKpi.mockResolvedValueOnce(teacherHomeFixture());
+      await controller.teacherHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('teacher', TEACHER_SUB, CAMPUS_A)),
+      );
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({
+          action: 'kpi.teacher_home.read.success',
+          actorUserId: TEACHER_SUB,
+          actorRole: 'teacher',
+          targetType: 'kpi',
+          targetId: TEACHER_SUB,
+        }),
+      );
+    });
+
+    it('缺 tenantSchema → BadRequest + 不调 service + 不写 audit', async () => {
+      await expect(
+        controller.teacherHomeKpi('', req(jwt('teacher', TEACHER_SUB, CAMPUS_A))),
+      ).rejects.toThrow(BadRequestException);
+      expect(kpi.getTeacherHomeKpi).not.toHaveBeenCalled();
+      expect(auditLog.log).not.toHaveBeenCalled();
+    });
+
+    it('user.sub 缺失 → BadRequest', async () => {
+      await expect(
+        controller.teacherHomeKpi(TENANT_SCHEMA, req(undefined)),
+      ).rejects.toThrow(BadRequestException);
+      expect(kpi.getTeacherHomeKpi).not.toHaveBeenCalled();
+    });
+
+    it('空数据 fallback：service 返全 0 → controller 透传 + audit 仍写 success', async () => {
+      const emptyResult: TeacherHomeKpiResult = {
+        todayLessons: { count: 0, lastLessonAgoMin: 0 },
+        primaryStudents: { count: 0, pendingFeedback: 0 },
+        monthlyReferrals: { count: 0 },
+        monthlyAttendance: { taught: 0, leave: 0, swap: 0 },
+        todos: [],
+      };
+      kpi.getTeacherHomeKpi.mockResolvedValueOnce(emptyResult);
+      const r = await controller.teacherHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('teacher', TEACHER_SUB, CAMPUS_A)),
+      );
+      expect(r.todayLessons.count).toBe(0);
+      expect(r.todos).toEqual([]);
+      // audit 仍写：success 是 endpoint-level，与 service 数据无关
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+    });
+
+    it('audit_log 写失败 → 不抛错（fail-open）+ KPI 仍返回', async () => {
+      kpi.getTeacherHomeKpi.mockResolvedValueOnce(teacherHomeFixture());
+      auditLog.log.mockRejectedValueOnce(new Error('db down'));
+      // 不应该 throw
+      const r = await controller.teacherHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('teacher', TEACHER_SUB, CAMPUS_A)),
+      );
+      expect(r.todayLessons.count).toBe(3);
+      expect(auditLog.log).toHaveBeenCalled();
+    });
+
+    it('controller 无 auditLog (Optional)：spec 不传 → 仍跑通', async () => {
+      const ctrlNoAudit = new KpiController(kpi as unknown as KpiService);
+      kpi.getTeacherHomeKpi.mockResolvedValueOnce(teacherHomeFixture());
+      const r = await ctrlNoAudit.teacherHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('teacher', TEACHER_SUB, CAMPUS_A)),
+      );
+      expect(r.todayLessons.count).toBe(3);
     });
   });
 });
