@@ -719,6 +719,76 @@ export class CustomerController {
     return result;
   }
 
+  /**
+   * 2026-05-22 SSOT §6.1 B 方案：销售签约自动 promote customer → student
+   *
+   * 触发：销售在客户详情点签约 → 前端检查 customer.studentId
+   *   - 空 → 弹 modal 强制填学员姓名 + 性别 + 年龄 → 调本 endpoint
+   *   - 已设 → 跳本 endpoint 直接走 POST /db/students/:id/contracts OOUX 路径
+   *
+   * Body: { tenantSchema, childName, childGender?, childAgeOrGrade?, intendedSubject?,
+   *         preferredTeacherId? }
+   *
+   * 返：{ studentId, alreadyPromoted }（幂等：已 promote 跳 INSERT 直接返 studentId）
+   *
+   * 权限 (SSOT §6.1)：sales / sales_manager / boss / admin / academic / academic_admin
+   *   - sales: 签约触发隐式 promote（B 方案，§6 customer.sign-contract-auto-promote）
+   *   - boss/admin/academic: 显式 promote (§6 customer.promote-student 原路径)
+   *
+   * V1 限制 (Sprint Y 重构):
+   *   本 endpoint 仅 promote，不联动 INSERT contracts。前端拿 studentId 后 navigateTo
+   *   student/detail/new → POST /db/students/:id/contracts 原 OOUX 子资源路径。
+   *   Sprint Y 重构：customer + contract transaction 原子（拆分 contract.repository.create 接受 client）
+   */
+  @Post(':customerId/promote-to-student')
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin')
+  @HttpCode(HttpStatus.CREATED)
+  async promoteToStudent(
+    @Param('customerId') customerId: string,
+    @Body()
+    body: {
+      tenantSchema: string;
+      childName: string;
+      childGender?: string;
+      childAgeOrGrade?: string;
+      intendedSubject?: string;
+      preferredTeacherId?: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ studentId: string; alreadyPromoted: boolean }> {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    const userId = req.user?.sub;
+    if (!userId) throw new BadRequestException('user sub required');
+
+    const result = await this.repo.promoteToStudent(body.tenantSchema, customerId, {
+      childName: body.childName,
+      childGender: body.childGender ?? null,
+      childAgeOrGrade: body.childAgeOrGrade ?? null,
+      intendedSubject: body.intendedSubject ?? null,
+      preferredTeacherId: body.preferredTeacherId ?? null,
+      operatorUserId: userId,
+    });
+
+    // audit_log（SSOT §6.1 留痕教务事后审计 — 与「软件少内部审核」原则一致：留痕 ≠ 审核）
+    await this.tryAudit(body.tenantSchema, {
+      actorUserId: userId,
+      ...this.auditCtx(req),
+      action: result.alreadyPromoted
+        ? 'customer.promote.skipped-already'
+        : 'customer.auto-promoted-by-sale',
+      targetType: 'customer',
+      targetId: customerId,
+      before: null,
+      after: {
+        studentId: result.studentId,
+        childName: body.childName,
+        triggeredByRole: req.user?.role,
+      },
+    });
+
+    return result;
+  }
+
   @Post(':id/mark-lost')
   @Roles('sales', 'sales_manager')
   @HttpCode(HttpStatus.OK)

@@ -522,6 +522,7 @@ describe('CustomerController (Sprint B.5 audit_log)', () => {
     claim: jest.Mock;
     release: jest.Mock;
     markLost: jest.Mock;
+    promoteToStudent: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
 
@@ -586,6 +587,7 @@ describe('CustomerController (Sprint B.5 audit_log)', () => {
       claim: jest.fn(),
       release: jest.fn(),
       markLost: jest.fn(),
+      promoteToStudent: jest.fn(),
     } as any;
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = new CustomerController(
@@ -820,6 +822,76 @@ describe('CustomerController (Sprint B.5 audit_log)', () => {
       const entry = auditLog.log.mock.calls[0][1];
       expect(entry.action).toBe('customer.access-denied');
       expect(entry.after.endpoint).toBe('follows');
+    });
+  });
+
+  // ============================================================
+  // 2026-05-22 SSOT §6.1 B 方案：promoteToStudent() — 自动 promote customer → student
+  // ============================================================
+  describe('promoteToStudent() — SSOT §6.1 B 方案', () => {
+    it('happy: customer.studentId 空 → INSERT students + UPDATE customers + audit_log auto-promoted', async () => {
+      repo.promoteToStudent.mockResolvedValueOnce({
+        studentId: STUDENT_ID,
+        alreadyPromoted: false,
+      });
+
+      const result = await controller.promoteToStudent(
+        CUSTOMER_ID,
+        {
+          tenantSchema: TENANT_SCHEMA,
+          childName: '张小宝',
+          childGender: 'male',
+          childAgeOrGrade: '小学二年级',
+        },
+        req(jwt('sales', SALES_A)),
+      );
+
+      expect(result.studentId).toBe(STUDENT_ID);
+      expect(result.alreadyPromoted).toBe(false);
+      expect(repo.promoteToStudent).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        CUSTOMER_ID,
+        expect.objectContaining({
+          childName: '张小宝',
+          childGender: 'male',
+          childAgeOrGrade: '小学二年级',
+          operatorUserId: SALES_A,
+        }),
+      );
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('customer.auto-promoted-by-sale');
+      expect(entry.targetType).toBe('customer');
+      expect(entry.targetId).toBe(CUSTOMER_ID);
+      expect(entry.after.studentId).toBe(STUDENT_ID);
+      expect(entry.after.childName).toBe('张小宝');
+    });
+
+    it('幂等: customer.studentId 已存在 → alreadyPromoted=true + audit_log skipped-already', async () => {
+      repo.promoteToStudent.mockResolvedValueOnce({
+        studentId: STUDENT_ID,
+        alreadyPromoted: true,
+      });
+
+      const result = await controller.promoteToStudent(
+        CUSTOMER_ID,
+        { tenantSchema: TENANT_SCHEMA, childName: '张小宝' },
+        req(jwt('academic', SALES_A)),
+      );
+
+      expect(result.alreadyPromoted).toBe(true);
+      expect(auditLog.log.mock.calls[0][1].action).toBe('customer.promote.skipped-already');
+    });
+
+    it('tenantSchema 缺失 → BadRequest（不调 repo）', async () => {
+      await expect(
+        controller.promoteToStudent(
+          CUSTOMER_ID,
+          { tenantSchema: '', childName: '张小宝' },
+          req(jwt('sales', SALES_A)),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(repo.promoteToStudent).not.toHaveBeenCalled();
     });
   });
 });

@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Logger,
 } from '@nestjs/common';
+import { ulid } from 'ulid';
 import { PgPoolService, PgRow } from './pg-pool.service';
 import { FieldEncryptor } from '../../common/crypto/field-encryptor';
 import { HmacHasher } from '../../common/crypto/hmac-hasher';
@@ -1060,5 +1061,99 @@ export class CustomerRepository {
       }
     }
     return fallbackPlain ?? null;
+  }
+
+  /**
+   * 2026-05-22 SSOT §6.1 B 方案：销售签约自动 promote customer → student
+   *
+   * 触发：销售在客户详情点签约 → 前端检查 customer.studentId
+   *   - studentId 已存在 → 跳过本 endpoint，直接 OOUX 路径 POST /db/students/:id/contracts
+   *   - studentId 空 → 弹 modal 强制填学员姓名 + 性别 + 年龄 → 调本 endpoint
+   *
+   * V1 实施（2026-05-22）：仅 promote（INSERT students + UPDATE customers.student_id）
+   *   Sprint Y 重构 V2：customer + contract transaction 原子（拆分 contract.repository.create 接受 client）
+   *   当前 V1 销售点签约后前端 navigateTo student/detail 再调 POST /db/students/:id/contracts
+   *
+   * 幂等：customer.student_id 已存在 → 直接返回 { alreadyPromoted: true }
+   *
+   * 权限（controller 层 @Roles）：sales / sales_manager / boss / admin / academic / academic_admin
+   *
+   * 学员姓名必填：SSOT §6.1 拍板「学员姓名是必填业务字段，不允许 fallback『{parentName} 的孩子』」
+   *
+   * 与 §6.5 老师分配关系：
+   *   - 销售指定 preferredTeacherId → students.assigned_teacher_id = preferredTeacherId
+   *   - 没指定 → assigned_teacher_id = null → 教务在第一次排课时分配（§6.5 拍板）
+   *
+   * audit_log 留痕：controller 层写 'customer.auto-promoted-by-sale'
+   */
+  async promoteToStudent(
+    tenantSchema: string,
+    customerId: string,
+    payload: {
+      childName: string;
+      childGender?: string | null;
+      childAgeOrGrade?: string | null;
+      intendedSubject?: string | null;
+      preferredTeacherId?: string | null;
+      operatorUserId: string;
+    },
+  ): Promise<{ studentId: string; alreadyPromoted: boolean }> {
+    if (!customerId || customerId.length !== 32) {
+      throw new BadRequestException('customerId must be 32-char ULID');
+    }
+    if (!payload.childName || payload.childName.trim().length === 0) {
+      throw new BadRequestException('childName required (学员姓名必填 SSOT §6.1)');
+    }
+    if (payload.childName.length > 32) {
+      throw new BadRequestException('childName too long (max 32 chars)');
+    }
+    return this.pg.transaction(
+      async (client) => {
+        const customerRows = await client.query(
+          `SELECT id, student_id, owner_user_id, campus_id
+             FROM customers WHERE id = $1 LIMIT 1`,
+          [customerId],
+        );
+        if (customerRows.rowCount === 0) {
+          throw new NotFoundException(`customer ${customerId} not found`);
+        }
+        const customer = customerRows.rows[0];
+
+        // 幂等：已 promote 直接返
+        if (customer.student_id) {
+          return { studentId: customer.student_id, alreadyPromoted: true };
+        }
+
+        // INSERT students (V55 字段齐全)
+        const studentId = ulid().padEnd(32, '0').slice(0, 32);
+        await client.query(
+          `INSERT INTO students
+             (id, student_name, customer_id, grade_or_age, intended_subject,
+              gender, assigned_teacher_id, owner_sales_id, created_by, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
+          [
+            studentId,
+            payload.childName.trim(),
+            customerId,
+            payload.childAgeOrGrade || null,
+            payload.intendedSubject || null,
+            payload.childGender || null,
+            payload.preferredTeacherId || null,  // §6.5 销售可选指定老师
+            customer.owner_user_id,
+            payload.operatorUserId,
+          ],
+        );
+
+        // UPDATE customers.student_id 联动绑定
+        await client.query(
+          `UPDATE customers SET student_id = $1, updated_by = $2, updated_at = NOW()
+             WHERE id = $3`,
+          [studentId, payload.operatorUserId, customerId],
+        );
+
+        return { studentId, alreadyPromoted: false };
+      },
+      { tenantSchema },
+    );
   }
 }
