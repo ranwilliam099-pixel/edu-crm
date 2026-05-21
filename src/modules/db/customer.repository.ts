@@ -62,6 +62,9 @@ export interface Customer {
   parentName?: string | null;
   parentGender?: string | null;
   primaryMobile?: string | null;
+  // § 12B Sprint Y 1: 反查 parent_student_bindings 状态（仅 findById 含）
+  parentAccountSet?: boolean;
+  parentAccountPhoneMask?: string | null;
   ownerUserId: string | null;
   stage: CustomerStage;
   source: string | null;
@@ -587,7 +590,61 @@ export class CustomerRepository {
         WHERE o.id = $1`,
       [id],
     );
-    return rows.length === 0 ? null : this.mapCustomerRow(rows[0]);
+    if (rows.length === 0) return null;
+    const customer = this.mapCustomerRow(rows[0]);
+
+    // § 12B Sprint Y 1 (2026-05-21): 反查家长端账户是否已设
+    //   GET /db/customers/:id 返 parentAccountSet + parentAccountPhoneMask
+    //   逻辑: SELECT 1 FROM public.parent_student_bindings WHERE student_id=$1 AND binding_status='active' LIMIT 1
+    //   找到 → 取 parents.phone 解密 mask 138****8000
+    //   未找到 → parentAccountSet=false
+    if (customer.studentId) {
+      try {
+        const bindingRows = await this.pg.query<{
+          parent_id: string;
+          parent_phone: string | null;
+          parent_phone_encrypted: Buffer | null;
+        }>(
+          `SELECT b.parent_id,
+                  p.phone AS parent_phone,
+                  p.phone_encrypted AS parent_phone_encrypted
+             FROM public.parent_student_bindings b
+             JOIN public.parents p ON p.id = b.parent_id
+            WHERE b.student_id = $1 AND b.binding_status = 'active'
+            ORDER BY b.bound_at ASC
+            LIMIT 1`,
+          [customer.studentId],
+        );
+        if (bindingRows.length > 0) {
+          const r = bindingRows[0];
+          const phone = this.decryptPhone(r.parent_id, r.parent_phone_encrypted, r.parent_phone);
+          customer.parentAccountSet = true;
+          customer.parentAccountPhoneMask = phone ? this.maskPhoneForDisplay(phone) : null;
+        } else {
+          customer.parentAccountSet = false;
+          customer.parentAccountPhoneMask = null;
+        }
+      } catch (err) {
+        // fail-open：反查失败不阻塞主 detail（仅 logger.warn），客户端 fallback false
+        this.logger.warn(
+          `[§12B] findById parentAccount lookup failed for student ${customer.studentId}: ${(err as Error).message}`,
+        );
+        customer.parentAccountSet = false;
+        customer.parentAccountPhoneMask = null;
+      }
+    } else {
+      customer.parentAccountSet = false;
+      customer.parentAccountPhoneMask = null;
+    }
+    return customer;
+  }
+
+  /**
+   * 138****8000 显示用脱敏 (与 controller.maskPhoneForAudit 同算法)
+   */
+  private maskPhoneForDisplay(phone: string): string {
+    if (!phone || phone.length < 7) return '***';
+    return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
   }
 
   // ===== 公共池操作 =====

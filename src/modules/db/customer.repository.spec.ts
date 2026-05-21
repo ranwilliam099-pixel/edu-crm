@@ -92,7 +92,9 @@ describe('CustomerRepository (V25 + V34 字段加密双写双读 + V41 customers
     txClient = { query: jest.fn() };
     pg = {
       tenantQuery: jest.fn(),
-      query: jest.fn(),
+      // § 12B Sprint Y 1 (2026-05-21): findById 反查 parent_student_bindings 用 pg.query (跨 tenant public schema)
+      //   默认返 [] 让现有测试不影响，特定 case 需要可 mockResolvedValueOnce 覆盖
+      query: jest.fn().mockResolvedValue([]),
       withClient: jest.fn(),
       transaction: jest.fn().mockImplementation(async (fn: any) => fn(txClient)),
     };
