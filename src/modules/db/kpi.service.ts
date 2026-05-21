@@ -119,7 +119,7 @@ export interface TeacherHomeKpiResult {
  * 2026-05-22 SSOT §6.8 KPI 4 字段 — 月度统一指标
  *   target     消课目标（monthly_kpi_targets.target_lessons / 无下发则 0）
  *   scheduled  已排课节数（COUNT schedule WHERE start_at in 本月）
- *   attended   已消课节数（schedule.status='attended'）
+ *   attended   已消课节数（schedule.status='已完成'）— V8 中文 enum
  *   forecast   预计消课 = scheduled - attended - absent（未来还会消的）
  */
 export interface MonthlyKpiSummary {
@@ -1147,8 +1147,8 @@ export class KpiService {
    *
    * target     从 V56 monthly_kpi_targets 表查（无下发返 0）
    * scheduled  COUNT schedules WHERE start_at in 本月
-   * attended   COUNT WHERE status='attended'
-   * forecast   scheduled - attended - absent（未来还会消）
+   * attended   COUNT WHERE status='已完成'（V8 中文 enum）
+   * forecast   scheduled - attended - absent（未来还会消，absent='缺席'）
    *
    * fail-open 哲学：任一 query 失败返 0 不阻塞 home 加载
    *
@@ -1182,8 +1182,12 @@ export class KpiService {
 
     // Step 2 + 3: scheduled + attended + absent (一次 SQL group)
     try {
+      // 2026-05-22 修第二个 bug: teacher role 的 schedules.teacher_id 是 teachers.id,
+      //   不是 users.id (controller 传的是 JWT.sub = user_id)
+      //   → 必须 sub-query 反查 teachers WHERE user_id = $1
+      //   (avoiding JOIN 让 SQL 在 academic + teacher 之间统一表达 conditions)
       const conditions = role === 'teacher'
-        ? `teacher_id = $1`
+        ? `teacher_id IN (SELECT id FROM teachers WHERE user_id = $1)`
         : (scopeId ? `campus_id = $1` : `1=1`); // academic 无 campusId 时全 tenant scope
       const param = role === 'teacher' ? targetUserId : (scopeId || '');
       if (param) {
@@ -1193,10 +1197,12 @@ export class KpiService {
           absent: string;
         }>(
           tenantSchema,
+          // V8 schema: status IN ('已排课','已完成','已取消','缺席')
+          // 之前误用英文 'attended'/'absent' 导致永远 0 — 2026-05-22 修复
           `SELECT
              COUNT(*) AS scheduled,
-             COUNT(*) FILTER (WHERE status = 'attended') AS attended,
-             COUNT(*) FILTER (WHERE status = 'absent') AS absent
+             COUNT(*) FILTER (WHERE status = '已完成') AS attended,
+             COUNT(*) FILTER (WHERE status = '缺席') AS absent
            FROM schedules
            WHERE ${conditions}
              AND TO_CHAR(start_at, 'YYYY-MM') = $2
