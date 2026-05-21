@@ -295,6 +295,18 @@ export class KpiController {
       );
     }
 
+    // 2026-05-22 用户拍板: 教务 home 主区显示「续约金额」(4 件事「续约」职责)
+    try {
+      result.renewalAmount = await this.kpi.getMonthlyRenewalAmount(
+        tenantSchema,
+        callerCampusId,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[kpi.academic-home] renewalAmount merge failed: ${(e as Error).message}`,
+      );
+    }
+
     await this.tryAuditKpiRead(
       tenantSchema,
       req,

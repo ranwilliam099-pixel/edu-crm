@@ -29,6 +29,7 @@ describe('KpiController (P4-X 2026-05-20)', () => {
     // 2026-05-22 SSOT §6.8 KPI 4 字段
     getMonthlyKpiSummary: jest.Mock;
     setMonthlyTarget: jest.Mock;
+    getMonthlyRenewalAmount: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
 
@@ -147,6 +148,8 @@ describe('KpiController (P4-X 2026-05-20)', () => {
         target: 0, scheduled: 0, attended: 0, forecast: 0,
       }),
       setMonthlyTarget: jest.fn(),
+      // 2026-05-22 用户拍板: academic 4 卡续约金额 mock
+      getMonthlyRenewalAmount: jest.fn().mockResolvedValue(0),
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = new KpiController(

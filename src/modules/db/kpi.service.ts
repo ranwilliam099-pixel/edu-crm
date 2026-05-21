@@ -161,6 +161,9 @@ export interface AcademicHomeKpiResult {
   todos: AcademicHomeTodo[];
   // 2026-05-22 SSOT §6.8 KPI 4 字段（V56 monthly_kpi_targets 表数据源）
   kpiSummary?: MonthlyKpiSummary;
+  // 2026-05-22 用户拍板: 教务 home 主区显示续约金额（4 件事之一「续约」职责）
+  //   query contracts WHERE order_type='续费' AND signed_at in 本月 sum(total_amount)
+  renewalAmount?: number;
 }
 
 /**
@@ -1212,6 +1215,43 @@ export class KpiService {
       );
     }
     return result;
+  }
+
+  /**
+   * 2026-05-22 用户拍板: 教务 home「续约金额」KPI 字段
+   *   query contracts WHERE order_type='续费' AND signed_at in 本月 + 本校 campus
+   *   sum(total_amount) 单位元
+   *
+   * 续约语义（OrderType.续费）= 老学员加课时再消费（不含新签 / 扩科 / 升班 / 转班）
+   * SSOT §3.4 教务 4 件事之一 = 续约职责
+   *
+   * fail-open: query 失败返 0 不阻塞 home
+   */
+  async getMonthlyRenewalAmount(
+    tenantSchema: string,
+    campusId: string | null,
+  ): Promise<number> {
+    try {
+      const conditions = campusId ? 'AND campus_id = $1' : '';
+      const params = campusId ? [campusId] : [];
+      const rows = await this.pg.tenantQuery<{ sum_amount: string }>(
+        tenantSchema,
+        `SELECT COALESCE(SUM(total_amount), 0) AS sum_amount
+         FROM contracts
+         WHERE order_type = '续费'
+           AND signed_at >= date_trunc('month', NOW())
+           AND signed_at < date_trunc('month', NOW()) + INTERVAL '1 month'
+           AND status != 'cancelled'
+           ${conditions}`,
+        params,
+      );
+      return Number(rows[0]?.sum_amount || 0);
+    } catch (e) {
+      this.logger.warn(
+        `[KPI-renewal-amount] query failed: ${(e as Error).message}`,
+      );
+      return 0;
+    }
   }
 
   /**
