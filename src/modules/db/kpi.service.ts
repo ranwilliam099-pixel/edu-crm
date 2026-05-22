@@ -1042,9 +1042,27 @@ export class KpiService {
       );
     }
 
-    // 4. unreadConsultations: 未读家长咨询占位 — parent_communication 表 5/16 Sprint Y 后续
-    //    SSOT §3.4 列入 KPI 但当前 schema 未实现 → 返 0 兜底
-    const unreadConsultations = { count: 0 };
+    // 4. unreadConsultations: 未读家长咨询 (V57 parent_communication 2026-05-22 Sprint Y P2)
+    //    SQL: COUNT WHERE campus_id=本校 + sender_role='parent' + read_at IS NULL
+    //    fail-open: 旧 tenant 未 backfill V57 → 返 0 不阻塞 home
+    let unreadConsultations = { count: 0 };
+    try {
+      const unreadRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(*) AS cnt
+         FROM parent_communication
+         WHERE campus_id = $1
+           AND sender_role = 'parent'
+           AND read_at IS NULL`,
+        [campusId],
+      );
+      unreadConsultations = { count: parseInt(unreadRows[0]?.cnt || '0', 10) };
+    } catch (e) {
+      // V57 backfill 未跑 (表不存在) → fail-open 返 0
+      this.logger.warn(
+        `[KPI-academic-home] unreadConsultations failed (V57 backfill 未跑?): ${(e as Error).message}`,
+      );
+    }
 
     // 5. todos: 待办（聚合 3 类，每类 LIMIT 5 防爆）
     const todos: AcademicHomeTodo[] = [];
