@@ -106,6 +106,10 @@ import { TeacherRatingController } from './teacher-rating.controller';
 import { KpiController } from './kpi.controller';
 import { KpiService } from './kpi.service';
 
+// ===== V58 (2026-05-22) — SSOT §6.5 改老师 = 家长同意 =====
+import { TeacherChangeRequestController } from './teacher-change-request.controller';
+import { TeacherChangeRequestService } from './teacher-change-request.service';
+
 // ===== V33 审计日志（生产架构 P0 第 1 项）=====
 import { AuditLogRepository } from './audit-log.repository';
 
@@ -209,6 +213,8 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     KpiController,
     // P4-Y (2026-05-20) — C 端家长评老师
     TeacherRatingController,
+    // V58 (2026-05-22) — SSOT §6.5 改老师 = 家长同意
+    TeacherChangeRequestController,
   ],
   providers: [
     // 基础设施
@@ -262,6 +268,8 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     KpiService,
     // P4-Y (2026-05-20) — 老师评分明细 repository
     TeacherRatingRepository,
+    // V58 (2026-05-22) — SSOT §6.5 改老师 = 家长同意
+    TeacherChangeRequestService,
   ],
   exports: [
     PgPoolService,
