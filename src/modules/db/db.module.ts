@@ -311,6 +311,8 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     KpiService,
     // P4-Y (2026-05-20) — 老师评分明细 repository
     TeacherRatingRepository,
+    // V58 (2026-05-22) — SSOT §6.5 改老师 = 家长同意 (c-side controller 用)
+    TeacherChangeRequestService,
   ],
 })
 export class DbModule {}

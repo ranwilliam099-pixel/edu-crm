@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   ForbiddenException,
   Get,
@@ -26,6 +27,8 @@ import {
   TodayLesson,
   UnreadCount,
 } from './c-side.repository';
+// 2026-05-22 波 C: 家长 C 端「待我决定老师变更」endpoint (SSOT §6.5 闭环)
+import { TeacherChangeRequestService } from '../db/teacher-change-request.service';
 
 /**
  * CSideController — P4-Y 2026-05-20 C 端家长聚合 endpoint
@@ -79,6 +82,8 @@ export class CSideController {
     private readonly cside: CSideRepository,
     private readonly parentRepo: ParentRepository,
     @Optional() private readonly auditLog?: AuditLogRepository,
+    // 2026-05-22 波 C: 家长「待我决定老师变更」endpoint (SSOT §6.5 闭环)
+    @Optional() private readonly tcrService?: TeacherChangeRequestService,
   ) {}
 
   /**
@@ -326,6 +331,80 @@ export class CSideController {
   }
 
   // ===== helpers =====
+
+  // ============================================================
+  // 2026-05-22 波 C: 家长「待我决定老师变更」 (SSOT §6.5 闭环)
+  //   B 端教务发起变更 → 推送家长 → 家长在 C 端「同意 / 拒绝」
+  //   approved → 同事务 update student.assigned_teacher_id + 未来 schedules
+  // ============================================================
+
+  /**
+   * GET /api/c/teacher-changes/pending — 列我的 pending 老师变更请求
+   *
+   * 走 ParentJwtStrategy + tenant.middleware (req.parent.sub 已挂)
+   * 服务端用 parent_id = req.parent.sub 过滤 — 跨家长 → 自动 0 行
+   */
+  @Get('teacher-changes/pending')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async listMyPendingTeacherChanges(
+    @Req() req: ParentRequest,
+  ): Promise<{ items: Awaited<ReturnType<TeacherChangeRequestService['listPendingByParent']>> }> {
+    const { parentId, tenantSchema } = this.assertParent(req);
+    if (!this.tcrService) {
+      throw new BadRequestException('TeacherChangeRequestService not wired');
+    }
+    const items = await this.tcrService.listPendingByParent(tenantSchema, parentId);
+    return { items };
+  }
+
+  /**
+   * PATCH /api/c/teacher-changes/:id/decide — 家长同意/拒绝
+   *
+   * Body: { decision: 'approved' | 'rejected', rejectReason?: string }
+   * approved → 自动 update student.assigned_teacher_id + 未来 schedules (service 同事务)
+   *
+   * RBAC: tcr.parent_id === req.parent.sub (service 内 SELECT FOR UPDATE 校验)
+   *   跨家长 → service 抛 PARENT_MISMATCH BadRequest
+   */
+  @Patch('teacher-changes/:id/decide')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async decideTeacherChange(
+    @Param('id') id: string,
+    @Body() body: { decision: 'approved' | 'rejected'; rejectReason?: string },
+    @Req() req: ParentRequest,
+  ): Promise<{ id: string; decision: string; schedulesUpdated: number }> {
+    if (!ULID_PATTERN.test(id)) {
+      throw new BadRequestException('id must be 32-char ULID');
+    }
+    if (body.decision !== 'approved' && body.decision !== 'rejected') {
+      throw new BadRequestException(`decision must be 'approved' or 'rejected'`);
+    }
+    const { parentId, tenantSchema } = this.assertParent(req);
+    if (!this.tcrService) {
+      throw new BadRequestException('TeacherChangeRequestService not wired');
+    }
+    const result = await this.tcrService.parentDecide(
+      tenantSchema,
+      id,
+      parentId,
+      body.decision,
+      body.rejectReason,
+    );
+    await this.tryAudit(tenantSchema, {
+      actorUserId: parentId,
+      action: body.decision === 'approved'
+        ? 'teacher.change-approved-by-parent'
+        : 'teacher.change-rejected-by-parent',
+      targetType: 'teacher_change_request',
+      targetId: id,
+      before: null,
+      after: { schedulesUpdated: result.schedulesUpdated },
+      req,
+    });
+    return { id, decision: body.decision, schedulesUpdated: result.schedulesUpdated };
+  }
 
   /**
    * 校验 req.parent 存在并提取 parentId / tenantSchema / tenantId
