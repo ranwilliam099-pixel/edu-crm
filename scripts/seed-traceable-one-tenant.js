@@ -307,6 +307,80 @@ const month = thisMonthStr();
 const FEEDBACKS = [];
 
 // ============================================================
+// 2026-05-23 task #29 验证缺口补 seed:
+//   作业 + 测评 + C 端家长是「业务起点」(不是终态行), 类比 schedule '已排课':
+//     - homework_assignment + assignment_recipients = 老师布置作业的起点
+//     - assessment = 老师创建测评的起点
+//     - parents + parent_student_bindings = 家长 c/auth/login 注册的起点
+//   后续 submission / 录分 / paywall 由真业务流累积 (不预 seed)
+//
+// 此 3 类业务起点目前缺前端入口 page (homework new / assessment new / parent register flow),
+//   所以 seed 必须建初始数据, 否则前端验证链路被卡 (老师空 assignmentId / C 端无可用 parentId)
+// ============================================================
+
+// 3 老师每人 1 作业起点 (3 条 homework_assignment)
+//   每作业接收 i%3 老师主带的所有学员 (assignment_recipients fan-out)
+const HW_ASSIGNMENTS = TEACHERS.map((t, i) => ({
+  id: ulid('hw_assignment', i),
+  schedule_id: null,        // 独立作业 (可不关联课次)
+  teacher_id: t.id,
+  title: `${t.subject} ${['Unit 1 配套练习', 'Unit 2 复习', 'Unit 3 综合'][i]}`,
+  content: `请按要求完成本次 ${t.subject} 作业, 周末前上交。`,
+  due_at: daysFromNow(7),    // 7 天截止
+  difficulty: '中',
+  status: 'published',
+  // 接收方 = 该老师主带的全部学员
+  recipientStudentIds: STUDENTS
+    .filter((s) => s.student.assigned_teacher_id === t.id)
+    .map((s) => s.student.id),
+}));
+
+// 3 老师每人 1 测评起点 (3 条 assessment)
+const ASSESSMENTS = TEACHERS.map((t, i) => ({
+  id: ulid('assessment', i),
+  teacher_id: t.id,
+  title: `${t.subject} 5 月月考`,
+  subject: t.subject,
+  assessment_type: '月考',
+  total_score: 100,
+  scheduled_at: daysAgo(5 - i),  // 5/4/3 天前 — 老师可去录分
+  status: 'published',
+}));
+
+// 3 家长起点 (parents + parent_student_bindings)
+//   按 SSOT C 端家长拍板: 每家长 1 个孩子 (一家长一孩绑定基础)
+//   phone 13800003001-003 (避免和 users.phone 13800001000-009 冲突)
+const PARENTS = [
+  {
+    i: 0,
+    phone: '13800003001',
+    name: '家长·林女士',
+    student_id: STUDENTS[0].student.id,
+    relationship: 'mother',
+  },
+  {
+    i: 1,
+    phone: '13800003002',
+    name: '家长·陈先生',
+    student_id: STUDENTS[1].student.id,
+    relationship: 'father',
+  },
+  {
+    i: 2,
+    phone: '13800003003',
+    name: '家长·黄女士',
+    student_id: STUDENTS[2].student.id,
+    relationship: 'mother',
+  },
+];
+PARENTS.forEach((p) => {
+  p.id = ulid('parent', p.i);
+  p.phone_hash = hmacHex(p.phone);
+  p.phone_enc = aesGcm(p.phone);
+  p.binding_id = ulid('parent_binding', p.i);
+});
+
+// ============================================================
 // 生成 SQL
 // ============================================================
 const sql = [];
@@ -339,6 +413,11 @@ sql.push(`  ${TENANT_SCHEMA}.schedules,`);
 sql.push(`  ${TENANT_SCHEMA}.recurring_schedules,`);
 sql.push(`  ${TENANT_SCHEMA}.student_teacher_bindings,`);
 sql.push(`  ${TENANT_SCHEMA}.student_course_packages,`);
+sql.push(`  ${TENANT_SCHEMA}.homework_submissions,`);
+sql.push(`  ${TENANT_SCHEMA}.assignment_recipients,`);
+sql.push(`  ${TENANT_SCHEMA}.homework_assignments,`);
+sql.push(`  ${TENANT_SCHEMA}.student_assessment_results,`);
+sql.push(`  ${TENANT_SCHEMA}.assessments,`);
 sql.push(`  ${TENANT_SCHEMA}.contracts,`);
 sql.push(`  ${TENANT_SCHEMA}.invoices,`);
 sql.push(`  ${TENANT_SCHEMA}.opportunities,`);
@@ -351,6 +430,13 @@ sql.push(`  ${TENANT_SCHEMA}.course_products,`);
 sql.push(`  ${TENANT_SCHEMA}.monthly_kpi_targets,`);
 sql.push(`  ${TENANT_SCHEMA}.audit_log`);
 sql.push(`RESTART IDENTITY CASCADE;`);
+sql.push('');
+sql.push(`-- 5/23 task #29: 清 public.parents + parent_student_bindings 本 tenant 的家长起点 (跨租户表)`);
+sql.push(`DELETE FROM public.parent_student_bindings WHERE tenant_id = '${TENANT_ID}';`);
+sql.push(
+  `DELETE FROM public.parents WHERE id IN (`
+  + PARENTS.map((p) => S(p.id)).join(', ') + `);`
+);
 sql.push('');
 sql.push(`-- (campuses 表保留 + UPSERT 占位行确保 FK 完整)`);
 sql.push(
@@ -519,6 +605,80 @@ for (const f of FEEDBACKS) {
 }
 sql.push('');
 
+// ============================================================
+// Step 12 (2026-05-23 task #29): homework + assessment 业务起点
+//   类比 Step 8 schedule '已排课' = 排课业务起点
+//   作业 = 老师布置作业 起点; 测评 = 老师创建测评 起点
+//   submission / 录分 由真业务流累积 (不预 seed)
+// ============================================================
+sql.push(`-- ============================================================`);
+sql.push(`-- Step 12: 3 homework_assignments + 3 assessments (业务起点)`);
+sql.push(`-- 数据源:`);
+sql.push(`--   homework/list 老师视角: 3 个 assignment 每人 1 条`);
+sql.push(`--   homework/grade detail page: recipientStudentIds + submissions[] 可拉真数据`);
+sql.push(`--   assessment/list + record page: 测评录分流可走通`);
+sql.push(`-- ============================================================`);
+for (const hw of HW_ASSIGNMENTS) {
+  sql.push(`-- homework_assignment teacher=${hw.teacher_id.slice(0, 8)} title="${hw.title}"`);
+  sql.push(
+    `INSERT INTO homework_assignments (id, schedule_id, teacher_id, title, content, due_at, difficulty, status)`
+    + `\n VALUES (${S(hw.id)}, ${S(hw.schedule_id)}, ${S(hw.teacher_id)}, ${S(hw.title)}, ${S(hw.content)}, ${T(hw.due_at)}, ${S(hw.difficulty)}, ${S(hw.status)});`
+  );
+  // assignment_recipients fan-out
+  for (const sid of hw.recipientStudentIds) {
+    sql.push(
+      `INSERT INTO assignment_recipients (assignment_id, student_id)`
+      + ` VALUES (${S(hw.id)}, ${S(sid)});`
+    );
+  }
+}
+sql.push('');
+
+for (const a of ASSESSMENTS) {
+  sql.push(`-- assessment teacher=${a.teacher_id.slice(0, 8)} title="${a.title}"`);
+  sql.push(
+    `INSERT INTO assessments (id, teacher_id, title, subject, assessment_type, total_score, scheduled_at, status)`
+    + `\n VALUES (${S(a.id)}, ${S(a.teacher_id)}, ${S(a.title)}, ${S(a.subject)}, ${S(a.assessment_type)}, ${N(a.total_score)}, ${T(a.scheduled_at)}, ${S(a.status)});`
+  );
+}
+sql.push('');
+
+// ============================================================
+// Step 13 (2026-05-23 task #29): C 端 parents + parent_student_bindings 业务起点
+//   类比 Step 5 customers = sales 拓客起点
+//   parents = 家长 C 端注册起点 (c/auth/login 输入手机号 → check-phone exists:true → 登录)
+//   订阅 / 绑定其他孩子 / 看月报 由真业务流累积
+//
+//   关键: public schema (跨租户), 不是 tenant_xxx schema
+//   触发器 check_max_3_parents 单孩 ≤ 3 家长 (每家长 1 孩绑定不会触发)
+// ============================================================
+sql.push(`-- ============================================================`);
+sql.push(`-- Step 13: 3 parents + 3 parent_student_bindings (C 端家长业务起点)`);
+sql.push(`-- 数据源:`);
+sql.push(`--   c/auth/login: check-phone(13800003001/2/3) → exists:true → 短信验证登录`);
+sql.push(`--   c/home: parent 1-3 各看自己 1 个孩子`);
+sql.push(`--   c/mine: GET /c/me/profile 返 name + phone (解密)`);
+sql.push(`-- ============================================================`);
+sql.push(`-- public.parents UPSERT (跨租户, ON CONFLICT phone DO UPDATE 兼容 backfill)`);
+for (const p of PARENTS) {
+  sql.push(`-- parent name="${p.name}" phone=${p.phone} 绑学员 ${p.student_id.slice(0,8)}`);
+  sql.push(
+    `INSERT INTO public.parents (id, phone, phone_hash, phone_encrypted, name, status)`
+    + `\n VALUES (${S(p.id)}, ${S(p.phone)}, ${B(p.phone_hash)}, ${B(p.phone_enc)}, ${S(p.name)}, 'active')`
+    + `\n ON CONFLICT (phone) DO UPDATE SET`
+    + `\n   phone_hash = EXCLUDED.phone_hash,`
+    + `\n   phone_encrypted = EXCLUDED.phone_encrypted,`
+    + `\n   name = EXCLUDED.name,`
+    + `\n   status = 'active';`
+  );
+  sql.push(
+    `INSERT INTO public.parent_student_bindings (id, parent_id, student_id, tenant_id, is_primary, relationship, binding_status)`
+    + `\n VALUES (${S(p.binding_id)}, ${S(p.id)}, ${S(p.student_id)}, ${S(TENANT_ID)}, TRUE, ${S(p.relationship)}, 'active')`
+    + `\n ON CONFLICT (parent_id, student_id) DO UPDATE SET binding_status = 'active';`
+  );
+}
+sql.push('');
+
 sql.push(`COMMIT;`);
 sql.push('');
 
@@ -535,6 +695,13 @@ sql.push(`-- SELECT status, COUNT(*) FROM ${TENANT_SCHEMA}.schedules GROUP BY st
 sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.course_consumptions;  -- 应 0 (由真业务事件累积)`);
 sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.lesson_feedbacks;  -- 应 0 (由老师真填累积)`);
 sql.push(`-- SELECT target_role, target_user_id, month, target_lessons FROM ${TENANT_SCHEMA}.monthly_kpi_targets ORDER BY target_role, target_user_id;  -- 应 6 行`);
+sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.homework_assignments;  -- 应 3 (3 老师 × 1 作业起点)`);
+sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.assignment_recipients;  -- 应 ~10 (3 老师 fan-out 主带学员)`);
+sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.homework_submissions;  -- 应 0 (家长真提交累积)`);
+sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.assessments;  -- 应 3 (3 老师 × 1 测评起点)`);
+sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.student_assessment_results;  -- 应 0 (老师真录分累积)`);
+sql.push(`-- SELECT COUNT(*) FROM public.parents WHERE phone IN ('13800003001','13800003002','13800003003');  -- 应 3`);
+sql.push(`-- SELECT COUNT(*) FROM public.parent_student_bindings WHERE tenant_id = '${TENANT_ID}' AND binding_status='active';  -- 应 3`);
 sql.push('');
 
 fs.writeFileSync(OUTPUT, sql.join('\n') + '\n');
@@ -542,10 +709,23 @@ console.log(`✓ Wrote ${sql.length} lines → ${OUTPUT}`);
 
 // 输出 user credential 给用户登录测试
 console.log('');
-console.log('=== 测试登录账户 (所有用户密码 Demo@12345) ===');
+console.log('=== B 端测试账户 (所有用户密码 Demo@12345) ===');
 for (const u of USERS) {
   console.log(`  ${u.role.padEnd(10)} ${u.name.padEnd(14)} 手机=${u.phone}  user_id=${u.id}`);
 }
+console.log('');
+console.log('=== C 端家长账户 (走 c/auth/login 手机号短信验证) ===');
+for (const p of PARENTS) {
+  const stu = STUDENTS.find((s) => s.student.id === p.student_id);
+  console.log(`  parent  ${p.name.padEnd(14)} 手机=${p.phone}  绑学员=${stu ? stu.student.student_name : '?'}  parent_id=${p.id}`);
+}
+console.log('');
+console.log('=== 业务起点 seed 数据 ===');
+console.log(`  作业起点: 3 条 (老师每人 1 作业, recipients fan-out 主带学员)`);
+console.log(`  测评起点: 3 条 (老师每人 1 测评, 月考类型)`);
+console.log(`  排课起点: ${SCHEDULES.length} 条 (status='已排课')`);
+console.log(`  KPI 目标: ${TARGETS.length} 条 (校长下发 academic+teacher 月度)`);
+console.log(`  消课 / 反馈 / submission / 录分 由真业务事件累积 (不预 seed)`);
 console.log('');
 console.log('=== Tenant 信息 ===');
 console.log(`  tenant_schema = ${TENANT_SCHEMA}`);
