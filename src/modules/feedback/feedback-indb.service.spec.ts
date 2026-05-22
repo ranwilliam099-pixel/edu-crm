@@ -15,7 +15,7 @@ describe('Feedback Services InDb (V9)', () => {
 
   describe('LessonFeedbackService', () => {
     let service: LessonFeedbackService;
-    let repo: { insert: jest.Mock; findById: jest.Mock; listByStudent: jest.Mock; update: jest.Mock; markParentRead: jest.Mock };
+    let repo: { insert: jest.Mock; findById: jest.Mock; findByIdWithMeta: jest.Mock; listByStudent: jest.Mock; update: jest.Mock; markParentRead: jest.Mock };
     let consumptionRepo: {
       findAllPendingByScheduleId: jest.Mock;
       confirmByFeedback: jest.Mock;
@@ -47,6 +47,7 @@ describe('Feedback Services InDb (V9)', () => {
       repo = {
         insert: jest.fn(),
         findById: jest.fn(),
+        findByIdWithMeta: jest.fn(),  // 2026-05-22 Wave A: findInDb 改用 findByIdWithMeta
         listByStudent: jest.fn(),
         update: jest.fn(),
         markParentRead: jest.fn(),
@@ -328,8 +329,22 @@ describe('Feedback Services InDb (V9)', () => {
     });
 
     it('findInDb throws NotFoundException when missing', async () => {
-      repo.findById.mockResolvedValueOnce(null);
+      // 2026-05-22 Wave A: findInDb 用 findByIdWithMeta (返扩展 meta)
+      repo.findByIdWithMeta.mockResolvedValueOnce(null);
       await expect(service.findInDb('nope', TENANT)).rejects.toThrow(NotFoundException);
+    });
+
+    it('findInDb returns feedback with studentName/teacherName/subject', async () => {
+      repo.findByIdWithMeta.mockResolvedValueOnce({
+        ...FEEDBACK,
+        studentName: '学员A',
+        teacherName: '老师·王',
+        subject: '一对一辅导',
+      });
+      const r = await service.findInDb(FEEDBACK.id, TENANT);
+      expect((r as any).studentName).toBe('学员A');
+      expect((r as any).teacherName).toBe('老师·王');
+      expect((r as any).subject).toBe('一对一辅导');
     });
 
     it('updateInDb checks 24h via existing record + persists patch', async () => {

@@ -230,9 +230,15 @@ export class LessonFeedbackService {
   async findInDb(
     id: string,
     tenantSchema: string,
-  ): Promise<LessonFeedback> {
+  ): Promise<LessonFeedback & {
+    studentName?: string | null;
+    teacherName?: string | null;
+    subject?: string | null;
+  }> {
     if (!this.repo) throw new BadRequestException('LessonFeedbackRepository not available');
-    const r = await this.repo.findById(tenantSchema, id);
+    // 2026-05-22 Wave A: 返扩展 meta (studentName/teacherName/subject) 供 B 端 detail page 直接用
+    //   JOIN students + teachers + course_products, 不增加额外 HTTP roundtrip
+    const r = await this.repo.findByIdWithMeta(tenantSchema, id);
     if (!r) throw new NotFoundException(`feedback ${id} not found`);
     return r;
   }

@@ -72,6 +72,47 @@ export class LessonFeedbackRepository {
     return rows.length === 0 ? null : this.mapRow(rows[0]);
   }
 
+  /**
+   * 2026-05-22 Wave A: B 端反馈详情 page 需 JOIN students + teachers + course_products
+   *   返扩展 LessonFeedback + studentName / teacherName / subject (course_product_name)
+   *   detail page 不需重新调多 endpoint 就能渲染头部上下文
+   */
+  async findByIdWithMeta(
+    tenantSchema: string,
+    id: string,
+  ): Promise<(LessonFeedback & {
+    studentName: string | null;
+    teacherName: string | null;
+    subject: string | null;
+  }) | null> {
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT lf.id, lf.schedule_id, lf.student_id, lf.teacher_id, lf.attendance_status,
+              lf.classroom_performance, lf.knowledge_points, lf.homework,
+              lf.homework_attachments, lf.teacher_note, lf.teacher_internal_note,
+              lf.knowledge_matrix, lf.dim_ratings, lf.homework_deadline, lf.homework_difficulty, lf.next_preview,
+              lf.parent_read_at, lf.submitted_at, lf.updated_at,
+              s.student_name AS student_name,
+              t.name         AS teacher_name,
+              cp.product_name AS course_product_name
+         FROM lesson_feedbacks lf
+         LEFT JOIN students s       ON s.id  = lf.student_id
+         LEFT JOIN teachers t       ON t.id  = lf.teacher_id
+         LEFT JOIN schedules sc     ON sc.id = lf.schedule_id
+         LEFT JOIN course_products cp ON cp.id = sc.course_product_id
+        WHERE lf.id = $1`,
+      [id],
+    );
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    return {
+      ...this.mapRow(row),
+      studentName: row.student_name || null,
+      teacherName: row.teacher_name || null,
+      subject: row.course_product_name || null,
+    };
+  }
+
   async findByScheduleStudent(
     tenantSchema: string,
     scheduleId: string,
