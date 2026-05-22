@@ -276,6 +276,172 @@ export class ScheduleRepository {
     return this.mapRow(rows[0]);
   }
 
+  /**
+   * 2026-05-22 业务事件链关键缺口修复 (用户拍板「每数据有业务来源最小颗粒度」):
+   *   老师上完课 → 同事务:
+   *     1. UPDATE schedule.status='已完成'
+   *     2. UPDATE schedule_students.attendance_status='出勤' (默认, 老师后可改)
+   *     3. INSERT N 条 course_consumptions (pending_feedback)
+   *
+   *   这是 Step 2 — 之前缺这个 endpoint, seed 时只能直接 INSERT 终态 (违反业务事件原则)
+   */
+  async completeWithConsumptions(
+    tenantSchema: string,
+    scheduleId: string,
+    options: {
+      consumptionIdPrefix: string;     // ULID 前缀 (调用方提供, 服务端补 student_id hash)
+      feedbackDueAtHours?: number;     // 默认 24h (V9 锁定窗口)
+    },
+  ): Promise<{ schedule: Schedule; consumptionsCreated: number; alreadyComplete: boolean }> {
+    return this.pg.transaction(
+      async (client) => {
+        // 1. 取 schedule (validate 状态)
+        const schRows = await client.query<any>(
+          `SELECT id, status, teacher_id FROM schedules WHERE id = $1 FOR UPDATE`,
+          [scheduleId],
+        );
+        if (schRows.rows.length === 0) {
+          throw new NotFoundException(`schedule ${scheduleId} not found`);
+        }
+        const cur = schRows.rows[0];
+        if (cur.status === '已完成') {
+          // 幂等: 已经完成过, 不重复创建 consumption
+          const fullRows = await client.query<any>(
+            `SELECT id, course_product_id, teacher_id, start_at, duration_min, end_at,
+                    status, source, recurring_schedule_id, created_by_user_id, created_by_role, notes
+             FROM schedules WHERE id = $1`,
+            [scheduleId],
+          );
+          return {
+            schedule: this.mapRow(fullRows.rows[0]),
+            consumptionsCreated: 0,
+            alreadyComplete: true,
+          };
+        }
+        if (cur.status !== '已排课') {
+          throw new NotFoundException(`schedule ${scheduleId} status=${cur.status}, 只能完成已排课的课`);
+        }
+
+        // 2. 取该 schedule 所有学员
+        const stuRows = await client.query<{ student_id: string }>(
+          `SELECT student_id FROM schedule_students WHERE schedule_id = $1`,
+          [scheduleId],
+        );
+        const studentIds = stuRows.rows.map((r) => r.student_id);
+        if (studentIds.length === 0) {
+          throw new NotFoundException(`schedule ${scheduleId} 无学员关联, 不能完成`);
+        }
+
+        // 3. UPDATE schedule.status='已完成'
+        const upd = await client.query<any>(
+          `UPDATE schedules SET status='已完成', updated_at=NOW() WHERE id = $1
+           RETURNING id, course_product_id, teacher_id, start_at, duration_min, end_at,
+                     status, source, recurring_schedule_id, created_by_user_id, created_by_role, notes`,
+          [scheduleId],
+        );
+
+        // 4. UPDATE schedule_students.attendance_status='待出勤' → '出勤' (默认)
+        //    老师后续可在 roster 改个别学员状态
+        await client.query(
+          `UPDATE schedule_students SET attendance_status='出勤'
+             WHERE schedule_id = $1 AND attendance_status = '待出勤'`,
+          [scheduleId],
+        );
+
+        // 5. INSERT N consumption (pending_feedback)
+        const dueHours = options.feedbackDueAtHours ?? 24;
+        const feedbackDueAt = new Date(Date.now() + dueHours * 3600 * 1000);
+        for (let i = 0; i < studentIds.length; i++) {
+          const studentId = studentIds[i];
+          const ccId = (options.consumptionIdPrefix + i).padEnd(32, '0').slice(0, 32);
+          // 防重复: 如果该 schedule+student 已有 consumption, ON CONFLICT 跳过
+          await client.query(
+            `INSERT INTO course_consumptions (
+               id, schedule_id, student_id, teacher_id, status,
+               amount_yuan, feedback_id, feedback_due_at, created_at
+             ) VALUES ($1, $2, $3, $4, 'pending_feedback', NULL, NULL, $5, NOW())
+             ON CONFLICT (schedule_id, student_id) DO NOTHING`,
+            [ccId, scheduleId, studentId, cur.teacher_id, feedbackDueAt],
+          );
+        }
+
+        return {
+          schedule: this.mapRow(upd.rows[0]),
+          consumptionsCreated: studentIds.length,
+          alreadyComplete: false,
+        };
+      },
+      { tenantSchema },
+    );
+  }
+
+  /**
+   * 2026-05-22 老师 lesson roster 数据源:
+   *   GET /db/schedules/:id JOIN schedule_students + students + teachers + course_products
+   *   返完整 lesson meta + 学员 list, 替代前端 mock data
+   */
+  async findByIdWithRoster(
+    tenantSchema: string,
+    scheduleId: string,
+  ): Promise<{
+    schedule: Schedule & {
+      teacherName: string | null;
+      courseProductName: string | null;
+      classType: string | null;
+    };
+    roster: Array<{
+      studentId: string;
+      studentName: string;
+      attendanceStatus: AttendanceStatus;
+      feedbackFilled: boolean;
+    }>;
+  } | null> {
+    const schRows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT s.id, s.course_product_id, s.teacher_id, s.start_at, s.duration_min, s.end_at,
+              s.status, s.source, s.recurring_schedule_id, s.created_by_user_id, s.created_by_role, s.notes,
+              t.name AS teacher_name,
+              cp.product_name AS course_product_name,
+              cp.class_type
+         FROM schedules s
+         LEFT JOIN teachers t ON t.id = s.teacher_id
+         LEFT JOIN course_products cp ON cp.id = s.course_product_id
+        WHERE s.id = $1`,
+      [scheduleId],
+    );
+    if (schRows.length === 0) return null;
+    const row = schRows[0];
+
+    // roster (含每学员是否已填反馈)
+    const rosterRows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT ss.student_id, ss.attendance_status,
+              st.student_name,
+              EXISTS(SELECT 1 FROM lesson_feedbacks lf
+                       WHERE lf.schedule_id = ss.schedule_id AND lf.student_id = ss.student_id) AS feedback_filled
+         FROM schedule_students ss
+         JOIN students st ON st.id = ss.student_id
+        WHERE ss.schedule_id = $1
+        ORDER BY st.student_name ASC`,
+      [scheduleId],
+    );
+
+    return {
+      schedule: {
+        ...this.mapRow(row),
+        teacherName: row.teacher_name || null,
+        courseProductName: row.course_product_name || null,
+        classType: row.class_type || null,
+      },
+      roster: rosterRows.map((r) => ({
+        studentId: r.student_id,
+        studentName: r.student_name,
+        attendanceStatus: r.attendance_status,
+        feedbackFilled: r.feedback_filled === true,
+      })),
+    };
+  }
+
   async listByTeacher(
     tenantSchema: string,
     teacherId: string,

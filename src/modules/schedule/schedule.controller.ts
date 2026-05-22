@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Get,
   Optional,
   Param,
   Post,
+  Query,
   Req,
   HttpCode,
   HttpStatus,
@@ -449,6 +451,63 @@ export class ScheduleController {
       new Date(body.fromIso),
       new Date(body.toIso),
     );
+  }
+
+  /**
+   * 2026-05-22 业务事件 Step 2: 老师上完课 → 真持久化 (消课业务事件触发点)
+   *
+   *   POST /api/schedules/db/:id/complete-with-consumption
+   *   - UPDATE schedule.status='已完成'
+   *   - INSERT N 条 course_consumptions pending_feedback (每学员一条)
+   *   - UPDATE schedule_students.attendance_status='出勤' (默认, 老师可在 roster 改)
+   *
+   *   RBAC: teacher (上自己课) / admin / boss / academic (代为完成)
+   *   消课链路: 这里产生 pending → 老师填反馈 → 自动 confirmed
+   */
+  @Post('db/:id/complete-with-consumption')
+  @HttpCode(HttpStatus.OK)
+  async completeWithConsumptionInDb(
+    @Param('id') id: string,
+    @Body() body: { tenantSchema: string; consumptionIdPrefix: string },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ schedule: Schedule; consumptionsCreated: number; alreadyComplete: boolean }> {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!id || id.length !== 32) throw new BadRequestException('schedule id must be 32-char ULID');
+    if (!body.consumptionIdPrefix) {
+      throw new BadRequestException('consumptionIdPrefix required (前端生成 ULID)');
+    }
+    // RBAC: teacher / admin / boss / academic 可触发
+    const role = req.user?.role;
+    if (!['teacher', 'admin', 'boss', 'academic', 'academic_admin'].includes(role || '')) {
+      throw new ForbiddenException('当前角色不允许标记上完课');
+    }
+    return this.service.completeScheduleInDb(body.tenantSchema, id, body.consumptionIdPrefix);
+  }
+
+  /**
+   * 2026-05-22 老师 lesson roster 数据源:
+   *   GET /api/schedules/db/:id/with-roster?tenantSchema=
+   *   返完整 lesson meta + 学员 list (含每学员 feedback 是否已填)
+   *   替代前端 lesson/roster page 整页 mock
+   */
+  @Get('db/:id/with-roster')
+  @HttpCode(HttpStatus.OK)
+  async findByIdWithRosterInDb(
+    @Param('id') id: string,
+    @Query('tenantSchema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<any> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!id || id.length !== 32) throw new BadRequestException('schedule id must be 32-char ULID');
+    const role = req.user?.role;
+    if (!['teacher', 'admin', 'boss', 'academic', 'academic_admin', 'sales', 'sales_manager'].includes(role || '')) {
+      throw new ForbiddenException('当前角色无权查看课次花名册');
+    }
+    const result = await this.service.findByIdWithRosterInDb(tenantSchema, id);
+    if (!result) {
+      throw new BadRequestException(`schedule ${id} not found`);
+    }
+    return result;
   }
 
   /**

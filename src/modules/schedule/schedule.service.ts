@@ -282,6 +282,34 @@ export class ScheduleService {
   }
 
   /**
+   * 2026-05-22 业务事件 Step 2 真持久化:
+   *   老师上完课 → 同事务更新 schedule + INSERT N pending_feedback consumption
+   *   这是消课业务事件唯一合法触发路径 (替代 seed 直接 INSERT 终态行)
+   */
+  async completeScheduleInDb(
+    tenantSchema: string,
+    scheduleId: string,
+    consumptionIdPrefix: string,
+  ): Promise<{ schedule: Schedule; consumptionsCreated: number; alreadyComplete: boolean }> {
+    if (!this.repo) throw new BadRequestException('ScheduleRepository not available');
+    return this.repo.completeWithConsumptions(tenantSchema, scheduleId, {
+      consumptionIdPrefix,
+    });
+  }
+
+  /**
+   * 2026-05-22 老师 lesson roster 数据源:
+   *   返完整 lesson meta + 学员 list, 替代前端 mock
+   */
+  async findByIdWithRosterInDb(
+    tenantSchema: string,
+    scheduleId: string,
+  ) {
+    if (!this.repo) throw new BadRequestException('ScheduleRepository not available');
+    return this.repo.findByIdWithRoster(tenantSchema, scheduleId);
+  }
+
+  /**
    * 取消排课
    */
   cancelSchedule(schedule: Schedule, reason?: string): Schedule {
