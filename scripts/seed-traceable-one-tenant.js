@@ -432,10 +432,23 @@ sql.push(`  ${TENANT_SCHEMA}.audit_log`);
 sql.push(`RESTART IDENTITY CASCADE;`);
 sql.push('');
 sql.push(`-- 5/23 task #29: 清 public.parents + parent_student_bindings 本 tenant 的家长起点 (跨租户表)`);
-sql.push(`DELETE FROM public.parent_student_bindings WHERE tenant_id = '${TENANT_ID}';`);
+sql.push(`-- 注: parents.phone UNIQUE, 历史可能有相同 phone 不同 id 的旧 parent (旧 seed 跑过)`);
+sql.push(`--     必须先 DELETE 该 phone 对应 parent 的所有 bindings (跨 tenant), 再 DELETE parent`);
+sql.push(`--     之后用 plain INSERT 强制确定性 id (与 binding FK 对齐)`);
+sql.push(`-- public.tenants.id 历史大小写不一致 (生产明心是 UPPERCASE), parent_student_bindings.tenant_id FK 用真实存储的 case`);
+const phoneList = PARENTS.map((p) => S(p.phone)).join(', ');
+// tenant_id 在 public.tenants 大写, 但 ULID seed / tenant_schema 习惯小写 — bindings FK 用 UPPER 对齐 public.tenants.id
+const TENANT_ID_FOR_FK = TENANT_ID.toUpperCase();
+sql.push(
+  `DELETE FROM public.parent_student_bindings`
+  + ` WHERE parent_id IN (SELECT id FROM public.parents WHERE phone IN (${phoneList}))`
+  + ` OR tenant_id = '${TENANT_ID_FOR_FK}'`
+  + ` OR tenant_id = '${TENANT_ID}';`
+);
 sql.push(
   `DELETE FROM public.parents WHERE id IN (`
-  + PARENTS.map((p) => S(p.id)).join(', ') + `);`
+  + PARENTS.map((p) => S(p.id)).join(', ') + `)`
+  + ` OR phone IN (${phoneList});`
 );
 sql.push('');
 sql.push(`-- (campuses 表保留 + UPSERT 占位行确保 FK 完整)`);
@@ -662,19 +675,17 @@ sql.push(`-- ============================================================`);
 sql.push(`-- public.parents UPSERT (跨租户, ON CONFLICT phone DO UPDATE 兼容 backfill)`);
 for (const p of PARENTS) {
   sql.push(`-- parent name="${p.name}" phone=${p.phone} 绑学员 ${p.student_id.slice(0,8)}`);
+  // 2026-05-23 V47 status 切中文 ('启用'/'停用') 取代 V10 'active'/'suspended'/'deleted'
+  //   先前 DELETE 已清旧 id + phone 冲突, 此处用 plain INSERT 强制确定性 id
+  //   (避免 ON CONFLICT UPDATE 保留旧 id 导致下面 binding FK 不匹配)
   sql.push(
     `INSERT INTO public.parents (id, phone, phone_hash, phone_encrypted, name, status)`
-    + `\n VALUES (${S(p.id)}, ${S(p.phone)}, ${B(p.phone_hash)}, ${B(p.phone_enc)}, ${S(p.name)}, 'active')`
-    + `\n ON CONFLICT (phone) DO UPDATE SET`
-    + `\n   phone_hash = EXCLUDED.phone_hash,`
-    + `\n   phone_encrypted = EXCLUDED.phone_encrypted,`
-    + `\n   name = EXCLUDED.name,`
-    + `\n   status = 'active';`
+    + `\n VALUES (${S(p.id)}, ${S(p.phone)}, ${B(p.phone_hash)}, ${B(p.phone_enc)}, ${S(p.name)}, '启用');`
   );
   sql.push(
+    // tenant_id 必须匹配 public.tenants.id 真实 case (生产明心是 UPPERCASE)
     `INSERT INTO public.parent_student_bindings (id, parent_id, student_id, tenant_id, is_primary, relationship, binding_status)`
-    + `\n VALUES (${S(p.binding_id)}, ${S(p.id)}, ${S(p.student_id)}, ${S(TENANT_ID)}, TRUE, ${S(p.relationship)}, 'active')`
-    + `\n ON CONFLICT (parent_id, student_id) DO UPDATE SET binding_status = 'active';`
+    + `\n VALUES (${S(p.binding_id)}, ${S(p.id)}, ${S(p.student_id)}, ${S(TENANT_ID_FOR_FK)}, TRUE, ${S(p.relationship)}, 'active');`
   );
 }
 sql.push('');
