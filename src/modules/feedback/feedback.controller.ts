@@ -332,11 +332,14 @@ export class FeedbackController {
     // 5/21 BLOCKER-1: teacher 必须只能为自己 schedule 写反馈（防伪造 body.teacherId）
     //   - admin/boss 跳过 self-check（拍板「老板校长 ✅ 全权」）
     //   - teacher self-check 失败抛 ForbiddenException + 写 audit_log（teacher.self-check-failed）
-    await this.assertTeacherIdSelfOrPrivileged(req, tenantSchema, body.teacherId);
+    // 5/22 改: assertTeacherIdSelfOrPrivileged 返 final teacherId, body 空时 teacher 自身兜底
+    //   (前端不必再调 GET /api/teachers/me 多 1 个 roundtrip 拿自己 teacher.id)
+    const finalTeacherId = await this.assertTeacherIdSelfOrPrivileged(req, tenantSchema, body.teacherId);
 
     const result = await this.feedback.submitInDb(
       {
         ...rest,
+        teacherId: finalTeacherId,
         homeworkDeadline: homeworkDeadlineMs ? new Date(homeworkDeadlineMs) : undefined,
       },
       tenantSchema,
@@ -988,16 +991,31 @@ export class FeedbackController {
    *   - 写 audit_log action='teacher.self-check-failed' targetType='lesson_feedback'（fail-open）
    *   - 抛 ForbiddenException 阻断主流程
    */
+  /**
+   * 2026-05-22 改返 final teacherId — body 空时 teacher 自身兜底
+   *   - admin / boss: 必须显式传 expectedTeacherId (无 ownTeacherId 反查)
+   *   - teacher + body 空: 用 ownTeacherId (语义即 self, 等价 body.teacherId = ownTeacherId)
+   *   - teacher + body 非空且 ≠ ownTeacherId: 403 (防伪造写他人反馈)
+   */
   private async assertTeacherIdSelfOrPrivileged(
     req: AuthenticatedRequest,
     tenantSchema: string,
-    expectedTeacherId: string,
-  ): Promise<void> {
+    expectedTeacherId: string | undefined,
+  ): Promise<string> {
     if (req.user?.role !== 'teacher') {
-      // admin / boss 走特权路径，无需 self-check
-      return;
+      // admin / boss 走特权路径，无 self-check, 必须显式 body.teacherId
+      if (!expectedTeacherId) {
+        throw new ForbiddenException(
+          'admin/boss 写反馈必须显式提供 body.teacherId',
+        );
+      }
+      return expectedTeacherId;
     }
     const ownTeacherId = await this.resolveOwnTeacherId(req, tenantSchema);
+    if (!expectedTeacherId) {
+      // teacher 自身兜底: body 空 → 用反查的 ownTeacherId (语义即 self)
+      return ownTeacherId;
+    }
     if (expectedTeacherId !== ownTeacherId) {
       // self-check 失败写 audit_log（fail-open）
       try {
@@ -1024,6 +1042,7 @@ export class FeedbackController {
           `but req.user maps to teachers.id=${ownTeacherId} — 拒绝写他人反馈`,
       );
     }
+    return ownTeacherId;
   }
 
   // -- helpers: JSON Date 反序列化 --
