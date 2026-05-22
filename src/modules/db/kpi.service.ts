@@ -75,6 +75,58 @@ export interface StudentActivityKpiResult {
 }
 
 /**
+ * 2026-05-22 Level 3 明细 — 4 KPI list endpoint 数据契约 (signed/renewal items)
+ *
+ *   contract 明细: 合同维度, 一行一份合同
+ */
+export interface KpiContractItem {
+  contractId: string;
+  studentId: string;
+  studentName: string;
+  courseProductName: string | null;
+  totalAmount: number;
+  totalAmountText: string;
+  signedAt: string;
+  signedAtText: string;     // 'M/D'
+  ownerUserId: string | null;
+  ownerName: string | null;
+  ownerRole: string | null;
+  orderType: string;
+}
+
+/**
+ * consumption items: schedule + course_consumption JOIN, 一行一节已消课
+ */
+export interface KpiConsumptionItem {
+  scheduleId: string;
+  studentId: string;
+  studentName: string;
+  teacherName: string | null;
+  courseProductName: string | null;
+  startAt: string;
+  startAtText: string;
+  durationMin: number;
+  confirmedAt: string;
+}
+
+/**
+ * student-activity items: 学员维度, 含最近 30d 课时数 + 活跃状态
+ */
+export interface KpiStudentActivityItem {
+  studentId: string;
+  studentName: string;
+  campusName: string | null;
+  lessons30d: number;
+  lastAttendedAt: string | null;
+  isActive: boolean;     // 30d 内有 confirmed consumption 即活跃
+}
+
+export interface KpiListResult<T> {
+  items: T[];
+  total: number;
+}
+
+/**
  * 2026-05-21 销售视角 home KPI（拍板：销售自己的 home 必须接真接口）
  *   personalSigned   本月签约金额 + 笔数 (contracts SUM by owner_user_id, 30 天窗口)
  *   customersInProgress  在跟客户数 (opportunities count by owner_user_id, stage NOT IN [已报名,已失单])
@@ -1175,6 +1227,279 @@ export class KpiService {
       unreadConsultations: { count: 0 },
       todos: [],
     };
+  }
+
+  // ============================================================
+  // 2026-05-22 Level 3 明细 — 4 KPI list endpoint
+  //   (合同/消课/学员 明细维度, 替代 Level 2 按销售分组的中间层)
+  // ============================================================
+
+  /**
+   * 本月新签 contract list — orderType='新签' + signed_at 30d 内
+   */
+  async listSignedContracts(
+    tenantSchema: string,
+    options: { campusIds: string[] | null; limit: number; offset: number },
+  ): Promise<KpiListResult<KpiContractItem>> {
+    return this._listContractsByOrderType(tenantSchema, {
+      orderTypes: ['新签'],
+      ...options,
+    });
+  }
+
+  /**
+   * 本月续约 contract list — orderType IN ('续费','扩科','升班','转班')
+   */
+  async listRenewalContracts(
+    tenantSchema: string,
+    options: { campusIds: string[] | null; limit: number; offset: number },
+  ): Promise<KpiListResult<KpiContractItem>> {
+    return this._listContractsByOrderType(tenantSchema, {
+      orderTypes: ['续费', '扩科', '升班', '转班'],
+      ...options,
+    });
+  }
+
+  private async _listContractsByOrderType(
+    tenantSchema: string,
+    options: {
+      orderTypes: string[];
+      campusIds: string[] | null;
+      limit: number;
+      offset: number;
+    },
+  ): Promise<KpiListResult<KpiContractItem>> {
+    const { orderTypes, campusIds, limit, offset } = options;
+    const params: any[] = [orderTypes];
+    let p = 2; // $1 已是 orderTypes
+    const campusFilter = campusIds && campusIds.length > 0
+      ? ` AND c.campus_id = ANY($${p++})`
+      : '';
+    if (campusFilter) params.push(campusIds);
+    params.push(limit, offset);
+    const limitParam = `$${p++}`;
+    const offsetParam = `$${p++}`;
+    try {
+      const rows = await this.pg.tenantQuery<any>(
+        tenantSchema,
+        `SELECT
+           c.id              AS contract_id,
+           c.student_id      AS student_id,
+           s.student_name    AS student_name,
+           cp.product_name   AS course_product_name,
+           c.total_amount    AS total_amount,
+           c.signed_at       AS signed_at,
+           c.owner_user_id   AS owner_user_id,
+           u.name            AS owner_name,
+           u.role            AS owner_role,
+           c.order_type      AS order_type
+         FROM contracts c
+         JOIN students s ON s.id = c.student_id
+         LEFT JOIN course_products cp ON cp.id = c.course_product_id
+         LEFT JOIN users u ON u.id = c.owner_user_id
+         WHERE c.order_type = ANY($1)
+           AND c.signed_at >= NOW() - INTERVAL '30 days'
+           AND c.status IN ('active','pending')
+           AND c.deleted_at IS NULL
+           ${campusFilter}
+         ORDER BY c.signed_at DESC
+         LIMIT ${limitParam} OFFSET ${offsetParam}`,
+        params,
+      );
+      const totalParams = campusIds && campusIds.length > 0
+        ? [orderTypes, campusIds]
+        : [orderTypes];
+      const totalRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(*) AS cnt FROM contracts c
+         WHERE c.order_type = ANY($1)
+           AND c.signed_at >= NOW() - INTERVAL '30 days'
+           AND c.status IN ('active','pending')
+           AND c.deleted_at IS NULL
+           ${campusIds && campusIds.length > 0 ? ' AND c.campus_id = ANY($2)' : ''}`,
+        totalParams,
+      );
+      return {
+        items: rows.map((r) => {
+          const amount = Number(r.total_amount || 0);
+          return {
+            contractId: r.contract_id,
+            studentId: r.student_id,
+            studentName: r.student_name,
+            courseProductName: r.course_product_name,
+            totalAmount: amount,
+            totalAmountText: formatAmountText(amount),
+            signedAt: r.signed_at,
+            signedAtText: this._formatMonthDay(r.signed_at),
+            ownerUserId: r.owner_user_id,
+            ownerName: r.owner_name,
+            ownerRole: r.owner_role,
+            orderType: r.order_type,
+          };
+        }),
+        total: parseInt(totalRows[0]?.cnt || '0', 10),
+      };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-list-contracts] ${tenantSchema}: ${(e as Error).message}`,
+      );
+      return { items: [], total: 0 };
+    }
+  }
+
+  /**
+   * 本月消课 list — course_consumptions.status='confirmed' + confirmed_at 30d 内
+   */
+  async listConsumptionItems(
+    tenantSchema: string,
+    options: { campusIds: string[] | null; limit: number; offset: number },
+  ): Promise<KpiListResult<KpiConsumptionItem>> {
+    const { campusIds, limit, offset } = options;
+    const params: any[] = [];
+    let p = 1;
+    const campusFilter = campusIds && campusIds.length > 0
+      ? ` AND sc.campus_id = ANY($${p++})`
+      : '';
+    if (campusFilter) params.push(campusIds);
+    params.push(limit, offset);
+    const limitParam = `$${p++}`;
+    const offsetParam = `$${p++}`;
+    try {
+      const rows = await this.pg.tenantQuery<any>(
+        tenantSchema,
+        `SELECT
+           sc.id              AS schedule_id,
+           cc.student_id      AS student_id,
+           s.student_name     AS student_name,
+           t.name             AS teacher_name,
+           cp.product_name    AS course_product_name,
+           sc.start_at        AS start_at,
+           sc.duration_min    AS duration_min,
+           cc.confirmed_at    AS confirmed_at
+         FROM course_consumptions cc
+         JOIN schedules sc ON sc.id = cc.schedule_id
+         LEFT JOIN students s ON s.id = cc.student_id
+         LEFT JOIN teachers t ON t.id = cc.teacher_id
+         LEFT JOIN course_products cp ON cp.id = sc.course_product_id
+         WHERE cc.status = 'confirmed'
+           AND cc.confirmed_at >= NOW() - INTERVAL '30 days'
+           ${campusFilter}
+         ORDER BY cc.confirmed_at DESC
+         LIMIT ${limitParam} OFFSET ${offsetParam}`,
+        params,
+      );
+      const totalParams = campusIds && campusIds.length > 0 ? [campusIds] : [];
+      const totalRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(*) AS cnt
+         FROM course_consumptions cc
+         JOIN schedules sc ON sc.id = cc.schedule_id
+         WHERE cc.status = 'confirmed'
+           AND cc.confirmed_at >= NOW() - INTERVAL '30 days'
+           ${campusIds && campusIds.length > 0 ? ' AND sc.campus_id = ANY($1)' : ''}`,
+        totalParams,
+      );
+      return {
+        items: rows.map((r) => ({
+          scheduleId: r.schedule_id,
+          studentId: r.student_id,
+          studentName: r.student_name ?? '—',
+          teacherName: r.teacher_name,
+          courseProductName: r.course_product_name,
+          startAt: r.start_at,
+          startAtText: this._formatMonthDay(r.start_at),
+          durationMin: parseInt(r.duration_min, 10) || 0,
+          confirmedAt: r.confirmed_at,
+        })),
+        total: parseInt(totalRows[0]?.cnt || '0', 10),
+      };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-list-consumption] ${tenantSchema}: ${(e as Error).message}`,
+      );
+      return { items: [], total: 0 };
+    }
+  }
+
+  /**
+   * 学员活跃度 list — students LEFT JOIN 30d consumption
+   *   isActive = 30d 内有 status=confirmed consumption
+   */
+  async listStudentActivity(
+    tenantSchema: string,
+    options: { campusIds: string[] | null; limit: number; offset: number; activeOnly?: boolean },
+  ): Promise<KpiListResult<KpiStudentActivityItem>> {
+    const { campusIds, limit, offset, activeOnly } = options;
+    const params: any[] = [];
+    let p = 1;
+    const campusFilter = campusIds && campusIds.length > 0
+      ? ` AND s.campus_id = ANY($${p++})`
+      : '';
+    if (campusFilter) params.push(campusIds);
+    params.push(limit, offset);
+    const limitParam = `$${p++}`;
+    const offsetParam = `$${p++}`;
+    const activeFilter = activeOnly ? ' AND a.last_attended_at IS NOT NULL' : '';
+    try {
+      const rows = await this.pg.tenantQuery<any>(
+        tenantSchema,
+        `WITH activity_30d AS (
+           SELECT cc.student_id,
+                  COUNT(*) AS lessons,
+                  MAX(cc.confirmed_at) AS last_attended_at
+             FROM course_consumptions cc
+            WHERE cc.confirmed_at >= NOW() - INTERVAL '30 days'
+              AND cc.status = 'confirmed'
+            GROUP BY cc.student_id
+         )
+         SELECT
+           s.id              AS student_id,
+           s.student_name    AS student_name,
+           ca.name           AS campus_name,
+           COALESCE(a.lessons, 0) AS lessons,
+           a.last_attended_at AS last_attended_at
+         FROM students s
+         LEFT JOIN activity_30d a ON a.student_id = s.id
+         LEFT JOIN campuses ca ON ca.id = s.campus_id
+         WHERE s.deleted_at IS NULL
+           ${campusFilter}
+           ${activeFilter}
+         ORDER BY a.last_attended_at DESC NULLS LAST, s.student_name ASC
+         LIMIT ${limitParam} OFFSET ${offsetParam}`,
+        params,
+      );
+      const totalParams = campusIds && campusIds.length > 0 ? [campusIds] : [];
+      const totalRows = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(*) AS cnt FROM students s WHERE s.deleted_at IS NULL
+         ${campusIds && campusIds.length > 0 ? ' AND s.campus_id = ANY($1)' : ''}`,
+        totalParams,
+      );
+      return {
+        items: rows.map((r) => ({
+          studentId: r.student_id,
+          studentName: r.student_name,
+          campusName: r.campus_name,
+          lessons30d: parseInt(r.lessons, 10) || 0,
+          lastAttendedAt: r.last_attended_at,
+          isActive: r.last_attended_at !== null,
+        })),
+        total: parseInt(totalRows[0]?.cnt || '0', 10),
+      };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-list-student-activity] ${tenantSchema}: ${(e as Error).message}`,
+      );
+      return { items: [], total: 0 };
+    }
+  }
+
+  /** 'M/D' 格式 (e.g. '5/22') */
+  private _formatMonthDay(d: string | Date | null): string {
+    if (!d) return '';
+    const date = d instanceof Date ? d : new Date(d);
+    if (Number.isNaN(date.getTime())) return '';
+    return `${date.getMonth() + 1}/${date.getDate()}`;
   }
 
   // ============================================================

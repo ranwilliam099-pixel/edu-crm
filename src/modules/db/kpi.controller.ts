@@ -28,6 +28,10 @@ import {
   TeacherHomeKpiResult,
   AcademicHomeKpiResult,
   FinanceHomeKpiResult,
+  KpiContractItem,
+  KpiConsumptionItem,
+  KpiStudentActivityItem,
+  KpiListResult,
 } from './kpi.service';
 import {
   ActorRole,
@@ -584,5 +588,94 @@ export class KpiController {
       campusIdCsv,
     );
     return this.kpi.getStudentActivityKpi(tenantSchema, { campusIds });
+  }
+
+  // ============================================================
+  // 2026-05-22 Level 3 明细 — 4 KPI list endpoint (用户拍板)
+  //   替代 Level 2 「按销售/教务分组」中间层, 直接列合同/消课/学员明细
+  // ============================================================
+
+  /**
+   * 解析分页参数 limit/offset
+   */
+  private _parsePaging(
+    limit: string | undefined,
+    offset: string | undefined,
+  ): { limit: number; offset: number } {
+    const l = parseInt(limit || '50', 10);
+    const o = parseInt(offset || '0', 10);
+    return {
+      limit: Number.isFinite(l) && l > 0 && l <= 200 ? l : 50,
+      offset: Number.isFinite(o) && o >= 0 ? o : 0,
+    };
+  }
+
+  @Get('signed/items')
+  @Roles('admin', 'boss')
+  @HttpCode(HttpStatus.OK)
+  async signedItems(
+    @Query('tenantSchema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
+    @Query('campusId') campusIdCsv?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ): Promise<KpiListResult<KpiContractItem>> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    const campusIds = this.resolveCampusScope(req.user?.role, req.user?.campusId, campusIdCsv);
+    const paging = this._parsePaging(limit, offset);
+    return this.kpi.listSignedContracts(tenantSchema, { campusIds, ...paging });
+  }
+
+  @Get('renewal/items')
+  @Roles('admin', 'boss')
+  @HttpCode(HttpStatus.OK)
+  async renewalItems(
+    @Query('tenantSchema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
+    @Query('campusId') campusIdCsv?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ): Promise<KpiListResult<KpiContractItem>> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    const campusIds = this.resolveCampusScope(req.user?.role, req.user?.campusId, campusIdCsv);
+    const paging = this._parsePaging(limit, offset);
+    return this.kpi.listRenewalContracts(tenantSchema, { campusIds, ...paging });
+  }
+
+  @Get('consumption/items')
+  @Roles('admin', 'boss')
+  @HttpCode(HttpStatus.OK)
+  async consumptionItems(
+    @Query('tenantSchema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
+    @Query('campusId') campusIdCsv?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ): Promise<KpiListResult<KpiConsumptionItem>> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    const campusIds = this.resolveCampusScope(req.user?.role, req.user?.campusId, campusIdCsv);
+    const paging = this._parsePaging(limit, offset);
+    return this.kpi.listConsumptionItems(tenantSchema, { campusIds, ...paging });
+  }
+
+  @Get('student-activity/items')
+  @Roles('admin', 'boss')
+  @HttpCode(HttpStatus.OK)
+  async studentActivityItems(
+    @Query('tenantSchema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
+    @Query('campusId') campusIdCsv?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+    @Query('activeOnly') activeOnly?: string,
+  ): Promise<KpiListResult<KpiStudentActivityItem>> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    const campusIds = this.resolveCampusScope(req.user?.role, req.user?.campusId, campusIdCsv);
+    const paging = this._parsePaging(limit, offset);
+    return this.kpi.listStudentActivity(tenantSchema, {
+      campusIds,
+      ...paging,
+      activeOnly: activeOnly === 'true',
+    });
   }
 }

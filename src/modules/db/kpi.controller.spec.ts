@@ -34,6 +34,11 @@ describe('KpiController (P4-X 2026-05-20)', () => {
     listTargets: jest.Mock;
     // 2026-05-22 Sprint Y P1: finance home
     getFinanceHomeKpi: jest.Mock;
+    // 2026-05-22 Level 3 明细 4 list endpoint
+    listSignedContracts: jest.Mock;
+    listRenewalContracts: jest.Mock;
+    listConsumptionItems: jest.Mock;
+    listStudentActivity: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
 
@@ -163,6 +168,11 @@ describe('KpiController (P4-X 2026-05-20)', () => {
         refundsThisMonth: { amount: '0', count: 0 },
         todos: [],
       }),
+      // 2026-05-22 Level 3 list endpoint mock
+      listSignedContracts: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+      listRenewalContracts: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+      listConsumptionItems: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+      listStudentActivity: jest.fn().mockResolvedValue({ items: [], total: 0 }),
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = new KpiController(
@@ -735,6 +745,90 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       await expect(
         controller.financeHomeKpi(TENANT_SCHEMA, req(jwt('finance', undefined as any, null))),
       ).rejects.toThrow(/user sub required/);
+    });
+  });
+
+  // ============================================================
+  // Level 3 明细 — 4 list endpoint (2026-05-22 拍板替代 Level 2 分组)
+  // ============================================================
+  describe('Level 3 list endpoints', () => {
+    it('signedItems happy: admin 跨校 (null campusIds) + 默认 limit/offset', async () => {
+      kpi.listSignedContracts.mockResolvedValueOnce({
+        items: [{ contractId: 'c1', studentName: 'A', totalAmount: 12000 } as any],
+        total: 8,
+      });
+      const r = await controller.signedItems(
+        TENANT_SCHEMA,
+        req(jwt('admin', ADMIN_SUB, null)),
+      );
+      expect(r.items).toHaveLength(1);
+      expect(r.total).toBe(8);
+      expect(kpi.listSignedContracts).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        campusIds: null,
+        limit: 50,
+        offset: 0,
+      });
+    });
+
+    it('signedItems boss 强制 jwt.campusId', async () => {
+      await controller.signedItems(
+        TENANT_SCHEMA,
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+      );
+      expect(kpi.listSignedContracts).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        campusIds: [CAMPUS_A],
+        limit: 50,
+        offset: 0,
+      });
+    });
+
+    it('signedItems boss 他校 → 403', async () => {
+      await expect(
+        controller.signedItems(
+          TENANT_SCHEMA,
+          req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+          CAMPUS_B,
+        ),
+      ).rejects.toThrow(/FORBIDDEN_CAMPUS_MISMATCH/);
+      expect(kpi.listSignedContracts).not.toHaveBeenCalled();
+    });
+
+    it('limit 越界 (300) → clamp 默认 50; limit=20 透传', async () => {
+      await controller.signedItems(TENANT_SCHEMA, req(jwt('admin', ADMIN_SUB, null)), undefined, '300');
+      expect(kpi.listSignedContracts).toHaveBeenLastCalledWith(TENANT_SCHEMA, expect.objectContaining({ limit: 50 }));
+      await controller.signedItems(TENANT_SCHEMA, req(jwt('admin', ADMIN_SUB, null)), undefined, '20');
+      expect(kpi.listSignedContracts).toHaveBeenLastCalledWith(TENANT_SCHEMA, expect.objectContaining({ limit: 20 }));
+    });
+
+    it('renewalItems happy', async () => {
+      await controller.renewalItems(TENANT_SCHEMA, req(jwt('admin', ADMIN_SUB, null)));
+      expect(kpi.listRenewalContracts).toHaveBeenCalled();
+    });
+
+    it('consumptionItems happy', async () => {
+      await controller.consumptionItems(TENANT_SCHEMA, req(jwt('admin', ADMIN_SUB, null)));
+      expect(kpi.listConsumptionItems).toHaveBeenCalled();
+    });
+
+    it('studentActivityItems happy + activeOnly 透传', async () => {
+      await controller.studentActivityItems(
+        TENANT_SCHEMA,
+        req(jwt('admin', ADMIN_SUB, null)),
+        undefined,
+        undefined,
+        undefined,
+        'true',
+      );
+      expect(kpi.listStudentActivity).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({ activeOnly: true }),
+      );
+    });
+
+    it('list endpoint 缺 tenantSchema → BadRequest', async () => {
+      await expect(
+        controller.signedItems('', req(jwt('admin', ADMIN_SUB, null))),
+      ).rejects.toThrow(/tenantSchema required/);
     });
   });
 });
