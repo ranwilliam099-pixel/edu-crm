@@ -322,4 +322,27 @@ export class HomeworkService {
     if (!this.repo) throw new BadRequestException('HomeworkRepository not available');
     return this.repo.listPendingByTeacher(tenantSchema, teacherId);
   }
+
+  /**
+   * 2026-05-22 老师批改 page 一站式数据源:
+   *   { assignment, recipients[], submissions[] }
+   *   前端 merge: 每个 recipient 找对应 submission → submitted/graded/未交
+   */
+  async getAssignmentDetailInDb(
+    assignmentId: string,
+    tenantSchema: string,
+  ): Promise<{
+    assignment: HomeworkAssignment;
+    recipients: Array<{ studentId: string; studentName: string | null }>;
+    submissions: Array<HomeworkSubmission & { studentName: string | null }>;
+  }> {
+    if (!this.repo) throw new BadRequestException('HomeworkRepository not available');
+    const assignment = await this.repo.findAssignmentById(tenantSchema, assignmentId);
+    if (!assignment) throw new NotFoundException(`assignment ${assignmentId} not found`);
+    const [recipients, submissions] = await Promise.all([
+      this.repo.listRecipientsWithStudentName(tenantSchema, assignmentId),
+      this.repo.listSubmissionsByAssignmentWithStudentName(tenantSchema, assignmentId),
+    ]);
+    return { assignment, recipients, submissions };
+  }
 }

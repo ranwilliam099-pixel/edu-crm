@@ -216,6 +216,57 @@ export class HomeworkRepository {
   }
 
   /**
+   * 2026-05-22 老师批改 page 数据源:
+   *   按 assignment_id 列所有 submission + JOIN students 拿学员名
+   *   返扩展 HomeworkSubmission + studentName (前端 grade page 直接渲染)
+   *   未交学员: 通过 assignment.recipientStudentIds 反查 (前端处理)
+   */
+  async listSubmissionsByAssignmentWithStudentName(
+    tenantSchema: string,
+    assignmentId: string,
+  ): Promise<Array<HomeworkSubmission & { studentName: string | null }>> {
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT s.id, s.assignment_id, s.student_id, s.submitted_by_parent_id,
+              s.content, s.attachments, s.status, s.grade, s.teacher_comment,
+              s.graded_at, s.graded_by_user_id, s.submitted_at,
+              st.student_name AS student_name
+         FROM homework_submissions s
+         LEFT JOIN students st ON st.id = s.student_id
+        WHERE s.assignment_id = $1
+        ORDER BY s.submitted_at DESC NULLS LAST`,
+      [assignmentId],
+    );
+    return rows.map((r) => ({
+      ...this.mapSubmissionRow(r),
+      studentName: r.student_name || null,
+    }));
+  }
+
+  /**
+   * 2026-05-22 老师批改 page 未交学员名单数据源:
+   *   按 assignment_id JOIN assignment_recipients + students 返学员名
+   *   前端 grade page merge recipients + submissions 算「未交」
+   */
+  async listRecipientsWithStudentName(
+    tenantSchema: string,
+    assignmentId: string,
+  ): Promise<Array<{ studentId: string; studentName: string | null }>> {
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT r.student_id, st.student_name
+         FROM assignment_recipients r
+         LEFT JOIN students st ON st.id = r.student_id
+        WHERE r.assignment_id = $1`,
+      [assignmentId],
+    );
+    return rows.map((r) => ({
+      studentId: r.student_id,
+      studentName: r.student_name || null,
+    }));
+  }
+
+  /**
    * 老师"待批改"列表
    */
   async listPendingByTeacher(

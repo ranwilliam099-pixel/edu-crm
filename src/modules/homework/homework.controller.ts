@@ -316,6 +316,30 @@ export class HomeworkController {
   }
 
   /**
+   * 2026-05-22 老师批改 page 一站式数据 — 拉 assignment + recipients + submissions
+   *   POST /api/homework/db/assignments/:id/detail { tenantSchema }
+   *   RBAC: teacher 必须是 assignment.teacher_id (service 层留, 当前 7 role 都能看)
+   *     - teacher 主用 (批改)
+   *     - academic / academic_admin 教务质检
+   *     - admin / boss 管理
+   *     - sales / sales_manager 看自己客户孩子作业
+   */
+  @Post('db/assignments/:id/detail')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss', 'sales', 'sales_manager')
+  @HttpCode(HttpStatus.OK)
+  async getAssignmentDetailInDb(
+    @Param('id') id: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<{
+    assignment: HomeworkAssignment;
+    recipients: Array<{ studentId: string; studentName: string | null }>;
+    submissions: Array<HomeworkSubmission & { studentName: string | null }>;
+  }> {
+    return this.service.getAssignmentDetailInDb(id, body.tenantSchema);
+  }
+
+  /**
    * Sprint B RBAC (2026-05-11 复审补): 7 role 读（5/15 A-2 删 sales_director）
    *   - 注：家长 c 端走独立 endpoint /api/homework/db/students/:studentId/assignments?? 不再适用
    *     middleware isParentDbPath 含 /api/homework/db/students/ → parent JWT 也会走到此 controller
