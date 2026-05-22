@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Param,
   Post,
+  Req,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -19,6 +21,8 @@ import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
+import { TeacherRepository } from '../db/teacher.repository';
+import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 /**
  * AssessmentController — V14 测评/考试 HTTP 暴露 BE-V14-1
@@ -35,7 +39,11 @@ import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.int
 @UseGuards(TenantScopeGuard)
 @Controller('assessments')
 export class AssessmentController {
-  constructor(private readonly service: AssessmentService) {}
+  // 2026-05-22 加 TeacherRepository — db/my-list JWT 反查 (同 homework my-assignments)
+  constructor(
+    private readonly service: AssessmentService,
+    private readonly teacherRepo: TeacherRepository,
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -221,6 +229,48 @@ export class AssessmentController {
     @Body() body: { tenantSchema: string },
   ): Promise<StudentAssessmentResult[]> {
     return this.service.listResultsByAssessmentInDb(assessmentId, body.tenantSchema);
+  }
+
+  /**
+   * 2026-05-22 老师视角测评列表 — JWT 反查 teacher.id
+   *   POST /api/assessments/db/my-list { tenantSchema }
+   *   RBAC: teacher only (本人测评); 其他角色用 db/teachers/:teacherId/list
+   *   同 schedule.controller my-calendar + homework.controller my-assignments 模式
+   */
+  @Post('db/my-list')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher')
+  @HttpCode(HttpStatus.OK)
+  async listMyAssessmentsInDb(
+    @Body() body: { tenantSchema: string },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<Assessment[]> {
+    const userId = req.user?.sub;
+    if (!userId) throw new ForbiddenException('user.sub missing');
+    const teacher = await this.teacherRepo.findByUserId(body.tenantSchema, userId);
+    if (!teacher) {
+      throw new ForbiddenException(
+        `no teachers row bound to user ${userId} — 老师未建档案不能查测评`,
+      );
+    }
+    return this.service.listAssessmentsByTeacherInDb(teacher.id, body.tenantSchema);
+  }
+
+  /**
+   * 2026-05-22 老师测评录分 page 一站式 — 拉 assessment + results
+   *   POST /api/assessments/db/:id/detail { tenantSchema }
+   *   返 { assessment, results[] }（含已录学员; 未录学员靠后续 student-binding endpoint, 当前不返）
+   *   按用户「禁止幻想」原则: 没有学员清单数据源 → 前端只显示已录, 不假造未录列表
+   */
+  @Post('db/:id/detail')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss', 'sales', 'sales_manager')
+  @HttpCode(HttpStatus.OK)
+  async getAssessmentDetailInDb(
+    @Param('id') id: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<{ assessment: Assessment; results: StudentAssessmentResult[] }> {
+    return this.service.getAssessmentDetailInDb(id, body.tenantSchema);
   }
 
   /**

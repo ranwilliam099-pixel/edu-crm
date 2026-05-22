@@ -309,4 +309,20 @@ export class AssessmentService {
     if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
     return this.repo.listResultsByStudent(tenantSchema, studentId);
   }
+
+  /**
+   * 2026-05-22 老师测评录分 page 一站式: { assessment, results[] }
+   *   按用户「禁止幻想」原则: 无 assessment_recipients 表 → 不假造未录学员清单
+   *   results 来自已录 student_assessment_results, 0 → 显示空状态
+   */
+  async getAssessmentDetailInDb(
+    assessmentId: string,
+    tenantSchema: string,
+  ): Promise<{ assessment: Assessment; results: StudentAssessmentResult[] }> {
+    if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
+    const assessment = await this.repo.findAssessmentById(tenantSchema, assessmentId);
+    if (!assessment) throw new NotFoundException(`assessment ${assessmentId} not found`);
+    const results = await this.repo.listResultsByAssessment(tenantSchema, assessmentId);
+    return { assessment, results };
+  }
 }
