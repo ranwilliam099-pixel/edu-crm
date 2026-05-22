@@ -324,6 +324,19 @@ export class HomeworkService {
   }
 
   /**
+   * 2026-05-23 (task #31): submission count batch (单 SQL 减 N+1)
+   *   homework/list 老师视角列表场景: 每个 assignment 显示 submitted/graded 数
+   *   原前端 0 占位 → 现一次性拉所有 assignment 的统计
+   */
+  async listAssignmentSubmissionCountsInDb(
+    assignmentIds: ReadonlyArray<string>,
+    tenantSchema: string,
+  ): Promise<Array<{ assignmentId: string; totalRecipients: number; submitted: number; graded: number }>> {
+    if (!this.repo) throw new BadRequestException('HomeworkRepository not available');
+    return this.repo.listAssignmentSubmissionCounts(tenantSchema, assignmentIds);
+  }
+
+  /**
    * 2026-05-22 老师批改 page 一站式数据源:
    *   { assignment, recipients[], submissions[] }
    *   前端 merge: 每个 recipient 找对应 submission → submitted/graded/未交

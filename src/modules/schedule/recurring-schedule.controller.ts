@@ -456,6 +456,47 @@ export class RecurringScheduleController {
   }
 
   /**
+   * 2026-05-23 (task #31) list bindings by student
+   *   POST /api/recurring/students/:studentId/bindings { tenantSchema }
+   *   返 active 的 student_teacher_bindings (按 student_id 过滤)
+   *   RBAC: 7 role (与作业 / 反馈 list 一致)
+   *
+   *   注: 当前 createBinding service 仍 in-memory 不持久化, list 表空 → []
+   *      Sprint 后续接通 INSERT 后此 endpoint 自动返真数据
+   */
+  @Post('students/:studentId/bindings')
+  @UseGuards(RbacGuard)
+  @Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss', 'sales', 'sales_manager')
+  @HttpCode(HttpStatus.OK)
+  async listBindingsByStudent(
+    @Param('studentId') studentId: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<StudentTeacherBinding[]> {
+    if (!body.tenantSchema) throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
+    return this.service.listBindingsByStudent(body.tenantSchema, studentId);
+  }
+
+  /**
+   * 2026-05-23 (task #31) list recurring schedules by teacher
+   *   POST /api/recurring/teachers/:teacherId/schedules { tenantSchema }
+   *   返 active 的 recurring_schedules (按 teacher_id 过滤)
+   *   RBAC: 7 role (与作业 / 反馈 list 一致)
+   *
+   *   注: 当前 createRecurring service 仍 in-memory 不持久化, list 表空 → []
+   */
+  @Post('teachers/:teacherId/schedules')
+  @UseGuards(RbacGuard)
+  @Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss', 'sales', 'sales_manager')
+  @HttpCode(HttpStatus.OK)
+  async listRecurringByTeacher(
+    @Param('teacherId') teacherId: string,
+    @Body() body: { tenantSchema: string },
+  ): Promise<RecurringSchedule[]> {
+    if (!body.tenantSchema) throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
+    return this.service.listRecurringByTeacher(body.tenantSchema, teacherId);
+  }
+
+  /**
    * POST /api/recurring/schedules/expand-preview
    *
    * 用于前端创建模板前预览展开时段（不写入 DB）

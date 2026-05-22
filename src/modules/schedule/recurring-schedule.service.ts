@@ -4,7 +4,9 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { PgPoolService } from '../db/pg-pool.service';
 
 /**
  * RecurringScheduleService — V8.1 周期性课表 BE-V8-2
@@ -96,6 +98,80 @@ const WEEKDAY_TO_NUM: Record<WeekDay, number> = {
 @Injectable()
 export class RecurringScheduleService {
   private readonly logger = new Logger(RecurringScheduleService.name);
+
+  // 2026-05-23 (task #31): 注入 PgPoolService 用于 list endpoint 直接读表
+  //   bindings + recurring_schedules create 仍是 in-memory (不持久化, Sprint 后续接通 INSERT)
+  //   现在仅 list 读真表数据, 表空 → 返 []
+  constructor(@Optional() private readonly pg?: PgPoolService) {}
+
+  /**
+   * 2026-05-23 (task #31): list bindings by student
+   *   按 fields-by-role.md §五 学员-老师绑定矩阵, 7 role 可读 (controller 守门)
+   *   返 status='active' 的 binding (unbound 不返, 历史走专用 endpoint)
+   */
+  async listBindingsByStudent(
+    tenantSchema: string,
+    studentId: string,
+  ): Promise<StudentTeacherBinding[]> {
+    if (!this.pg) return [];
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT id, student_id, teacher_id, subject, status, bound_at, unbound_at, bound_by_user_id
+         FROM student_teacher_bindings
+        WHERE student_id = $1 AND status = 'active'
+        ORDER BY bound_at DESC`,
+      [studentId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      studentId: r.student_id,
+      teacherId: r.teacher_id,
+      subject: r.subject || undefined,
+      status: r.status,
+      boundAt: new Date(r.bound_at),
+      unboundAt: r.unbound_at ? new Date(r.unbound_at) : undefined,
+      boundByUserId: r.bound_by_user_id,
+    }));
+  }
+
+  /**
+   * 2026-05-23 (task #31): list recurring schedules by teacher
+   *   返 status='active' 的周期模板 (archived 不返)
+   *   recurring/template 老师视角 page 用
+   */
+  async listRecurringByTeacher(
+    tenantSchema: string,
+    teacherId: string,
+  ): Promise<RecurringSchedule[]> {
+    if (!this.pg) return [];
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT id, binding_id, student_id, teacher_id, course_product_id,
+              by_day, start_minutes, duration_min, start_date, end_date, status,
+              created_by_user_id, created_by_role, created_at, archived_at
+         FROM recurring_schedules
+        WHERE teacher_id = $1 AND status = 'active'
+        ORDER BY created_at DESC`,
+      [teacherId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      bindingId: r.binding_id,
+      studentId: r.student_id,
+      teacherId: r.teacher_id,
+      courseProductId: r.course_product_id || undefined,
+      byDay: r.by_day || [],
+      startMinutes: r.start_minutes,
+      durationMin: r.duration_min,
+      startDate: new Date(r.start_date),
+      endDate: r.end_date ? new Date(r.end_date) : undefined,
+      status: r.status,
+      createdByUserId: r.created_by_user_id,
+      createdByRole: r.created_by_role,
+      createdAt: new Date(r.created_at),
+      archivedAt: r.archived_at ? new Date(r.archived_at) : undefined,
+    }));
+  }
 
   /**
    * 创建学员-老师绑定（B-32 学员档案页）

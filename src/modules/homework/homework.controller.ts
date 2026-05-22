@@ -316,6 +316,24 @@ export class HomeworkController {
   }
 
   /**
+   * 2026-05-23 (task #31) homework/list 老师视角统计批量接口
+   *   POST /api/homework/db/assignments/submission-counts { tenantSchema, assignmentIds[] }
+   *   返每个 assignment 的 { totalRecipients, submitted, graded }
+   *   减 N+1 (单 SQL 一次拉所有 assignment 统计)
+   *   RBAC: 同 list endpoint, 7 role
+   */
+  @Post('db/assignments/submission-counts')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss', 'sales', 'sales_manager')
+  @HttpCode(HttpStatus.OK)
+  async listAssignmentSubmissionCountsInDb(
+    @Body() body: { tenantSchema: string; assignmentIds: string[] },
+  ): Promise<Array<{ assignmentId: string; totalRecipients: number; submitted: number; graded: number }>> {
+    const ids = Array.isArray(body.assignmentIds) ? body.assignmentIds : [];
+    return this.service.listAssignmentSubmissionCountsInDb(ids, body.tenantSchema);
+  }
+
+  /**
    * 2026-05-22 老师批改 page 一站式数据 — 拉 assignment + recipients + submissions
    *   POST /api/homework/db/assignments/:id/detail { tenantSchema }
    *   RBAC: teacher 必须是 assignment.teacher_id (service 层留, 当前 7 role 都能看)

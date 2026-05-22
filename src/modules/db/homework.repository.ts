@@ -93,6 +93,42 @@ export class HomeworkRepository {
     return rows.map((r) => this.mapAssignmentRow(r));
   }
 
+  /**
+   * 2026-05-23 (task #31): submission count batch (单 SQL 减 N+1)
+   *
+   * 输入 assignment_ids 数组, 返每个 assignment 的 { totalRecipients, submitted, graded }
+   *   totalRecipients = COUNT(assignment_recipients)
+   *   submitted = COUNT(homework_submissions WHERE status IN ('submitted','graded','returned'))
+   *   graded = COUNT(homework_submissions WHERE status='graded')
+   * 用 LEFT JOIN + GROUP BY assignment_id 一次性算出所有 assignment 的统计
+   *
+   * 前端 homework/list 调用此 endpoint 替代之前的 0 占位
+   */
+  async listAssignmentSubmissionCounts(
+    tenantSchema: string,
+    assignmentIds: ReadonlyArray<string>,
+  ): Promise<Array<{ assignmentId: string; totalRecipients: number; submitted: number; graded: number }>> {
+    if (assignmentIds.length === 0) return [];
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `WITH ids AS (SELECT UNNEST($1::varchar[]) AS aid)
+       SELECT ids.aid AS assignment_id,
+              COALESCE((SELECT COUNT(*) FROM assignment_recipients r WHERE r.assignment_id = ids.aid), 0) AS total_recipients,
+              COALESCE((SELECT COUNT(*) FROM homework_submissions s WHERE s.assignment_id = ids.aid
+                          AND s.status IN ('submitted','graded','returned')), 0) AS submitted,
+              COALESCE((SELECT COUNT(*) FROM homework_submissions s WHERE s.assignment_id = ids.aid
+                          AND s.status = 'graded'), 0) AS graded
+       FROM ids`,
+      [assignmentIds],
+    );
+    return rows.map((r) => ({
+      assignmentId: r.assignment_id,
+      totalRecipients: Number(r.total_recipients) || 0,
+      submitted: Number(r.submitted) || 0,
+      graded: Number(r.graded) || 0,
+    }));
+  }
+
   async listAssignmentsByStudent(
     tenantSchema: string,
     studentId: string,
