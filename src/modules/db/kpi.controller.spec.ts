@@ -30,6 +30,8 @@ describe('KpiController (P4-X 2026-05-20)', () => {
     getMonthlyKpiSummary: jest.Mock;
     setMonthlyTarget: jest.Mock;
     getMonthlyRenewalAmount: jest.Mock;
+    // 2026-05-22 Sprint Y: list targets
+    listTargets: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
 
@@ -150,6 +152,8 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       setMonthlyTarget: jest.fn(),
       // 2026-05-22 用户拍板: academic 4 卡续约金额 mock
       getMonthlyRenewalAmount: jest.fn().mockResolvedValue(0),
+      // 2026-05-22 Sprint Y: list-targets endpoint mock
+      listTargets: jest.fn().mockResolvedValue([]),
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = new KpiController(
@@ -595,6 +599,73 @@ describe('KpiController (P4-X 2026-05-20)', () => {
         req(jwt('teacher', TEACHER_SUB, CAMPUS_A)),
       );
       expect(r.todayLessons.count).toBe(3);
+    });
+  });
+
+  // ============================================================
+  // GET /db/kpi/targets (Sprint Y P0: 校长 page 入口)
+  // ============================================================
+  describe('listTargets GET /db/kpi/targets', () => {
+    const MONTH = '2026-05';
+
+    it('happy path boss: campusId = jwt.campusId → 透传 service', async () => {
+      kpi.listTargets.mockResolvedValueOnce([
+        { targetUserId: 'u1', targetRole: 'academic', targetLessons: 80, note: null, setAt: '2026-05-22' },
+      ]);
+      const r = await controller.listTargets(
+        TENANT_SCHEMA,
+        CAMPUS_A,
+        MONTH,
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+      );
+      expect(r.items).toHaveLength(1);
+      expect(r.items[0].targetLessons).toBe(80);
+      expect(kpi.listTargets).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_A, MONTH);
+    });
+
+    it('happy path admin: 任意 campusId 都允许', async () => {
+      kpi.listTargets.mockResolvedValueOnce([]);
+      const r = await controller.listTargets(
+        TENANT_SCHEMA,
+        CAMPUS_B,
+        MONTH,
+        req(jwt('admin', ADMIN_SUB, null)),
+      );
+      expect(r.items).toEqual([]);
+      expect(kpi.listTargets).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_B, MONTH);
+    });
+
+    it('boss 查他校 campusId → 403 ForbiddenException', async () => {
+      await expect(
+        controller.listTargets(
+          TENANT_SCHEMA,
+          CAMPUS_B,
+          MONTH,
+          req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+        ),
+      ).rejects.toThrow(/BOSS_CROSS_CAMPUS_DENIED/);
+      expect(kpi.listTargets).not.toHaveBeenCalled();
+    });
+
+    it('缺 tenantSchema → BadRequest', async () => {
+      await expect(
+        controller.listTargets('', CAMPUS_A, MONTH, req(jwt('boss', BOSS_SUB, CAMPUS_A))),
+      ).rejects.toThrow(/tenantSchema required/);
+    });
+
+    it('缺 campusId → BadRequest', async () => {
+      await expect(
+        controller.listTargets(TENANT_SCHEMA, '', MONTH, req(jwt('boss', BOSS_SUB, CAMPUS_A))),
+      ).rejects.toThrow(/campusId required/);
+    });
+
+    it("month 不是 'YYYY-MM' → BadRequest", async () => {
+      await expect(
+        controller.listTargets(TENANT_SCHEMA, CAMPUS_A, '2026/05', req(jwt('boss', BOSS_SUB, CAMPUS_A))),
+      ).rejects.toThrow(/'YYYY-MM'/);
+      await expect(
+        controller.listTargets(TENANT_SCHEMA, CAMPUS_A, '', req(jwt('boss', BOSS_SUB, CAMPUS_A))),
+      ).rejects.toThrow(/'YYYY-MM'/);
     });
   });
 });

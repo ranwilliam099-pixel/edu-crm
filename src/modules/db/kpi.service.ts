@@ -1267,6 +1267,62 @@ export class KpiService {
    *   → 调用方 (controller) 实施硬上限校验（拍板 §6.8）
    *   → 本 method 只负责 INSERT/UPDATE，不校验业务上限
    */
+  /**
+   * 2026-05-22 SSOT §6.8 Sprint Y: 列 campus 本月所有 target (校长 page 入口查现有)
+   *
+   *   返 [{ target_user_id, target_role, target_lessons, note, set_at }]
+   *   只查指定 campus + month, 不返 target_user 名称 (前端用 user-list 字典 map)
+   *
+   *   fail-open: query 失败返 [] 不阻塞 page
+   */
+  async listTargets(
+    tenantSchema: string,
+    campusId: string,
+    month: string,
+  ): Promise<Array<{
+    targetUserId: string;
+    targetRole: 'academic' | 'teacher';
+    targetLessons: number;
+    note: string | null;
+    setAt: string;
+  }>> {
+    try {
+      const rows = await this.pg.tenantQuery<{
+        target_user_id: string;
+        target_role: 'academic' | 'teacher';
+        target_lessons: string;
+        note: string | null;
+        set_at: string;
+      }>(
+        tenantSchema,
+        `SELECT target_user_id, target_role, target_lessons, note, set_at
+         FROM monthly_kpi_targets
+         WHERE campus_id = $1 AND month = $2
+         ORDER BY target_role, set_at DESC`,
+        [campusId, month],
+      );
+      return rows.map((r) => ({
+        targetUserId: r.target_user_id,
+        targetRole: r.target_role,
+        targetLessons: parseInt(r.target_lessons, 10) || 0,
+        note: r.note,
+        setAt: r.set_at,
+      }));
+    } catch (e) {
+      this.logger.warn(
+        `[KPI-list-targets] query failed: ${(e as Error).message}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * 校长（boss）下发月度目标 — UPSERT 模式（同人同月已有 → UPDATE）
+   *
+   * 目标硬上限校验：sum(本 campus 本月目标) ≤ sum(本月已排 schedule * 实际单价)
+   *   → 调用方 (controller) 实施硬上限校验（拍板 §6.8）
+   *   → 本 method 只负责 INSERT/UPDATE，不校验业务上限
+   */
   async setMonthlyTarget(
     tenantSchema: string,
     dto: SetMonthlyTargetDto,

@@ -318,6 +318,46 @@ export class KpiController {
   }
 
   // ============================================================
+  // 2026-05-22 SSOT §6.8 Sprint Y: list-targets endpoint — 校长 page 入口查现有目标
+  // ============================================================
+  /**
+   * GET /db/kpi/targets?tenantSchema=&campusId=&month=
+   *   列 campus 本月所有 academic/teacher 已下发的 target
+   *
+   *   RBAC: boss / admin (boss 强制 jwt.campusId / admin 可查任意 campus)
+   *   入参 month: 'YYYY-MM' 格式 (前端 picker)
+   *
+   *   返 { items: [{ targetUserId, targetRole, targetLessons, note, setAt }] }
+   *
+   *   不写 audit_log: 高频读路径同 home KPI 一致 (越权由 RBAC 拦)
+   */
+  @Get('targets')
+  @Roles('boss', 'admin')
+  @HttpCode(HttpStatus.OK)
+  async listTargets(
+    @Query('tenantSchema') tenantSchema: string,
+    @Query('campusId') campusId: string,
+    @Query('month') month: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ items: Awaited<ReturnType<KpiService['listTargets']>> }> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!campusId) throw new BadRequestException('campusId required');
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      throw new BadRequestException(`month must be 'YYYY-MM'`);
+    }
+
+    // A04 防御: boss 强制 jwt.campusId (admin 可任意)
+    if (req.user?.role === 'boss' && req.user.campusId !== campusId) {
+      throw new ForbiddenException(
+        'BOSS_CROSS_CAMPUS_DENIED: boss 只能查本校 (jwt.campusId)',
+      );
+    }
+
+    const items = await this.kpi.listTargets(tenantSchema, campusId, month);
+    return { items };
+  }
+
+  // ============================================================
   // 2026-05-22 SSOT §6.8 set-target endpoint — 校长下发月度目标
   // ============================================================
   /**
