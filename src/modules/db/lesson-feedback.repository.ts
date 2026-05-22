@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PgPoolService, PgRow } from './pg-pool.service';
 import { LessonFeedback } from '../feedback/lesson-feedback.service';
 
@@ -13,6 +13,24 @@ export class LessonFeedbackRepository {
   constructor(private readonly pg: PgPoolService) {}
 
   async insert(
+    tenantSchema: string,
+    feedback: LessonFeedback,
+  ): Promise<LessonFeedback> {
+    try {
+      return await this._doInsert(tenantSchema, feedback);
+    } catch (e: any) {
+      // 2026-05-22 V9 UNIQUE (schedule_id, student_id) 撞 → 23505
+      // 业务上同 schedule 同学员只能填 1 条反馈, 重复 submit 应该是 ConflictException 409, 不是 500
+      if (e?.code === '23505') {
+        throw new ConflictException(
+          `FEEDBACK_ALREADY_EXISTS: schedule=${feedback.scheduleId} student=${feedback.studentId} 已填过反馈`,
+        );
+      }
+      throw e;
+    }
+  }
+
+  private async _doInsert(
     tenantSchema: string,
     feedback: LessonFeedback,
   ): Promise<LessonFeedback> {
