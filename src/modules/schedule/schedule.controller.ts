@@ -12,10 +12,12 @@ import {
   UseGuards,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import {
   ScheduleService,
   Schedule,
+  ScheduleCalendarItem,
   ScheduleStudent,
   CreateScheduleInput,
   AttendanceStatus,
@@ -454,6 +456,38 @@ export class ScheduleController {
   }
 
   /**
+   * GET /api/schedules/db/my-calendar
+   *
+   * 老师端「我的课」周日历数据源。
+   * 由 JWT.sub 反查 teachers.user_id，避免前端自报 teacherId，也避免日历继续使用 mock lesson id。
+   */
+  @Get('db/my-calendar')
+  @HttpCode(HttpStatus.OK)
+  async listCurrentTeacherCalendarInDb(
+    @Query('tenantSchema') tenantSchema: string,
+    @Query('fromIso') fromIso: string,
+    @Query('toIso') toIso: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<ScheduleCalendarItem[]> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!fromIso || !toIso) throw new BadRequestException('fromIso/toIso required');
+    if (req.user?.role !== 'teacher') {
+      throw new ForbiddenException('当前角色无权查看老师本人课表');
+    }
+    const fromDate = new Date(fromIso);
+    const toDate = new Date(toIso);
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException('fromIso/toIso invalid');
+    }
+    return this.service.listCurrentTeacherCalendarInDb(
+      tenantSchema,
+      req.user.sub,
+      fromDate,
+      toDate,
+    );
+  }
+
+  /**
    * 2026-05-22 业务事件 Step 2: 老师上完课 → 真持久化 (消课业务事件触发点)
    *
    *   POST /api/schedules/db/:id/complete-with-consumption
@@ -505,7 +539,7 @@ export class ScheduleController {
     }
     const result = await this.service.findByIdWithRosterInDb(tenantSchema, id);
     if (!result) {
-      throw new BadRequestException(`schedule ${id} not found`);
+      throw new NotFoundException(`schedule ${id} not found`);
     }
     return result;
   }

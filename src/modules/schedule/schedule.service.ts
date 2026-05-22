@@ -62,6 +62,13 @@ export interface Schedule {
   maxStudents?: number;
 }
 
+export interface ScheduleCalendarItem extends Schedule {
+  teacherName?: string;
+  courseProductName?: string;
+  classType?: string;
+  studentCount: number;
+}
+
 export interface ScheduleStudent {
   scheduleId: string;
   studentId: string;
@@ -279,6 +286,17 @@ export class ScheduleService {
   ): Promise<Schedule[]> {
     if (!this.repo) throw new BadRequestException('ScheduleRepository not available');
     return this.repo.listByTeacher(tenantSchema, teacherId, fromDate, toDate);
+  }
+
+  async listCurrentTeacherCalendarInDb(
+    tenantSchema: string,
+    userId: string,
+    fromDate: Date,
+    toDate: Date,
+  ): Promise<ScheduleCalendarItem[]> {
+    if (!this.repo) throw new BadRequestException('ScheduleRepository not available');
+    if (!userId) throw new BadRequestException('JWT sub required');
+    return this.repo.listByTeacherUserIdWithSummary(tenantSchema, userId, fromDate, toDate);
   }
 
   /**

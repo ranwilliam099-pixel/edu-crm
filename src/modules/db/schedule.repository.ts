@@ -1,6 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PgPoolService, PgRow } from './pg-pool.service';
-import { Schedule, ScheduleStudent, ScheduleStatus, AttendanceStatus } from '../schedule/schedule.service';
+import {
+  Schedule,
+  ScheduleCalendarItem,
+  ScheduleStudent,
+  ScheduleStatus,
+  AttendanceStatus,
+} from '../schedule/schedule.service';
 
 /**
  * ScheduleRepository — V8 排课持久化层
@@ -458,6 +464,45 @@ export class ScheduleRepository {
       [teacherId, fromDate, toDate],
     );
     return rows.map((r) => this.mapRow(r));
+  }
+
+  async listByTeacherUserIdWithSummary(
+    tenantSchema: string,
+    userId: string,
+    fromDate: Date,
+    toDate: Date,
+  ): Promise<ScheduleCalendarItem[]> {
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT s.id, s.course_product_id, s.teacher_id, s.start_at, s.duration_min, s.end_at,
+              s.status, s.source, s.recurring_schedule_id, s.created_by_user_id, s.created_by_role,
+              s.notes, s.class_type, s.max_students,
+              t.name AS teacher_name,
+              cp.product_name AS course_product_name,
+              COALESCE(s.class_type, cp.class_type) AS display_class_type,
+              COUNT(ss.student_id)::int AS student_count
+       FROM schedules s
+       JOIN teachers t ON t.id = s.teacher_id
+       LEFT JOIN course_products cp ON cp.id = s.course_product_id
+       LEFT JOIN schedule_students ss ON ss.schedule_id = s.id
+       WHERE t.user_id = $1
+         AND t.status != '归档'
+         AND s.start_at >= $2
+         AND s.start_at < $3
+         AND s.status != '已取消'
+       GROUP BY s.id, t.name, cp.product_name, cp.class_type
+       ORDER BY s.start_at ASC`,
+      [userId, fromDate, toDate],
+    );
+
+    return rows.map((r) => ({
+      ...this.mapRow(r),
+      classType: r.display_class_type || r.class_type || undefined,
+      maxStudents: r.max_students || undefined,
+      teacherName: r.teacher_name || undefined,
+      courseProductName: r.course_product_name || undefined,
+      studentCount: Number(r.student_count || 0),
+    }));
   }
 
   async markAttendance(
