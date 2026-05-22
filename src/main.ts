@@ -33,6 +33,16 @@ async function bootstrap(): Promise<void> {
 
   app.setGlobalPrefix('api');
 
+  // 2026-05-22 P0 修生产 bug: NestJS (express adapter) 默认开启 ETag → GET 重复请求
+  //   返 304 + 空 body → wx.request 在 statusCode=304 + body 空 + dataType='json'
+  //   场景 既不 fire success 也不 fire fail → 前端 Promise 永不 settle → home loading
+  //   卡 skeleton (实测 admin 进 /db/kpi/signed 后端日志连续 304)
+  //
+  // 关 ETag 让所有 GET 返 200 + body (RESTful API 通常不需要 HTTP cache —
+  //   业务有 Redis 5min 缓存 + 客户端短时间内同 URL 不会重复调)
+  // 影响: 所有 GET endpoint, KPI 返 body 几 KB 带宽影响可忽略
+  (app.getHttpAdapter().getInstance() as any).disable('etag');
+
   // Phase B.L3 (2026-05-19) OpenAPI auto-gen — contract test SSOT
   //   - Swagger UI: GET /api/docs（开发期可视化）
   //   - CI 模式（NODE_ENV=ci）：emit baseline/openapi.json 并立即退出
