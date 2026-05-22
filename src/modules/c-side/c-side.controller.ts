@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ParentRepository } from '../db/parent.repository';
+import { Parent } from '../parent/parent.service';
 import { ParentSelfGuard } from '../auth/parent-self.guard';
 import { AuditLogRepository, normalizeActorRole } from '../db/audit-log.repository';
 import {
@@ -153,6 +154,34 @@ export class CSideController {
     const unreadCount = await this.cside.countUnread(tenantSchema, studentIds);
 
     return { children, todayLessons, unreadCount };
+  }
+
+  /**
+   * 2026-05-23 GET /api/c/me/profile — C 端家长「我的」页数据源
+   *
+   * 返 parent 基础信息 (name/phone/avatarUrl) — 家长本人看自己的 PII 合法
+   *   - parentRepo.findParentById 已解密 phone (V40 双读)
+   *   - 不返 wechat_openid / wechat_unionid (前端无需)
+   *
+   * 替代 c/mine MOCK_PARENT (张爸爸/13800138000 假数据)
+   */
+  @Get('me/profile')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async getMyProfile(
+    @Req() req: ParentRequest,
+  ): Promise<{ id: string; name: string | null; phone: string | null; avatarUrl: string | null; status: string }> {
+    const parentId = (req.parent && req.parent.sub) || (req.parent && req.parent.parentId);
+    if (!parentId) throw new ForbiddenException('parent JWT missing');
+    const parent = await this.parentRepo.findParentById(parentId);
+    if (!parent) throw new NotFoundException(`parent ${parentId} not found`);
+    return {
+      id: parent.id,
+      name: parent.name || null,
+      phone: parent.phone || null,
+      avatarUrl: (parent as Parent & { avatarUrl?: string }).avatarUrl || null,
+      status: parent.status,
+    };
   }
 
   /**
