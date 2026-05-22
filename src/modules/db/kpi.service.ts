@@ -167,6 +167,27 @@ export interface AcademicHomeKpiResult {
 }
 
 /**
+ * 2026-05-22 Sprint Y P1: 财务 home KPI (SSOT §3.6)
+ *   pendingInvoices     待开发票 count
+ *   issuedThisMonth     本月已开票 amount + count
+ *   refundsThisMonth    本月退费 amount + count (contracts.reverse_type='退款')
+ *   todos               待办 (待开发票 preview 5 条)
+ */
+export interface FinanceHomeTodo {
+  id: string;
+  title: string;
+  meta?: string;
+  time?: string;
+  type: 'invoice_pending' | 'refund_pending';
+}
+export interface FinanceHomeKpiResult {
+  pendingInvoices: { count: number };
+  issuedThisMonth: { amount: string; count: number };
+  refundsThisMonth: { amount: string; count: number };
+  todos: FinanceHomeTodo[];
+}
+
+/**
  * 2026-05-22 SSOT §6.8 校长下发月度目标 DTO
  */
 export interface SetMonthlyTargetDto {
@@ -1136,6 +1157,113 @@ export class KpiService {
       unreadConsultations: { count: 0 },
       todos: [],
     };
+  }
+
+  // ============================================================
+  // 2026-05-22 Sprint Y P1: finance home KPI (SSOT §3.6)
+  // ============================================================
+  /**
+   * Finance home KPI:
+   *   pendingInvoices       待开发票数 (invoices.status='pending')
+   *   issuedThisMonthAmount 本月开票金额 (sum amount WHERE status='issued' + issued_at in 本月)
+   *   issuedThisMonthCount  本月开票笔数
+   *   refundsThisMonthAmount 本月退费金额 (contracts.reverse_type='退款' + created_at in 本月)
+   *   refundsThisMonthCount  本月退费笔数
+   *
+   * 各子 query 独立 try-catch (fail-open). 失败返 0 不阻塞 home.
+   *
+   * scope: 财务 finance 角色 cross-campus (拍板说财务跨校权), 不限 campus
+   */
+  async getFinanceHomeKpi(
+    tenantSchema: string,
+  ): Promise<FinanceHomeKpiResult> {
+    const result: FinanceHomeKpiResult = {
+      pendingInvoices: { count: 0 },
+      issuedThisMonth: { amount: '0', count: 0 },
+      refundsThisMonth: { amount: '0', count: 0 },
+      todos: [],
+    };
+
+    // 1. pendingInvoices
+    try {
+      const r = await this.pg.tenantQuery<{ cnt: string }>(
+        tenantSchema,
+        `SELECT COUNT(*) AS cnt FROM invoices WHERE status = 'pending'`,
+        [],
+      );
+      result.pendingInvoices.count = parseInt(r[0]?.cnt || '0', 10);
+    } catch (e) {
+      this.logger.warn(`[finance-home] pendingInvoices: ${(e as Error).message}`);
+    }
+
+    // 2. issuedThisMonth (amount + count)
+    try {
+      const r = await this.pg.tenantQuery<{ sum_amount: string; cnt: string }>(
+        tenantSchema,
+        `SELECT COALESCE(SUM(amount), 0) AS sum_amount, COUNT(*) AS cnt
+         FROM invoices
+         WHERE status = 'issued'
+           AND issued_at >= date_trunc('month', NOW())
+           AND issued_at < date_trunc('month', NOW()) + INTERVAL '1 month'`,
+        [],
+      );
+      result.issuedThisMonth = {
+        amount: formatPlainAmount(Number(r[0]?.sum_amount || 0)),
+        count: parseInt(r[0]?.cnt || '0', 10),
+      };
+    } catch (e) {
+      this.logger.warn(`[finance-home] issuedThisMonth: ${(e as Error).message}`);
+    }
+
+    // 3. refundsThisMonth (contracts.reverse_type='退款' + created_at 本月)
+    try {
+      const r = await this.pg.tenantQuery<{ sum_amount: string; cnt: string }>(
+        tenantSchema,
+        `SELECT COALESCE(SUM(total_amount), 0) AS sum_amount, COUNT(*) AS cnt
+         FROM contracts
+         WHERE reverse_type = '退款'
+           AND created_at >= date_trunc('month', NOW())
+           AND created_at < date_trunc('month', NOW()) + INTERVAL '1 month'
+           AND deleted_at IS NULL`,
+        [],
+      );
+      result.refundsThisMonth = {
+        amount: formatPlainAmount(Number(r[0]?.sum_amount || 0)),
+        count: parseInt(r[0]?.cnt || '0', 10),
+      };
+    } catch (e) {
+      this.logger.warn(`[finance-home] refundsThisMonth: ${(e as Error).message}`);
+    }
+
+    // 4. todos: 待开发票 (最多 5 条预览) + 本月退费 (最多 5 条预览)
+    try {
+      const pendingRows = await this.pg.tenantQuery<{
+        id: string;
+        invoice_title: string;
+        amount: string;
+        created_at: string;
+      }>(
+        tenantSchema,
+        `SELECT id, invoice_title, amount, created_at
+         FROM invoices
+         WHERE status = 'pending'
+         ORDER BY created_at DESC LIMIT 5`,
+        [],
+      );
+      for (const r of pendingRows) {
+        result.todos.push({
+          id: `invoice-${r.id}`,
+          title: '待开发票',
+          meta: r.invoice_title,
+          time: new Date(r.created_at).toISOString(),
+          type: 'invoice_pending',
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`[finance-home] todos.invoice_pending: ${(e as Error).message}`);
+    }
+
+    return result;
   }
 
   // ============================================================

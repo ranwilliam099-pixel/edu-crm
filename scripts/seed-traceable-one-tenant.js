@@ -331,7 +331,7 @@ SCHEDULES.filter(s => s.completed).slice(0, 20).forEach((s, i) => {
     student_id: s.student_id,
     teacher_id: s.teacher_id,
     attendance_status: '出勤',
-    classroom_performance: '专注度高',
+    classroom_performance: '良好',  // CHECK ('优秀','良好','合格','需努力','需关注')
     knowledge_points: { topics: ['基础'] },
     homework: '完成 P10-15',
     teacher_note: `${s.notes} 课后小结`,
@@ -426,8 +426,9 @@ sql.push(`-- ============================================================`);
 sql.push(`-- Step 4: 1 course_product (合同 + 排课的 FK)`);
 sql.push(`-- ============================================================`);
 sql.push(
+  // course_products.status CHECK ('上架','下架') / lesson_package VARCHAR(32) (传字符串)
   `INSERT INTO course_products (id, product_name, course_line, class_type, lesson_package, standard_price, campus_scope, status, created_by, updated_by)`
-  + `\n VALUES (${S(COURSE_PRODUCT.id)}, ${S(COURSE_PRODUCT.name)}, ${S(COURSE_PRODUCT.course_line)}, ${S(COURSE_PRODUCT.class_type)}, ${N(COURSE_PRODUCT.lesson_package)}, ${N(COURSE_PRODUCT.standard_price)}, 'all_campuses', 'active', ${S(ADMIN_USER_ID)}, ${S(ADMIN_USER_ID)});`
+  + `\n VALUES (${S(COURSE_PRODUCT.id)}, ${S(COURSE_PRODUCT.name)}, ${S(COURSE_PRODUCT.course_line)}, ${S(COURSE_PRODUCT.class_type)}, ${S(String(COURSE_PRODUCT.lesson_package))}, ${N(COURSE_PRODUCT.standard_price)}, 'all_campuses', '上架', ${S(ADMIN_USER_ID)}, ${S(ADMIN_USER_ID)});`
 );
 sql.push('');
 

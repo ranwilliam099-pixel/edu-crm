@@ -32,6 +32,8 @@ describe('KpiController (P4-X 2026-05-20)', () => {
     getMonthlyRenewalAmount: jest.Mock;
     // 2026-05-22 Sprint Y: list targets
     listTargets: jest.Mock;
+    // 2026-05-22 Sprint Y P1: finance home
+    getFinanceHomeKpi: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
 
@@ -154,6 +156,13 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       getMonthlyRenewalAmount: jest.fn().mockResolvedValue(0),
       // 2026-05-22 Sprint Y: list-targets endpoint mock
       listTargets: jest.fn().mockResolvedValue([]),
+      // 2026-05-22 Sprint Y P1: finance-home mock
+      getFinanceHomeKpi: jest.fn().mockResolvedValue({
+        pendingInvoices: { count: 0 },
+        issuedThisMonth: { amount: '0', count: 0 },
+        refundsThisMonth: { amount: '0', count: 0 },
+        todos: [],
+      }),
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = new KpiController(
@@ -666,6 +675,66 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       await expect(
         controller.listTargets(TENANT_SCHEMA, CAMPUS_A, '', req(jwt('boss', BOSS_SUB, CAMPUS_A))),
       ).rejects.toThrow(/'YYYY-MM'/);
+    });
+  });
+
+  // ============================================================
+  // GET /db/kpi/finance-home (Sprint Y P1: 财务自视角 home)
+  // ============================================================
+  describe('financeHomeKpi GET /db/kpi/finance-home', () => {
+    const FINANCE_SUB = 'finance00000000000000000000000F1';
+
+    it('happy path: finance role + sub → service 收 tenantSchema + 返 fixture', async () => {
+      kpi.getFinanceHomeKpi.mockResolvedValueOnce({
+        pendingInvoices: { count: 3 },
+        issuedThisMonth: { amount: '120,000', count: 12 },
+        refundsThisMonth: { amount: '8,000', count: 2 },
+        todos: [{ id: 'invoice-1', title: '待开发票', meta: '王先生', type: 'invoice_pending' }],
+      });
+      const r = await controller.financeHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('finance', FINANCE_SUB, null)),
+      );
+      expect(r.pendingInvoices.count).toBe(3);
+      expect(r.issuedThisMonth.amount).toBe('120,000');
+      expect(r.refundsThisMonth.count).toBe(2);
+      expect(r.todos).toHaveLength(1);
+      expect(kpi.getFinanceHomeKpi).toHaveBeenCalledWith(TENANT_SCHEMA);
+    });
+
+    it('audit_log 写入 kpi.finance_home.read.success', async () => {
+      kpi.getFinanceHomeKpi.mockResolvedValueOnce({
+        pendingInvoices: { count: 0 },
+        issuedThisMonth: { amount: '0', count: 0 },
+        refundsThisMonth: { amount: '0', count: 0 },
+        todos: [],
+      });
+      await controller.financeHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('finance', FINANCE_SUB, null)),
+      );
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({
+          action: 'kpi.finance_home.read.success',
+          targetType: 'kpi',
+          actorUserId: FINANCE_SUB,
+        }),
+      );
+    });
+
+    it('缺 tenantSchema → BadRequest + 不调 service', async () => {
+      await expect(
+        controller.financeHomeKpi('', req(jwt('finance', FINANCE_SUB, null))),
+      ).rejects.toThrow(/tenantSchema required/);
+      expect(kpi.getFinanceHomeKpi).not.toHaveBeenCalled();
+      expect(auditLog.log).not.toHaveBeenCalled();
+    });
+
+    it('user.sub 缺失 → BadRequest', async () => {
+      await expect(
+        controller.financeHomeKpi(TENANT_SCHEMA, req(jwt('finance', undefined as any, null))),
+      ).rejects.toThrow(/user sub required/);
     });
   });
 });

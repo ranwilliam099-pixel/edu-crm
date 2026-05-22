@@ -13,6 +13,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
@@ -26,6 +27,7 @@ import {
   SalesHomeKpiResult,
   TeacherHomeKpiResult,
   AcademicHomeKpiResult,
+  FinanceHomeKpiResult,
 } from './kpi.service';
 import {
   ActorRole,
@@ -58,6 +60,11 @@ import { RedisService } from '../redis/redis.service';
  * 不写 audit_log：KPI 是高频读路径（home Level 2 进入即触发），写 audit_log 会污染。
  * 越权由 RbacGuard 自动 403（A09 已在 RbacGuard 层覆盖；本 endpoint 不再单独写）。
  */
+// 2026-05-22 P0 修生产 429: home 并发 5 KPI GET (signed/renewal/consumption/student-activity + leaderboard)
+//   全局 throttle 60/min 太严 → 5 next refresh 触发 → home 卡 loading
+//   KPI 全只读 + 5min Redis cache + RBAC + tenant scope, 不需要再加限流
+//   越权由 RbacGuard + audit_log 兜住; POST set-target 单独保留默认限流
+@SkipThrottle()
 @Controller('db/kpi')
 @UseGuards(TenantScopeGuard, RbacGuard)
 export class KpiController {
@@ -318,6 +325,51 @@ export class KpiController {
   }
 
   // ============================================================
+  // 2026-05-22 Sprint Y P1: finance home endpoint (SSOT §3.6)
+  // ============================================================
+  /**
+   * GET /db/kpi/finance-home?tenantSchema=
+   *   财务自视角 home KPI (待开发票 / 本月开票 / 本月退费 / todos)
+   *
+   *   RBAC: @Roles('finance') — 财务专属, admin/boss 不进 (走自己视角)
+   *   Scope: 财务跨校 (拍板说财务跨校权), 不限 campusId
+   *
+   *   Audit: 写 kpi.finance_home.read.success / .forbidden
+   *   fail-open: 子查询失败返 0, 整体不抛错
+   */
+  @Get('finance-home')
+  @Roles('finance')
+  @HttpCode(HttpStatus.OK)
+  async financeHomeKpi(
+    @Query('tenantSchema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<FinanceHomeKpiResult> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    const userId = req.user?.sub;
+    if (!userId) throw new BadRequestException('user sub required');
+
+    // 5min Redis cache (SSOT §6.9 同 teacher/academic home 模式)
+    const month = new Date().toISOString().slice(0, 7);
+    const cacheKey = `kpi:home:finance:${tenantSchema}:${userId}:${month}`;
+    const result = this.redis
+      ? await this.redis.getOrCompute<FinanceHomeKpiResult>(
+          cacheKey,
+          300,
+          () => this.kpi.getFinanceHomeKpi(tenantSchema),
+        )
+      : await this.kpi.getFinanceHomeKpi(tenantSchema);
+
+    await this.tryAuditKpiRead(
+      tenantSchema,
+      req,
+      'kpi.finance_home.read.success',
+      userId,
+    );
+
+    return result;
+  }
+
+  // ============================================================
   // 2026-05-22 SSOT §6.8 Sprint Y: list-targets endpoint — 校长 page 入口查现有目标
   // ============================================================
   /**
@@ -381,8 +433,10 @@ export class KpiController {
    *
    * 软件少内部审核（§2.10）: 校长直接设定，无审批流程
    */
+  // 2026-05-22: set-target 是写操作, 单独保留 throttle (60/min) 防误触/恶意
   @Post('set-target')
   @Roles('boss', 'admin')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   async setMonthlyTarget(
     @Body()

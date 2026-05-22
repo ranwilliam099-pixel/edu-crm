@@ -9,6 +9,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import {
   DashboardRepository,
   AdminKpi,
@@ -31,6 +32,9 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
  *
  * 鉴权：x-tenant-schema header
  */
+// 2026-05-22 P0 修生产 429: home 一次并发 3 dashboards GET, 全局 throttle 60/min 太严
+//   dashboards 全只读 + RBAC + tenant scope, 不需限流 (越权由 guard 拦)
+@SkipThrottle()
 @UseGuards(TenantScopeGuard)
 @Controller('db/dashboards')
 export class DashboardController {
