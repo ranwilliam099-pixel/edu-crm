@@ -185,11 +185,15 @@ export class TeacherController {
 
   /**
    * POST /api/teachers/db/list — 真 PG 查询全部 active 教师
+   *
+   * 2026-05-22: 加 academic — schedule.create = [academic] (SSOT §6) 教务排课必须能看老师清单
+   *   academic / academic_admin 教务双层：排课页选老师必备
    */
   @Post('db/list')
   @UseGuards(RbacGuard)
   // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」+ 5/15 A-2「删 sales_director」
-  @Roles('admin', 'boss', 'sales_manager')
+  // 2026-05-22 加 academic/academic_admin: 教务排课页选老师场景
+  @Roles('admin', 'boss', 'sales_manager', 'academic', 'academic_admin')
   @HttpCode(HttpStatus.OK)
   async listFromDb(@Body() body: { tenantSchema: string }): Promise<Teacher[]> {
     return this.service.listFromDb(body.tenantSchema);
