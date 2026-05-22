@@ -211,14 +211,27 @@ const STB = STUDENTS.map((s, i) => ({
   bound_by_user_id: ACADEMIC_USER_IDS[0],
 }));
 
-// ====== schedules: 50 节 = 30 已完成(过去) + 15 已排课(未来本月) + 5 已取消 ======
+// ====== schedules: 30 排课业务起点 (无终态行) ======
+//   2026-05-22 用户拍板「每数据有业务来源最小颗粒度」复盘:
+//     原 seed 直接 INSERT 30 已完成 + 30 confirmed consumption 是终态行, 跳过业务事件触发.
+//   新设计:
+//     - 全部 30 节 status='已排课' (待老师真业务流: home → roster → 上完课 → 填反馈)
+//     - 20 节 start_at 在过去 1-15 天 (老师可补反馈, 补一节 KPI +1)
+//     - 7 节 start_at 在今天/未来 1-7 天 (老师 home「今日课时」+ 课表预览)
+//     - 3 节 start_at 在今天 14/15/16 点 (teacher home todayLessons.count 显示)
+//   消课数据从真业务事件累积:
+//     老师 → schedules/db/:id/complete-with-consumption (Step 2 new endpoint)
+//       → consumption pending_feedback 创建
+//     老师 → /db/lesson-feedbacks (Step 3 existing)
+//       → 同事务 confirmByFeedback: pending → confirmed
+//       → admin KPI 「本月消课」+1
 const SCHEDULES = [];
 
-// 30 已完成 schedule (本月内, 过去 1-20 天) → 已消课 / lessons KPI
-for (let i = 0; i < 30; i++) {
+// 20 节过去 (老师可补完成, 触发消课)
+for (let i = 0; i < 20; i++) {
   const teacher = TEACHERS[i % 3];
   const student = STUDENTS[i % 10].student;
-  const startAt = daysAgo(20 - Math.floor(i / 2));  // 20-5 天前
+  const startAt = daysAgo(15 - Math.floor(i / 2));  // 15-5 天前
   const durMin = 60;
   SCHEDULES.push({
     id: ulid('schedule', i),
@@ -228,30 +241,29 @@ for (let i = 0; i < 30; i++) {
     start_at: startAt,
     duration_min: durMin,
     end_at: new Date(startAt.getTime() + durMin * 60000),
-    status: '已完成',
+    status: '已排课',  // 业务起点, 不是终态
     source: 'one_off',
     created_by_user_id: ACADEMIC_USER_IDS[0],
     created_by_role: 'academic',
-    notes: `${teacher.subject} - 第 ${Math.floor(i / 10) + 1} 节`,
-    completed: true,  // 内部 flag 给 course_consumption 用
+    notes: `${teacher.subject} - 待补完成`,
   });
 }
 
-// 15 已排课 (未来 1-15 天内, 仍本月) → 已排课/forecast KPI
-for (let i = 0; i < 15; i++) {
+// 3 今日 + 7 未来 = 10 节排课预览
+for (let i = 0; i < 10; i++) {
   const teacher = TEACHERS[i % 3];
   const student = STUDENTS[i % 10].student;
-  // 部分今日: 前 3 节是今天
   let startAt;
   if (i < 3) {
+    // 今日 14/15/16 点
     startAt = new Date(NOW);
-    startAt.setHours(14 + i, 0, 0, 0);  // 14:00 / 15:00 / 16:00 today
+    startAt.setHours(14 + i, 0, 0, 0);
   } else {
-    startAt = daysFromNow(i - 2);  // 1-13 天后
+    startAt = daysFromNow(i - 2);  // 1-7 天后
   }
   const durMin = 60;
   SCHEDULES.push({
-    id: ulid('schedule', 30 + i),
+    id: ulid('schedule', 20 + i),
     course_product_id: COURSE_PRODUCT.id,
     teacher_id: teacher.id,
     student_id: student.id,
@@ -263,44 +275,12 @@ for (let i = 0; i < 15; i++) {
     created_by_user_id: ACADEMIC_USER_IDS[0],
     created_by_role: 'academic',
     notes: i < 3 ? `今日课时 ${i + 1}` : `未来 ${i - 2} 天后`,
-    completed: false,
   });
 }
 
-// 5 已取消 → 不影响 KPI
-for (let i = 0; i < 5; i++) {
-  const teacher = TEACHERS[i % 3];
-  const student = STUDENTS[i % 10].student;
-  const startAt = daysAgo(15 - i);
-  const durMin = 60;
-  SCHEDULES.push({
-    id: ulid('schedule', 45 + i),
-    course_product_id: COURSE_PRODUCT.id,
-    teacher_id: teacher.id,
-    student_id: student.id,
-    start_at: startAt,
-    duration_min: durMin,
-    end_at: new Date(startAt.getTime() + durMin * 60000),
-    status: '已取消',
-    source: 'one_off',
-    created_by_user_id: ACADEMIC_USER_IDS[0],
-    created_by_role: 'academic',
-    notes: '学员临时请假',
-    completed: false,
-  });
-}
-
-// ====== course_consumptions (仅 30 已完成 schedule 有) ======
-const CONSUMPTIONS = SCHEDULES.filter(s => s.completed).map((s, i) => ({
-  id: ulid('consumption', i),
-  schedule_id: s.id,
-  student_id: s.student_id,
-  teacher_id: s.teacher_id,
-  status: 'confirmed',
-  amount_yuan: s.duration_min / 60 * COURSE_PRODUCT.standard_price,
-  feedback_due_at: new Date(s.end_at.getTime() + 24 * 3600 * 1000),
-  confirmed_at: new Date(s.end_at.getTime() + 60 * 60 * 1000),  // 1 小时后老师 confirm
-}));
+// 删除终态行: 不再 INSERT 30 已完成 + 30 confirmed consumption
+//   (违反「业务来源最小颗粒度」原则, 由真业务事件累积)
+const CONSUMPTIONS = [];
 
 // ====== monthly_kpi_targets (校长下发 3 academic + 3 teacher 月度目标) ======
 const TARGETS = [];
@@ -322,22 +302,9 @@ const month = thisMonthStr();
   });
 });
 
-// ====== lesson_feedbacks (20 已完成 schedule 有反馈, 10 没填 → pendingFeedback) ======
+// 删 lesson_feedbacks seed: 反馈也是业务事件 (老师真填),
+// 不再凭空 INSERT. 由真业务流: 老师 home → roster → 上完课 → 填反馈
 const FEEDBACKS = [];
-SCHEDULES.filter(s => s.completed).slice(0, 20).forEach((s, i) => {
-  FEEDBACKS.push({
-    id: ulid('feedback', i),
-    schedule_id: s.id,
-    student_id: s.student_id,
-    teacher_id: s.teacher_id,
-    attendance_status: '出勤',
-    classroom_performance: '良好',  // CHECK ('优秀','良好','合格','需努力','需关注')
-    knowledge_points: { topics: ['基础'] },
-    homework: '完成 P10-15',
-    teacher_note: `${s.notes} 课后小结`,
-    submitted_at: s.confirmed_at || s.end_at,
-  });
-});
 
 // ============================================================
 // 生成 SQL
@@ -487,16 +454,14 @@ for (const b of STB) {
 }
 sql.push('');
 
-// ====== Step 8: schedules (50) + schedule_students ======
+// ====== Step 8: schedules (30 排课业务起点, 无终态) + schedule_students ======
 sql.push(`-- ============================================================`);
-sql.push(`-- Step 8: 50 schedules = 30 已完成 + 15 已排课 + 5 已取消`);
-sql.push(`-- 数据源 KPI:`);
-sql.push(`--   admin/boss consumption.hours/lessons = 30 节 (course_consumptions confirmed)`);
-sql.push(`--   teacher kpiSummary.attended = 10 节 / teacher (本月 status='已完成' / 3 老师)`);
-sql.push(`--   teacher kpiSummary.scheduled = ~15 节 (本月所有非取消)`);
-sql.push(`--   teacher kpiSummary.forecast = scheduled - attended - absent (~5)`);
-sql.push(`--   teacher todayLessons = 1 节 (今日 14/15/16 点 each teacher 1 节)`);
-sql.push(`--   academic kpiSummary.attended = 30 节 (本校汇总)`);
+sql.push(`-- Step 8: 30 schedules 全 status='已排课' (业务起点, 不写终态行)`);
+sql.push(`--   20 节过去 1-15 天 (老师可补完成 触发消课业务事件)`);
+sql.push(`--    3 节今日 14/15/16 点 (teacher home todayLessons)`);
+sql.push(`--    7 节未来 1-7 天 (排课预览)`);
+sql.push(`-- 5/22 拍板「每数据有业务来源最小颗粒度」: 消课/反馈不再凭空 INSERT,`);
+sql.push(`-- 老师真业务流: home → roster → 上完课 → 填反馈 → KPI 累积`);
 sql.push(`-- ============================================================`);
 for (const s of SCHEDULES) {
   sql.push(`-- schedule ${s.status} teacher=${s.teacher_id.slice(0,8)} ${s.start_at.toISOString().slice(0,16)}`);
@@ -505,26 +470,21 @@ for (const s of SCHEDULES) {
     + `\n VALUES (${S(s.id)}, ${S(s.course_product_id)}, ${S(s.teacher_id)}, ${T(s.start_at)}, ${N(s.duration_min)}, ${T(s.end_at)}, ${S(s.status)}, ${S(s.source)}, ${S(s.created_by_user_id)}, ${S(s.created_by_role)}, ${S(s.notes)});`
   );
   sql.push(
+    // 所有 schedule status='已排课', 学员默认「待出勤」(老师上完课触发 → '出勤')
     `INSERT INTO schedule_students (schedule_id, student_id, attendance_status)`
-    + `\n VALUES (${S(s.id)}, ${S(s.student_id)}, ${S(s.status === '已完成' ? '出勤' : s.status === '已取消' ? '请假' : '待出勤')});`
+    + `\n VALUES (${S(s.id)}, ${S(s.student_id)}, '待出勤');`
   );
 }
 sql.push('');
 
-// ====== Step 9: course_consumptions (30 confirmed) ======
-sql.push(`-- ============================================================`);
-sql.push(`-- Step 9: 30 course_consumptions (confirmed 状态 + 本月内 confirmed_at)`);
-sql.push(`-- 数据源 KPI:`);
-sql.push(`--   admin/boss consumption.total.hours = 30 节 (60 min × 30 / 60 = 30 hours)`);
-sql.push(`--   admin/boss consumption.total.lessons = 30`);
-sql.push(`--   admin/boss studentActivity.active = 10 (10 student 都有过消课)`);
-sql.push(`-- ============================================================`);
-for (const cc of CONSUMPTIONS) {
-  sql.push(
-    `INSERT INTO course_consumptions (id, schedule_id, student_id, teacher_id, status, amount_yuan, feedback_due_at, confirmed_at)`
-    + `\n VALUES (${S(cc.id)}, ${S(cc.schedule_id)}, ${S(cc.student_id)}, ${S(cc.teacher_id)}, 'confirmed', ${N(cc.amount_yuan)}, ${T(cc.feedback_due_at)}, ${T(cc.confirmed_at)});`
-  );
-}
+// ====== Step 9 删: course_consumptions 不再 seed 终态行 ======
+// 由真业务事件累积:
+//   老师 POST /api/schedules/db/:id/complete-with-consumption
+//     → INSERT course_consumption status='pending_feedback'
+//   老师 POST /api/db/lesson-feedbacks
+//     → 同事务 confirmByFeedback: pending → confirmed
+//     → admin KPI 「本月消课」+1
+sql.push(`-- (Step 9 已删: course_consumptions 由真业务事件累积, 不预 seed)`);
 sql.push('');
 
 // ====== Step 10: monthly_kpi_targets (6 entries) ======
@@ -541,9 +501,12 @@ for (const t of TARGETS) {
 }
 sql.push('');
 
-// ====== Step 11: lesson_feedbacks (20 / 30 已完成有反馈, 10 无 → pendingFeedback) ======
+// ====== Step 11 删: lesson_feedbacks 不再 seed (业务事件累积) ======
+sql.push(`-- (Step 11 已删: lesson_feedbacks 由老师真填累积, 不预 seed)`);
+sql.push('');
+// 下方循环 FEEDBACKS=[] 自动跳过
 sql.push(`-- ============================================================`);
-sql.push(`-- Step 11: 20 lesson_feedbacks (30 已完成中 20 填了 / 10 无 → pendingFeedback=10)`);
+sql.push(`-- (历史 Step 11 注释保留供参考, 实际无 INSERT)`);
 sql.push(`-- 数据源 KPI:`);
 sql.push(`--   teacher primaryStudents.pendingFeedback = 10/3 ≈ 3-4 per teacher`);
 sql.push(`--   teacher todos.feedback_overdue 不会出现 (24h 已过 但已填)`);
@@ -568,10 +531,10 @@ sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.teachers;  -- 应 3`);
 sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.students;  -- 应 10`);
 sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.contracts;  -- 应 10 (8 新签 + 2 续费)`);
 sql.push(`-- SELECT order_type, COUNT(*), SUM(total_amount) FROM ${TENANT_SCHEMA}.contracts GROUP BY order_type;`);
-sql.push(`-- SELECT status, COUNT(*) FROM ${TENANT_SCHEMA}.schedules GROUP BY status;  -- 已完成 30 / 已排课 15 / 已取消 5`);
-sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.course_consumptions WHERE status='confirmed';  -- 应 30`);
+sql.push(`-- SELECT status, COUNT(*) FROM ${TENANT_SCHEMA}.schedules GROUP BY status;  -- 已排课 30 (全部业务起点)`);
+sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.course_consumptions;  -- 应 0 (由真业务事件累积)`);
+sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.lesson_feedbacks;  -- 应 0 (由老师真填累积)`);
 sql.push(`-- SELECT target_role, target_user_id, month, target_lessons FROM ${TENANT_SCHEMA}.monthly_kpi_targets ORDER BY target_role, target_user_id;  -- 应 6 行`);
-sql.push(`-- SELECT COUNT(*) FROM ${TENANT_SCHEMA}.lesson_feedbacks;  -- 应 20`);
 sql.push('');
 
 fs.writeFileSync(OUTPUT, sql.join('\n') + '\n');
