@@ -507,8 +507,10 @@ export class KpiService {
     tenantSchema: string,
     options: { campusIds: string[] | null },
   ): Promise<StudentActivityKpiResult> {
+    // 2026-05-22 修历史 bug: students 表无 campus_id 字段 (schema check 确认)
+    //   campus_id 在 customers 表 — JOIN customers 取
     const campusFilter = this.buildCampusFilter(
-      's.campus_id',
+      'cu.campus_id',
       options.campusIds,
       1,
     );
@@ -522,22 +524,22 @@ export class KpiService {
       }>(
         tenantSchema,
         `WITH active_30d AS (
-           SELECT DISTINCT sc.student_id
+           SELECT DISTINCT cc.student_id
            FROM course_consumptions cc
-           JOIN schedules sc ON sc.id = cc.schedule_id
            WHERE cc.confirmed_at >= NOW() - INTERVAL '30 days'
              AND cc.status = 'confirmed'
          )
          SELECT
-           s.campus_id,
+           cu.campus_id,
            ca.name AS campus_name,
            COUNT(*) FILTER (WHERE a.student_id IS NOT NULL) AS active_count,
            COUNT(*) AS total_count
          FROM students s
+         JOIN customers cu ON cu.id = s.customer_id
          LEFT JOIN active_30d a ON a.student_id = s.id
-         LEFT JOIN campuses ca ON ca.id = s.campus_id
+         LEFT JOIN campuses ca ON ca.id = cu.campus_id
          WHERE s.deleted_at IS NULL${campusFilter.clause}
-         GROUP BY s.campus_id, ca.name
+         GROUP BY cu.campus_id, ca.name
          ORDER BY total_count DESC`,
         campusFilter.params,
       );
@@ -1016,29 +1018,28 @@ export class KpiService {
     //    join contracts 取 student_id 反查 schedules.teacher_id（无 schedule 即未排课）
     let handoverBacklog = { count: 0, weeklyScheduled: 0 };
     try {
+      // 2026-05-22 修历史 bug: 用 c.campus_id (V52 已加 contracts.campus_id) 替 s.campus_id (不存在)
       const backlogRows = await this.pg.tenantQuery<{ cnt: string }>(
         tenantSchema,
         `SELECT COUNT(DISTINCT c.id) AS cnt
          FROM contracts c
-         JOIN students s ON s.id = c.student_id
          WHERE c.status = 'active'
            AND c.signed_at >= NOW() - INTERVAL '30 days'
            AND c.deleted_at IS NULL
-           AND s.campus_id = $1
+           AND c.campus_id = $1
            AND NOT EXISTS (
              SELECT 1 FROM schedule_students ss
              WHERE ss.student_id = c.student_id
            )`,
         [campusId],
       );
+      // 2026-05-22 修历史 bug: schedules.campus_id 已由 V52 添加, 直接用 s.campus_id 不必 JOIN students
       const scheduledRows = await this.pg.tenantQuery<{ cnt: string }>(
         tenantSchema,
         `SELECT COUNT(DISTINCT s.id) AS cnt
          FROM schedules s
-         JOIN schedule_students ss ON ss.schedule_id = s.id
-         JOIN students st ON st.id = ss.student_id
          WHERE s.created_at >= NOW() - INTERVAL '7 days'
-           AND st.campus_id = $1
+           AND s.campus_id = $1
            AND s.status != '已取消'`,
         [campusId],
       );
@@ -1055,15 +1056,17 @@ export class KpiService {
     // 2. expiringContracts: 30 天到期合同（student_course_packages.expires_at <= NOW + 30d 且 status='active'）
     let expiringContracts = { count: 0 };
     try {
+      // 2026-05-22 修历史 bug: students 无 campus_id, JOIN customers 用 cu.campus_id
       const expRows = await this.pg.tenantQuery<{ cnt: string }>(
         tenantSchema,
         `SELECT COUNT(DISTINCT scp.id) AS cnt
          FROM student_course_packages scp
          JOIN students st ON st.id = scp.student_id
+         JOIN customers cu ON cu.id = st.customer_id
          WHERE scp.status = 'active'
            AND scp.expires_at <= NOW() + INTERVAL '30 days'
            AND scp.expires_at > NOW()
-           AND st.campus_id = $1`,
+           AND cu.campus_id = $1`,
         [campusId],
       );
       expiringContracts = { count: parseInt(expRows[0]?.cnt || '0', 10) };
@@ -1126,13 +1129,14 @@ export class KpiService {
         signed_at: string;
       }>(
         tenantSchema,
-        `SELECT c.id, s.name AS student_name, c.signed_at
+        // 2026-05-22 修双 bug: students.name 字段名是 student_name / s.campus_id 不存在用 c.campus_id (V52)
+        `SELECT c.id, s.student_name, c.signed_at
          FROM contracts c
          JOIN students s ON s.id = c.student_id
          WHERE c.status = 'active'
            AND c.signed_at >= NOW() - INTERVAL '30 days'
            AND c.deleted_at IS NULL
-           AND s.campus_id = $1
+           AND c.campus_id = $1
            AND NOT EXISTS (
              SELECT 1 FROM schedule_students ss
              WHERE ss.student_id = c.student_id
@@ -1157,13 +1161,15 @@ export class KpiService {
         expires_at: string;
       }>(
         tenantSchema,
-        `SELECT scp.id, st.name AS student_name, scp.expires_at
+        // 2026-05-22 修双 bug: students.name 实际字段 student_name / JOIN customers 取 campus_id
+        `SELECT scp.id, st.student_name, scp.expires_at
          FROM student_course_packages scp
          JOIN students st ON st.id = scp.student_id
+         JOIN customers cu ON cu.id = st.customer_id
          WHERE scp.status = 'active'
            AND scp.expires_at <= NOW() + INTERVAL '30 days'
            AND scp.expires_at > NOW()
-           AND st.campus_id = $1
+           AND cu.campus_id = $1
          ORDER BY scp.expires_at ASC LIMIT 5`,
         [campusId],
       );
@@ -1432,8 +1438,9 @@ export class KpiService {
     const { campusIds, limit, offset, activeOnly } = options;
     const params: any[] = [];
     let p = 1;
+    // 2026-05-22 修历史 bug: students 无 campus_id, JOIN customers 用 cu.campus_id
     const campusFilter = campusIds && campusIds.length > 0
-      ? ` AND s.campus_id = ANY($${p++})`
+      ? ` AND cu.campus_id = ANY($${p++})`
       : '';
     if (campusFilter) params.push(campusIds);
     params.push(limit, offset);
@@ -1459,8 +1466,9 @@ export class KpiService {
            COALESCE(a.lessons, 0) AS lessons,
            a.last_attended_at AS last_attended_at
          FROM students s
+         JOIN customers cu ON cu.id = s.customer_id
          LEFT JOIN activity_30d a ON a.student_id = s.id
-         LEFT JOIN campuses ca ON ca.id = s.campus_id
+         LEFT JOIN campuses ca ON ca.id = cu.campus_id
          WHERE s.deleted_at IS NULL
            ${campusFilter}
            ${activeFilter}
@@ -1471,8 +1479,10 @@ export class KpiService {
       const totalParams = campusIds && campusIds.length > 0 ? [campusIds] : [];
       const totalRows = await this.pg.tenantQuery<{ cnt: string }>(
         tenantSchema,
-        `SELECT COUNT(*) AS cnt FROM students s WHERE s.deleted_at IS NULL
-         ${campusIds && campusIds.length > 0 ? ' AND s.campus_id = ANY($1)' : ''}`,
+        `SELECT COUNT(*) AS cnt FROM students s
+         JOIN customers cu ON cu.id = s.customer_id
+         WHERE s.deleted_at IS NULL
+         ${campusIds && campusIds.length > 0 ? ' AND cu.campus_id = ANY($1)' : ''}`,
         totalParams,
       );
       return {
