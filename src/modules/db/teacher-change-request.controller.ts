@@ -123,6 +123,31 @@ export class TeacherChangeRequestController {
   }
 
   /**
+   * 列本校可选 teacher (academic 发起变更老师 selector 用)
+   *   minimal shape (id/name/subjects), 不暴露 phone 等 PII
+   */
+  @Get('eligible-teachers')
+  @Roles('academic', 'academic_admin', 'admin', 'boss')
+  @HttpCode(HttpStatus.OK)
+  async listEligibleTeachers(
+    @Query('tenantSchema') tenantSchema: string,
+    @Query('campusId') campusId: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ items: Awaited<ReturnType<TeacherChangeRequestService['listEligibleTeachersForCampus']>> }> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!campusId) throw new BadRequestException('campusId required');
+    // A04: academic/boss 强制 jwt.campusId / admin 可任意
+    if (req.user?.role !== 'admin') {
+      const jwtCampus = req.user?.campusId;
+      if (!jwtCampus || jwtCampus !== campusId) {
+        throw new ForbiddenException('CROSS_CAMPUS_DENIED: 只能列本校老师');
+      }
+    }
+    const items = await this.svc.listEligibleTeachersForCampus(tenantSchema, campusId);
+    return { items };
+  }
+
+  /**
    * 教务撤回 pending 请求 (家长还没决定前)
    */
   @Post(':id/cancel')

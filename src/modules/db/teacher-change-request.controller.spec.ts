@@ -16,6 +16,7 @@ describe('TeacherChangeRequestController (V58 2026-05-22 SSOT §6.5)', () => {
     listPendingByCampus: jest.Mock;
     listPendingByParent: jest.Mock;
     cancel: jest.Mock;
+    listEligibleTeachersForCampus: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
 
@@ -61,6 +62,7 @@ describe('TeacherChangeRequestController (V58 2026-05-22 SSOT §6.5)', () => {
       listPendingByCampus: jest.fn().mockResolvedValue([]),
       listPendingByParent: jest.fn().mockResolvedValue([]),
       cancel: jest.fn(),
+      listEligibleTeachersForCampus: jest.fn().mockResolvedValue([]),
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = new TeacherChangeRequestController(
@@ -216,4 +218,52 @@ describe('TeacherChangeRequestController (V58 2026-05-22 SSOT §6.5)', () => {
 
   // 注: parent-pending / parent-decide endpoints split to c-side module (Sprint Y P3.1)
   //   走另一套 JWT (ParentJwtStrategy) + ParentSelfGuard, 不在本 controller spec
+
+  // ============================================================
+  // GET /db/teacher-changes/eligible-teachers (波 B 教务发起 page 用)
+  // ============================================================
+  describe('listEligibleTeachers GET /db/teacher-changes/eligible-teachers', () => {
+    it('happy path academic: jwt.campusId 一致 → 透传 service', async () => {
+      svc.listEligibleTeachersForCampus.mockResolvedValueOnce([
+        { id: 't1', name: '老师·王', subjects: ['数学'], status: '在职' },
+      ]);
+      const r = await controller.listEligibleTeachers(
+        TENANT_SCHEMA,
+        CAMPUS_A,
+        req(jwt('academic', ACADEMIC_SUB, CAMPUS_A)),
+      );
+      expect(r.items).toHaveLength(1);
+      expect(svc.listEligibleTeachersForCampus).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_A);
+    });
+
+    it('academic 查他校 → 403', async () => {
+      await expect(
+        controller.listEligibleTeachers(
+          TENANT_SCHEMA,
+          CAMPUS_B,
+          req(jwt('academic', ACADEMIC_SUB, CAMPUS_A)),
+        ),
+      ).rejects.toThrow(/CROSS_CAMPUS_DENIED/);
+      expect(svc.listEligibleTeachersForCampus).not.toHaveBeenCalled();
+    });
+
+    it('admin 跨校任意 campusId 可查', async () => {
+      await controller.listEligibleTeachers(
+        TENANT_SCHEMA,
+        CAMPUS_B,
+        req(jwt('admin', 'admin00000000000000000000000A001', null)),
+      );
+      expect(svc.listEligibleTeachersForCampus).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_B);
+    });
+
+    it('缺 campusId → BadRequest', async () => {
+      await expect(
+        controller.listEligibleTeachers(
+          TENANT_SCHEMA,
+          '',
+          req(jwt('academic', ACADEMIC_SUB, CAMPUS_A)),
+        ),
+      ).rejects.toThrow(/campusId required/);
+    });
+  });
 });

@@ -304,7 +304,33 @@ export class TeacherChangeRequestService {
   }
 
   /**
-   * 5. 教务撤回 pending 请求 (家长还没决定前)
+   * 5. 列本校可选 teacher (academic 发起变更老师时 selector 用)
+   *   返 minimal shape (id/name/subjects/status) — 不暴露 PII (phone_encrypted)
+   *   排除 status='归档' (V44 ALTER)
+   */
+  async listEligibleTeachersForCampus(
+    tenantSchema: string,
+    campusId: string,
+  ): Promise<Array<{ id: string; name: string; subjects: string[]; status: string }>> {
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT id, name, subjects, status
+         FROM teachers
+         WHERE campus_id = $1
+           AND status = '在职'
+         ORDER BY name ASC`,
+      [campusId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      subjects: Array.isArray(r.subjects) ? r.subjects : (typeof r.subjects === 'string' ? JSON.parse(r.subjects) : []),
+      status: r.status,
+    }));
+  }
+
+  /**
+   * 6. 教务撤回 pending 请求 (家长还没决定前)
    */
   async cancel(
     tenantSchema: string,
