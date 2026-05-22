@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Param,
   Post,
+  Req,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -19,6 +21,8 @@ import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
+import { TeacherRepository } from '../db/teacher.repository';
+import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 /**
  * HomeworkController — V13 作业管理 HTTP 暴露 BE-V13-1
@@ -38,7 +42,12 @@ import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.int
 @UseGuards(TenantScopeGuard)
 @Controller('homework')
 export class HomeworkController {
-  constructor(private readonly service: HomeworkService) {}
+  // 2026-05-22 加 TeacherRepository — 老师视角 my-assignments JWT 反查 teacher.id
+  //   避免前端拿不到 teacher.id (jwt.sub 是 user.id), 统一用 schedule.controller my-calendar 同模式
+  constructor(
+    private readonly service: HomeworkService,
+    private readonly teacherRepo: TeacherRepository,
+  ) {}
 
   @Post('assignments')
   @HttpCode(HttpStatus.CREATED)
@@ -272,6 +281,35 @@ export class HomeworkController {
     @Body() body: { tenantSchema: string; limit?: number; offset?: number },
   ): Promise<HomeworkAssignment[]> {
     return this.service.listAssignmentsByTeacherInDb(teacherId, body.tenantSchema, {
+      limit: body.limit,
+      offset: body.offset,
+    });
+  }
+
+  /**
+   * 2026-05-22 老师视角作业列表 — JWT 反查 teacher.id (前端不需传 teacherId)
+   *   POST /api/homework/db/my-assignments { tenantSchema, limit?, offset? }
+   *   RBAC: teacher only (本人); 其他角色查别人请用 :teacherId/assignments
+   *
+   *   同 schedule.controller my-calendar 模式 — 5/22 用户教的设计
+   */
+  @Post('db/my-assignments')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher')
+  @HttpCode(HttpStatus.OK)
+  async listMyAssignmentsInDb(
+    @Body() body: { tenantSchema: string; limit?: number; offset?: number },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<HomeworkAssignment[]> {
+    const userId = req.user?.sub;
+    if (!userId) throw new ForbiddenException('user.sub missing');
+    const teacher = await this.teacherRepo.findByUserId(body.tenantSchema, userId);
+    if (!teacher) {
+      throw new ForbiddenException(
+        `no teachers row bound to user ${userId} — 老师未建档案不能查作业`,
+      );
+    }
+    return this.service.listAssignmentsByTeacherInDb(teacher.id, body.tenantSchema, {
       limit: body.limit,
       offset: body.offset,
     });
