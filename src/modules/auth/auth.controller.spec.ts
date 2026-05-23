@@ -23,6 +23,9 @@ import { PhoneLookupService, BUserMatch } from './phone-lookup.service';
 import { PasswordHasher } from '../../common/crypto/password-hasher';
 // Sprint X.2 round 2 (2026-05-17 business NOGO-BLOCKER 修复): audit_log 注入
 import { AuditLogRepository } from '../db/audit-log.repository';
+// 2026-05-23 P0 T2 wechat-login 安全改造: openid 反查 parents 表
+import { ParentRepository } from '../db/parent.repository';
+import { Parent } from '../parent/parent.service';
 
 const ULID32 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMN01';
 const ULID32_T = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMNTN';
@@ -60,6 +63,8 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
   let passwordVerifySpy: jest.Mock;
   // Sprint X.2 round 2 (2026-05-17): audit_log fail-open mock
   let auditLogSpy: jest.Mock;
+  // 2026-05-23 P0 T2 wechat-login: openid 反查 parent mock
+  let parentRepoFindByOpenidSpy: jest.Mock;
 
   const buildReqWithMeta = (auth?: string): AuthenticatedRequest =>
     ({
@@ -99,6 +104,14 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
     phoneLookupSpy = jest.fn().mockResolvedValue({ bUsers: [], parent: null });
     passwordVerifySpy = jest.fn().mockResolvedValue(true);
     auditLogSpy = jest.fn().mockResolvedValue(undefined);
+    // 2026-05-23 T2: 默认 parent 命中且 '启用' (happy path 用; 失败用例 mockResolvedValueOnce 覆盖)
+    parentRepoFindByOpenidSpy = jest.fn().mockResolvedValue({
+      id: ULID32,
+      phone: '13800138000',
+      wechatOpenid: 'oTestOpenidExchangedSuccessfully',
+      name: 'TestParent',
+      status: '启用',
+    } as Parent);
 
     const module: TestingModule = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: 'test-secret', signOptions: { expiresIn: '1d' } })],
@@ -131,6 +144,11 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
         { provide: PasswordHasher, useValue: { verify: passwordVerifySpy } },
         // Sprint X.2 round 2: audit_log mock (fail-open, 不阻断登录主流程)
         { provide: AuditLogRepository, useValue: { log: auditLogSpy } },
+        // 2026-05-23 T2: parent.repository.findParentByOpenid mock (wechatLogin 新依赖)
+        {
+          provide: ParentRepository,
+          useValue: { findParentByOpenid: parentRepoFindByOpenidSpy },
+        },
       ],
     }).compile();
     controller = module.get<AuthController>(AuthController);
@@ -506,17 +524,71 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
   });
 
   // ============================================================
-  // wechatLogin 回归 (C 端走 wx-jscode2session, 旧路径保留)
+  // 2026-05-23 P0 T2 wechatLogin - 安全改造 (openid 反查 parents 表)
+  //   旧 body.parentId mock 已删 (任意 client 可伪造 parentId 越权高危漏洞)
+  //   改造后: body.code → wx-jscode2session → openid → findParentByOpenid → sign ParentJwt
   // ============================================================
-  describe('wechatLogin - C 端家长微信登录 (回归)', () => {
-    it('合法登录 → 返回 ParentJwt + refreshToken (T11)', async () => {
+  describe('wechatLogin - C 端家长微信登录 (T2 安全改造)', () => {
+    it('缺 body.code → 400', async () => {
+      await expect(
+        controller.wechatLogin(buildReqWithMeta(), {} as never),
+      ).rejects.toThrow(BadRequestException);
+      // 失败短路: 不应调微信 / 不应查 parents 表 / 不应签 refresh
+      expect(wxCodeSessionExchangeSpy).not.toHaveBeenCalled();
+      expect(parentRepoFindByOpenidSpy).not.toHaveBeenCalled();
+      expect(refreshIssueSpy).not.toHaveBeenCalled();
+    });
+
+    it('code 有效但 openid 未绑 → 401 WECHAT_LOGIN_FAILED (防枚举)', async () => {
+      parentRepoFindByOpenidSpy.mockResolvedValueOnce(null);
+      await expect(
+        controller.wechatLogin(buildReqWithMeta(), {
+          code: '0a3xyzAbC1234567890',
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+      // 微信换 openid 调过 + parent 查询过 + 不发 refresh
+      expect(wxCodeSessionExchangeSpy).toHaveBeenCalledTimes(1);
+      expect(parentRepoFindByOpenidSpy).toHaveBeenCalledTimes(1);
+      expect(refreshIssueSpy).not.toHaveBeenCalled();
+      // audit 失败路径写入 (mask openid 后 8 位)
+      expect(auditLogSpy).toHaveBeenCalledTimes(1);
+      const [, entry] = auditLogSpy.mock.calls[0];
+      expect(entry.action).toBe('auth.parent-login.failed');
+      expect(entry.after.reason).toBe('OPENID_NOT_BOUND');
+      expect(entry.after.openidMask).toMatch(/^\*\*\*/);
+    });
+
+    it('openid 绑定但 parent.status="停用" → 401 (同 message 不透传)', async () => {
+      parentRepoFindByOpenidSpy.mockResolvedValueOnce({
+        id: ULID32,
+        phone: '13800138000',
+        wechatOpenid: 'oTestOpenidExchangedSuccessfully',
+        name: 'TestParent',
+        status: '停用',
+      } as Parent);
+      await expect(
+        controller.wechatLogin(buildReqWithMeta(), {
+          code: '0a3xyzAbC1234567890',
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(refreshIssueSpy).not.toHaveBeenCalled();
+      // audit 停用走 PARENT_DEACTIVATED reason (与 OPENID_NOT_BOUND 区分仅 server 内部可见)
+      const [, entry] = auditLogSpy.mock.calls[0];
+      expect(entry.action).toBe('auth.parent-login.failed');
+      expect(entry.after.reason).toBe('PARENT_DEACTIVATED');
+    });
+
+    it('happy path: openid 命中 + status="启用" → 200 含 ParentJwt + refresh', async () => {
       const result = await controller.wechatLogin(buildReqWithMeta(), {
-        parentId: ULID32,
-        openid: 'oWxXXX',
+        code: '0a3xyzAbC1234567890',
       });
       expect(result.token).toBeTruthy();
       expect(result.payload.type).toBe('parent');
+      // parentId 来自服务端 findParentByOpenid 结果, 不是 client 自报
       expect(result.payload.parentId).toBe(ULID32);
+      // P1-2 (2026-05-23): payload 不返 openid (A02 微信 openid 等同 sessionKey 不透传 client)
+      expect((result.payload as { openid?: string }).openid).toBeUndefined();
+      expect(result.refreshToken).toBeTruthy();
       expect(refreshIssueSpy).toHaveBeenCalledWith({
         subjectType: 'parent',
         subjectId: ULID32,
@@ -524,13 +596,12 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
         userAgent: 'JestTest/1.0',
         ip: '127.0.0.1',
       });
-    });
-
-    it('parentId 长度非 32 → BadRequestException', async () => {
-      await expect(
-        controller.wechatLogin(buildReqWithMeta(), { parentId: 'short' }),
-      ).rejects.toThrow(BadRequestException);
-      expect(refreshIssueSpy).not.toHaveBeenCalled();
+      // 成功 audit 写入 (action='auth.parent-login.wechat')
+      expect(auditLogSpy).toHaveBeenCalledTimes(1);
+      const [, entry] = auditLogSpy.mock.calls[0];
+      expect(entry.action).toBe('auth.parent-login.wechat');
+      expect(entry.targetId).toBe(ULID32);
+      expect(entry.after.openidMask).toMatch(/^\*\*\*/);
     });
   });
 
@@ -552,9 +623,9 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
     });
 
     it('wechatLogin 产生的 token aud=parent-app', async () => {
+      // 2026-05-23 T2: 用 code 触发 → 走 mock (parentRepoFindByOpenidSpy 默认返启用 parent)
       const result = await controller.wechatLogin(buildReqWithMeta(), {
-        parentId: ULID32,
-        openid: 'oWxXXX',
+        code: '0a3xyzAbC1234567890',
       });
       const decoded: { aud?: string } = jwt.verify(result.token);
       expect(decoded.aud).toBe('parent-app');

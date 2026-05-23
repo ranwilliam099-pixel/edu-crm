@@ -207,9 +207,17 @@ describe('TenantMiddleware A01-CRIT P0 Parent x Tenant 绑定校验', () => {
       { tenantSchema: `tenant_${TENANT_B}` },
     );
 
-    await expect(
-      middleware.use(req, {} as any, () => {}),
-    ).rejects.toThrow(ForbiddenException);
+    // P1-1 (2026-05-23): HTTP 403 body 不暴露内部 ULID
+    let caught: ForbiddenException | undefined;
+    try {
+      await middleware.use(req, {} as any, () => {});
+    } catch (e) {
+      caught = e as ForbiddenException;
+    }
+    expect(caught).toBeInstanceOf(ForbiddenException);
+    expect(caught!.message).toBe('PARENT_NOT_BOUND_TO_TENANT');
+    expect(caught!.message).not.toContain(PARENT_ID);
+    expect(caught!.message).not.toContain(TENANT_B);
 
     // req.user 不应被错误挂上 — 保证 controller 拿不到攻击者期望的 tenant 上下文
     expect(req.user).toBeUndefined();
@@ -627,6 +635,94 @@ describe('TenantMiddleware A01-CRIT P0 Parent x Tenant 绑定校验', () => {
     });
 
     expect(req.user.tenantId).toBe(TENANT_A);
+  });
+
+  // ============================================================
+  // 2026-05-23 P0 T1 白名单豁免: /api/c/tenant-contexts
+  //   parent 登录后还没选 tenant → endpoint 不要求 tenantSchema 也不查 binding
+  //   端点自己用 req.parent.parentId 反查后返聚合视图
+  // ============================================================
+  it('T1 白名单: parent JWT 调 /api/c/tenant-contexts 无 tenantSchema → 放行 + parent 挂上 + 不查 binding', async () => {
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeParentReq(
+      `/api/c/tenant-contexts`,
+      token,
+      {}, // 无 tenantSchema body
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      middleware.use(req, {} as any, (err?: unknown) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    // parent 已挂 (controller 用 req.parent.parentId 反查)
+    expect(req.parent).toMatchObject({ parentId: PARENT_ID, role: 'parent' });
+    expect(req.user).toMatchObject({
+      sub: PARENT_ID,
+      role: 'parent',
+      campusId: null,
+    });
+    // tenantId 在 req.user 上是 null (没选 tenant)
+    expect(req.user.tenantId).toBeNull();
+    // tenantSchema 未挂 (controller 不依赖)
+    expect(req.tenantSchema).toBeUndefined();
+    // 关键: parentRepo.findChildrenByParent 不被 middleware 调用 (controller 自己调)
+    expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
+  });
+
+  it('T1 白名单: 路径精确匹配, 不允许 /api/c/tenant-contexts-anything 通配豁免', async () => {
+    // 防御性: 仅 /api/c/tenant-contexts (无后缀) 才命中白名单
+    // 走默认 c-side 分支 → requireParentDbUser 走 binding 校验路径
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([
+      {
+        id: 'bind000000000000000000000000A1',
+        parentId: PARENT_ID,
+        studentId: STUDENT_ID,
+        tenantId: TENANT_A,
+        isPrimary: true,
+        relationship: 'mother',
+        bindingStatus: 'active',
+        boundAt: new Date(),
+      },
+    ]);
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    // 注: 这里写一个非白名单的 c-side 路径 (/api/c/home), 验证仍要求 tenantSchema
+    const req = makeParentReq(
+      `/api/c/home`,
+      token,
+      {}, // 无 tenantSchema → /c/home 应当 401 (不在白名单)
+    );
+
+    await expect(
+      middleware.use(req, {} as any, () => {}),
+    ).rejects.toThrow(UnauthorizedException);
+    // /c/home 不命中白名单 → 进入 binding 校验前的 tenantSchema 必填校验 → 401
+    // 这一步 parentRepo 不应被调 (schema 都没传, 直接 401)
+    expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
+  });
+
+  it('T1 白名单: 即使 client 多传 body.tenantSchema, /api/c/tenant-contexts 也不被影响 (仍走白名单)', async () => {
+    const token = parentJwt.sign({ parentId: PARENT_ID });
+    const req = makeParentReq(
+      `/api/c/tenant-contexts`,
+      token,
+      // 即使 client 攻击性多传, 白名单分支也不读 schema/不查 binding
+      { tenantSchema: `tenant_${TENANT_A}` },
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      middleware.use(req, {} as any, (err?: unknown) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    // 走白名单分支 (req.tenantSchema 不被白名单挂上, controller 不读)
+    expect(req.user.tenantId).toBeNull();
+    expect(req.tenantSchema).toBeUndefined();
+    expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
   });
 });
 

@@ -70,6 +70,42 @@ export class ParentRepository {
   }
 
   /**
+   * 2026-05-23 P0 T2: wechatLogin 安全改造 — 反查 openid → parent
+   *
+   * 来源:
+   *   - 原 auth.controller.wechatLogin body 信任 client 传 parentId → 任意 client
+   *     可伪造 parentId 签 ParentJwt (高危跨 parent 越权).
+   *   - 修复后: 仅信 wx-jscode2session 换得的 openid, 反查 public.parents.
+   *
+   * 索引:
+   *   - V10 schema: parents.wechat_openid VARCHAR(128) UNIQUE → PK 索引等值查询.
+   *
+   * 安全:
+   *   - PG 参数化查询防 SQL injection
+   *   - 0/1 row (UNIQUE) — 不可能多 row, 命中即 Parent 唯一身份.
+   *   - 与 findParentByPhone 一致返 Parent | null, controller 决定 401 与否.
+   *
+   * 返 null 时, controller 视作「openid 未绑」抛 401 WECHAT_LOGIN_FAILED.
+   * (与 status='停用' 同一 401 message, 不透传细节防枚举)
+   *
+   * 注意: Parent.phone 返回的是 V40 双读后的明文 (mapParentRow 解密),
+   *   wechat-login 仅用 parent.id + parent.status 不用 phone, 但解密不可绕过.
+   */
+  async findParentByOpenid(openid: string): Promise<Parent | null> {
+    if (!openid || typeof openid !== 'string' || openid.length === 0) {
+      return null;
+    }
+    const rows = await this.pg.query<any>(
+      `SELECT id, phone, phone_hash, phone_encrypted, wechat_openid, wechat_unionid, name, avatar_url, status
+       FROM public.parents
+       WHERE wechat_openid = $1
+       LIMIT 1`,
+      [openid],
+    );
+    return rows.length === 0 ? null : this.mapParentRow(rows[0]);
+  }
+
+  /**
    * V40 双读：
    *   1. 优先用 phone_hash 等值查询（生产正常路径）
    *   2. miss 时 fallback 明文 WHERE phone（兼容 backfill 未完成的旧数据 / 测试库）

@@ -29,6 +29,8 @@ import { RefreshTokenService } from './refresh-token.service';
 //   T11-FU-1 完整实施 — refresh endpoint 查 users 表取真实 role/campusId
 //   原 mock 'sales' 硬编码会让 admin/boss/academic refresh 后掉权限
 import { UserRepository } from '../db/user.repository';
+// 2026-05-23 P0 T2: wechatLogin 安全改造 — openid 反查 parents 表
+import { ParentRepository } from '../db/parent.repository';
 // Sprint X.2 (2026-05-17) — SSOT §12 注册登录分流
 //   check-phone / login bcrypt 改造 / login-confirm 多 tenant 候选
 import { PhoneLookupService, BUserMatch } from './phone-lookup.service';
@@ -72,6 +74,8 @@ export class AuthController {
     private readonly passwordHasher: PasswordHasher,
     // Sprint X.2 round 2 (2026-05-17 3 审共识)：audit_log V33 接入（SSOT §12.9 + §9）
     private readonly auditLog: AuditLogRepository,
+    // 2026-05-23 P0 T2: wechatLogin openid 反查 parents 表 (取代旧 body.parentId mock)
+    private readonly parentRepo: ParentRepository,
   ) {}
 
   /**
@@ -479,13 +483,31 @@ export class AuthController {
   /**
    * POST /api/public/auth/wechat-login — C 端家长微信登录
    *
-   * Body: { code, parentId, openid?, name?, phone? }
-   *   真实场景：wx.login → 拿 code → 用 wx-server-sdk 换 openid → 查/建 parents 表
-   *   当前 mock：直接采信传入的 parentId（前端 register 后调）
+   * 2026-05-23 P0 T2 安全改造（取代旧 body.parentId mock）:
+   *   Body: { code }
+   *     code = 前端 wx.login() 拿到的 5min 一次性 code
    *
-   * @returns { token (ParentJwt), tokenType: 'Bearer', expiresIn, payload }
+   *   流程:
+   *     1. wxCodeSession.exchange(code) → openid (走微信 jscode2session)
+   *     2. parentRepo.findParentByOpenid(openid) → Parent | null
+   *     3. null OR parent.status !== '启用' → 401 WECHAT_LOGIN_FAILED
+   *        (不透传 openid 未绑 vs status 停用, 防枚举)
+   *     4. 命中 → sign ParentJwt (aud='parent-app') + refresh
+   *
+   *   安全:
+   *     - 删 body.parentId (旧漏洞: 任意 client 伪造 parentId 签 token 跨 parent 越权)
+   *     - openid 仅服务端从微信换得, 不接受 client 传 (防伪造)
+   *     - status='停用' / 不存在统一 401 同 message (防 openid 枚举)
+   *     - audit_log V33 失败时 mask openid 后 8 位 (openid 是身份标识, 不入 audit_log 全文)
+   *
+   *   兼容:
+   *     - 旧 client 传 body.parentId 会被忽略 (TS 接口已删该字段)
+   *     - 返同结构 { token, refreshToken, tokenType, expiresIn, refreshExpiresIn, payload }
+   *
+   * SPRINT-E.1(2026-05-13) 限流: 微信登录 10 次/分钟
+   *
+   * @returns { token (ParentJwt), refreshToken, tokenType: 'Bearer', expiresIn, payload }
    */
-  // SPRINT-E.1(2026-05-13) 限流：微信登录 10 次/分钟
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('wechat-login')
   @HttpCode(HttpStatus.OK)
@@ -493,34 +515,100 @@ export class AuthController {
     @Req() req: AuthenticatedRequest,
     @Body()
     body: {
-      parentId: string;
-      openid?: string;
-      code?: string; // mock 不校验
+      code: string;
     },
-  ) {
-    if (!body.parentId || body.parentId.length !== 32) {
-      throw new BadRequestException('parentId must be 32-char ULID');
+  ): Promise<{
+    token: string;
+    refreshToken: string;
+    tokenType: 'Bearer';
+    expiresIn: number;
+    refreshExpiresIn: number;
+    // P1-2 (2026-05-23): payload 删 openid — 微信 openid 是身份标识 (与 sessionKey 同等),
+    //   不透传客户端 (OWASP A02). 完整 openid 仅用于服务端 ParentJwt sign 内部, 不返 client.
+    payload: { parentId: string; type: 'parent' };
+  }> {
+    // 1. 校验 body.code 形态 (jscode2session 期望 5-200 char)
+    if (!body || !body.code || typeof body.code !== 'string') {
+      throw new BadRequestException('code is required');
     }
-    // T6a: ParentJwtStrategy.sign 内部已强制 audience='parent-app'
+    if (body.code.length < 5 || body.code.length > 200) {
+      throw new BadRequestException('code length must be 5-200');
+    }
+
+    // 2. wx-jscode2session 换 openid (服务端调微信 API, client 不可伪造)
+    //    wxCodeSession.exchange 抛错时 (500 WX_CODE2SESSION_*) 直接透传给 client
+    //    — 微信 errcode 已被 service 内层吞掉只透传通用 message
+    const session = await this.wxCodeSession.exchange(body.code);
+    const openid = session.openid;
+
+    // 3. openid 反查 parents 表
+    const parent = await this.parentRepo.findParentByOpenid(openid);
+    const openidMask = openid.length > 8 ? `***${openid.slice(-8)}` : '***';
+
+    if (!parent || parent.status !== '启用') {
+      // 失败 audit (不透传 openid 全文, mask 后 8 位)
+      //   tenantSchema='' fail-open: parent 未识别 → 无 tenant 上下文, audit 走 platform-level
+      //   AuditLogRepository.log 内部 catch 兜底失败 (空 schema 不写表只走 pino warn)
+      try {
+        await this.auditLog.log('', {
+          actorUserId: null,
+          actorRole: normalizeActorRole('parent'),
+          action: 'auth.parent-login.failed',
+          targetType: 'parent',
+          targetId: parent?.id ?? null,
+          before: null,
+          after: {
+            reason: !parent ? 'OPENID_NOT_BOUND' : 'PARENT_DEACTIVATED',
+            openidMask,
+          },
+          ip: this.getIp(req),
+          userAgent: this.getUserAgent(req),
+          requestId: this.getRequestId(req),
+        });
+      } catch {
+        // fail-open: audit 失败不阻断主流程
+      }
+      throw new UnauthorizedException('WECHAT_LOGIN_FAILED');
+    }
+
+    // 4. 命中 + 启用 → sign ParentJwt (aud='parent-app' 强制) + refresh
     const token = this.parentJwt.sign({
-      parentId: body.parentId,
-      openid: body.openid,
+      parentId: parent.id,
+      openid,
     });
-    // T11 (2026-05-16): 签发配套 refresh token（30d C 端 parent）
     const refresh = await this.refreshTokenService.issue({
       subjectType: 'parent',
-      subjectId: body.parentId,
-      tenantId: null, // C 端 parent 跨租户身份（V10 拍板）
+      subjectId: parent.id,
+      tenantId: null, // C 端 parent 跨租户身份 (V10 拍板)
       userAgent: this.getUserAgent(req),
       ip: this.getIp(req),
     });
+
+    // 成功 audit (tenantSchema='' parent 跨机构身份 — 不归属任一 tenant)
+    try {
+      await this.auditLog.log('', {
+        actorUserId: parent.id,
+        actorRole: normalizeActorRole('parent'),
+        action: 'auth.parent-login.wechat',
+        targetType: 'parent',
+        targetId: parent.id,
+        before: null,
+        after: { openidMask },
+        ip: this.getIp(req),
+        userAgent: this.getUserAgent(req),
+        requestId: this.getRequestId(req),
+      });
+    } catch {
+      // fail-open
+    }
+
     return {
       token,
       refreshToken: refresh.refreshToken,
       tokenType: 'Bearer',
       expiresIn: 30 * 86400,
       refreshExpiresIn: refresh.refreshExpiresIn,
-      payload: { parentId: body.parentId, openid: body.openid, type: 'parent' },
+      payload: { parentId: parent.id, type: 'parent' },
     };
   }
 

@@ -257,6 +257,27 @@ export class TenantMiddleware implements NestMiddleware {
       throw e;
     }
 
+    // 2026-05-23 P0 C 端 tenant context 桥梁:
+    //   /api/c/tenant-contexts 是「选 tenant 之前」的 endpoint
+    //   — parent 登录后还没选 tenant，没法传 x-tenant-schema header
+    //   → 走白名单豁免: 仅校验 parent JWT, 不要求 tenantSchema, 不查 binding
+    //   端点本身在 c-side.controller.getTenantContexts 内查 parent_student_bindings
+    //   严格用 req.parent.parentId 反查并返结果, 不暴露任何跨 parent 数据.
+    //
+    //   安全性: 必须 startsWith 精确匹配该路径; 不允许前缀通配 (防止
+    //   /api/c/tenant-contexts-xxx 之类的衍生路径意外豁免).
+    //   path 来源是 originalUrl 已去 query 段 (中间件主流程 L59-62 已处理).
+    const fullUrl = req.originalUrl || req.url || '';
+    const reqPath = fullUrl.split('?')[0];
+    if (
+      reqPath === '/api/c/tenant-contexts' ||
+      reqPath === '/c/tenant-contexts' /* test 环境无 setGlobalPrefix('api') 时 */
+    ) {
+      // 仅挂 parent context, 不挂 tenantId / tenantSchema (端点自己聚合多 tenant 视图)
+      this.attachParentUser(req, parent.parentId, null, null);
+      return;
+    }
+
     // 2. 客户端必须传 tenantSchema (c 端切租户标识)
     const schema = this.extractTenantSchema(req);
     if (!schema) {
@@ -335,9 +356,9 @@ export class TenantMiddleware implements NestMiddleware {
           `but only bound to [${Array.from(allowedTenantIds).join(',')}] ` +
           `on ${req.method} ${req.originalUrl || req.url}`,
       );
-      throw new ForbiddenException(
-        `parent ${parent.parentId} is not bound to tenant ${requestedTenantId}`,
-      );
+      // P1-1 (2026-05-23): HTTP 403 body 不暴露内部 ULID 标识符 (OWASP A05)
+      //   完整 parentId / tenantId / allowedTenants 已在上方 pino warn + audit_log 落盘 (server-side only)
+      throw new ForbiddenException('PARENT_NOT_BOUND_TO_TENANT');
     }
 
     // 4. 校验通过 → 挂上下文
@@ -347,16 +368,21 @@ export class TenantMiddleware implements NestMiddleware {
   /**
    * 把 parent 信息挂到 req (供 controller / guard 后续用)
    * 与旧行为兼容: req.user 含 sub=parentId / tenantId / role='parent' / campusId=null
+   *
+   * 2026-05-23 P0 C 端 tenant context 桥梁:
+   *   tenantId / schema 允许 null — 用于 /api/c/tenant-contexts 白名单分支
+   *   (parent 已认证但还没选 tenant). controller 自己用 req.parent.parentId
+   *   反查 binding 列表, 不依赖 req.tenantSchema.
    */
   private attachParentUser(
     req: Request,
     parentId: string,
-    tenantId: string,
-    schema: string,
+    tenantId: string | null,
+    schema: string | null,
   ): void {
     (req as RequestWithUser).user = {
       sub: parentId,
-      tenantId,
+      tenantId: tenantId as any, // JwtPayload.tenantId 是 string | null 形态
       role: 'parent' as any,
       campusId: null,
     };
@@ -366,7 +392,9 @@ export class TenantMiddleware implements NestMiddleware {
       parentId,
       role: 'parent',
     };
-    (req as RequestWithTenant).tenantSchema = schema;
+    if (schema) {
+      (req as RequestWithTenant).tenantSchema = schema;
+    }
   }
 
   /**

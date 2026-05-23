@@ -35,4 +35,8 @@ CREATE INDEX IF NOT EXISTS idx_ar_assessment_student ON assessment_recipients(st
 
 COMMENT ON TABLE assessment_recipients IS 'V60 测评接收方 — task #33 (类比 V13 assignment_recipients)';
 
+-- GRANT 教训（V43 注释 + 2026-05-13 + 2026-05-23 V59/V60 生产实战）：新表必须显式 GRANT 给 eduapp user
+-- 之前 16 tenants apply 时漏 GRANT 导致 assessment/record 内部查询 500 permission denied
+GRANT SELECT, INSERT, UPDATE, DELETE ON assessment_recipients TO eduapp;
+
 COMMIT;
