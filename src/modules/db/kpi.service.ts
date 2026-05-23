@@ -684,6 +684,50 @@ export class KpiService {
    *   salesUserId 来自 JWT req.user.sub（controller 层传入），无需 client 提供
    *   trialRate 暂留 0（Sprint Y 后端补：trial schedule 数 / consult 总数 = 转化率）
    */
+  /**
+   * 2026-05-23 (task #34): home attention 预警通用数据源
+   *   - refundPending: V59 refund_orders WHERE status='pending' COUNT
+   *     - finance: 限本 campus (jwt.campusId scope)
+   *     - boss/admin: 跨 campus
+   *     - 其他角色: 0 (不看退费)
+   *   - lowBalance / handover: 暂 0 (待 Sprint 后续接通真实数据源)
+   *
+   * fail-open: SQL 失败返 0, 不阻塞 home
+   */
+  async getHomeAlerts(
+    tenantSchema: string,
+    ctx: { role: string; campusId?: string | null },
+  ): Promise<{ lowBalance: number; refundPending: number; handover: number }> {
+    const empty = { lowBalance: 0, refundPending: 0, handover: 0 };
+    if (!tenantSchema) return empty;
+
+    let refundPending = 0;
+    // 退费预警: finance/boss/admin 可看 (SSOT §4.4 教学人员不看)
+    if (ctx.role === 'finance' || ctx.role === 'boss' || ctx.role === 'admin') {
+      try {
+        const params: any[] = [];
+        let where = "status = 'pending'";
+        if (ctx.role === 'finance' && ctx.campusId) {
+          params.push(ctx.campusId);
+          where += ` AND campus_id = $${params.length}`;
+        }
+        const rows = await this.pg.tenantQuery<{ c: string }>(
+          tenantSchema,
+          `SELECT COUNT(*)::text AS c FROM refund_orders WHERE ${where}`,
+          params,
+        );
+        refundPending = parseInt(rows[0]?.c || '0', 10) || 0;
+      } catch (e) {
+        // V59 表可能未 backfill 或 query fail → fail-open 返 0
+        this.logger.warn(
+          `[home-alerts] refund_orders query failed: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    return { lowBalance: 0, refundPending, handover: 0 };
+  }
+
   async getSalesHomeKpi(
     tenantSchema: string,
     salesUserId: string,

@@ -158,6 +158,32 @@ export class KpiController {
   }
 
   /**
+   * 2026-05-23 (task #34) home-alerts 通用预警 endpoint
+   *   GET /db/kpi/home-alerts?tenantSchema=
+   *   返每个角色的 attentionStats { lowBalance, refundPending, handover }
+   *
+   *   字段来源:
+   *     - refundPending: V59 refund_orders WHERE status='pending' COUNT (finance scope)
+   *     - lowBalance: TODO V12 student_course_packages remaining_hours < 4 COUNT (待 Sprint)
+   *     - handover: TODO V28 customer ownership 变更未排课 COUNT (待 Sprint)
+   *   按用户「禁止幻想」: 暂只 refundPending 真值, 其他放 0
+   *
+   *   RBAC: 全 B 端 role (home 都用)
+   */
+  @Get('home-alerts')
+  @Roles('admin', 'boss', 'finance', 'academic', 'academic_admin', 'sales', 'sales_manager', 'teacher')
+  @HttpCode(HttpStatus.OK)
+  async homeAlerts(
+    @Query('tenantSchema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ lowBalance: number; refundPending: number; handover: number }> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    const role = req.user?.role || '';
+    const campusId = req.user?.campusId;
+    return this.kpi.getHomeAlerts(tenantSchema, { role, campusId });
+  }
+
+  /**
    * 2026-05-21 销售自视角 home KPI
    *   GET /db/kpi/sales-home?tenantSchema=
    *   Auth: JWT.sub → salesUserId（不接受 client 传 userId 防伪造）
