@@ -336,6 +336,8 @@ const HW_ASSIGNMENTS = TEACHERS.map((t, i) => ({
 }));
 
 // 3 老师每人 1 测评起点 (3 条 assessment)
+// 2026-05-23 task #33: 加 recipientStudentIds fan-out (V60 assessment_recipients)
+//   类比 homework recipients, 默认 = 老师主带学员
 const ASSESSMENTS = TEACHERS.map((t, i) => ({
   id: ulid('assessment', i),
   teacher_id: t.id,
@@ -345,6 +347,10 @@ const ASSESSMENTS = TEACHERS.map((t, i) => ({
   total_score: 100,
   scheduled_at: daysAgo(5 - i),  // 5/4/3 天前 — 老师可去录分
   status: 'published',
+  // 接收方 = 该老师主带的全部学员 (与 HW_ASSIGNMENTS.recipientStudentIds 同源)
+  recipientStudentIds: STUDENTS
+    .filter((s) => s.student.assigned_teacher_id === t.id)
+    .map((s) => s.student.id),
 }));
 
 // 3 家长起点 (parents + parent_student_bindings)
@@ -417,6 +423,7 @@ sql.push(`  ${TENANT_SCHEMA}.homework_submissions,`);
 sql.push(`  ${TENANT_SCHEMA}.assignment_recipients,`);
 sql.push(`  ${TENANT_SCHEMA}.homework_assignments,`);
 sql.push(`  ${TENANT_SCHEMA}.student_assessment_results,`);
+sql.push(`  ${TENANT_SCHEMA}.assessment_recipients,`);  // V60 task #33
 sql.push(`  ${TENANT_SCHEMA}.assessments,`);
 sql.push(`  ${TENANT_SCHEMA}.contracts,`);
 sql.push(`  ${TENANT_SCHEMA}.invoices,`);
@@ -648,11 +655,18 @@ for (const hw of HW_ASSIGNMENTS) {
 sql.push('');
 
 for (const a of ASSESSMENTS) {
-  sql.push(`-- assessment teacher=${a.teacher_id.slice(0, 8)} title="${a.title}"`);
+  sql.push(`-- assessment teacher=${a.teacher_id.slice(0, 8)} title="${a.title}" recipients=${a.recipientStudentIds.length}`);
   sql.push(
     `INSERT INTO assessments (id, teacher_id, title, subject, assessment_type, total_score, scheduled_at, status)`
     + `\n VALUES (${S(a.id)}, ${S(a.teacher_id)}, ${S(a.title)}, ${S(a.subject)}, ${S(a.assessment_type)}, ${N(a.total_score)}, ${T(a.scheduled_at)}, ${S(a.status)});`
   );
+  // 2026-05-23 task #33: V60 assessment_recipients fan-out
+  for (const sid of a.recipientStudentIds) {
+    sql.push(
+      `INSERT INTO assessment_recipients (assessment_id, student_id)`
+      + ` VALUES (${S(a.id)}, ${S(sid)});`
+    );
+  }
 }
 sql.push('');
 
