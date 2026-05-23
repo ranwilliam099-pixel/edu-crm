@@ -100,12 +100,12 @@ export class FeedbackController {
   }
 
   /**
-   * PATCH /api/lesson-feedbacks/:id — 24h 内修改反馈
+   * PATCH /api/lesson-feedbacks/:feedbackId — 24h 内修改反馈
    */
-  @Patch('lesson-feedbacks/:id')
+  @Patch('lesson-feedbacks/:feedbackId')
   @HttpCode(HttpStatus.OK)
   updateFeedback(
-    @Param('id') _id: string,
+    @Param('feedbackId') _feedbackId: string,
     @Body()
     body: {
       feedback: LessonFeedback;
@@ -128,12 +128,12 @@ export class FeedbackController {
   }
 
   /**
-   * POST /api/lesson-feedbacks/:id/parent-read
+   * POST /api/lesson-feedbacks/:feedbackId/parent-read
    */
-  @Post('lesson-feedbacks/:id/parent-read')
+  @Post('lesson-feedbacks/:feedbackId/parent-read')
   @HttpCode(HttpStatus.OK)
   markParentReadFeedback(
-    @Param('id') _id: string,
+    @Param('feedbackId') _feedbackId: string,
     @Body() body: { feedback: LessonFeedback; nowMs?: number },
   ): LessonFeedback {
     return this.feedback.markParentRead(
@@ -167,12 +167,12 @@ export class FeedbackController {
   }
 
   /**
-   * POST /api/course-consumptions/:id/confirm — 反馈提交时 confirm
+   * POST /api/course-consumptions/:consumptionId/confirm — 反馈提交时 confirm
    */
-  @Post('course-consumptions/:id/confirm')
+  @Post('course-consumptions/:consumptionId/confirm')
   @HttpCode(HttpStatus.OK)
   confirmConsumption(
-    @Param('id') _id: string,
+    @Param('consumptionId') _consumptionId: string,
     @Body() body: { consumption: CourseConsumption; feedbackId: string; nowMs?: number },
   ): CourseConsumption {
     return this.consumption.confirmByFeedback(
@@ -197,12 +197,12 @@ export class FeedbackController {
   }
 
   /**
-   * POST /api/course-consumptions/:id/unlock-late — 老师超期补填恢复
+   * POST /api/course-consumptions/:consumptionId/unlock-late — 老师超期补填恢复
    */
-  @Post('course-consumptions/:id/unlock-late')
+  @Post('course-consumptions/:consumptionId/unlock-late')
   @HttpCode(HttpStatus.OK)
   unlockLate(
-    @Param('id') _id: string,
+    @Param('consumptionId') _consumptionId: string,
     @Body() body: { consumption: CourseConsumption; feedbackId: string; nowMs?: number },
   ): CourseConsumption {
     return this.consumption.unlockByLateFeedback(
@@ -243,12 +243,12 @@ export class FeedbackController {
   }
 
   /**
-   * POST /api/monthly-reports/:id/finalize — 老师补寄语 + 续报建议
+   * POST /api/monthly-reports/:reportId/finalize — 老师补寄语 + 续报建议
    */
-  @Post('monthly-reports/:id/finalize')
+  @Post('monthly-reports/:reportId/finalize')
   @HttpCode(HttpStatus.OK)
   finalizeReport(
-    @Param('id') _id: string,
+    @Param('reportId') _reportId: string,
     @Body()
     body: {
       report: MonthlyReport;
@@ -265,12 +265,12 @@ export class FeedbackController {
   }
 
   /**
-   * POST /api/monthly-reports/:id/parent-read
+   * POST /api/monthly-reports/:reportId/parent-read
    */
-  @Post('monthly-reports/:id/parent-read')
+  @Post('monthly-reports/:reportId/parent-read')
   @HttpCode(HttpStatus.OK)
   markParentReadReport(
-    @Param('id') _id: string,
+    @Param('reportId') _reportId: string,
     @Body() body: { report: MonthlyReport; nowMs?: number },
   ): MonthlyReport {
     return this.report.markParentRead(
@@ -380,7 +380,7 @@ export class FeedbackController {
    *     ⚠ 风险：parent role 不在 @Roles → RbacGuard 拦截 parent → 路由失效
    *     → 解决：parent 走独立 controller 路径（c 端独立 endpoint）；本 endpoint 仅 B 端 role 访问
    */
-  @Post('db/lesson-feedbacks/:id/find')
+  @Post('db/lesson-feedbacks/:feedbackId/find')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles(
     'teacher',
@@ -394,10 +394,10 @@ export class FeedbackController {
   )
   @HttpCode(HttpStatus.OK)
   async findFeedbackInDb(
-    @Param('id') id: string,
+    @Param('feedbackId') feedbackId: string,
     @Body() body: { tenantSchema: string },
   ): Promise<LessonFeedback> {
-    return this.feedback.findInDb(id, body.tenantSchema);
+    return this.feedback.findInDb(feedbackId, body.tenantSchema);
   }
 
   @Post('db/students/:studentId/feedbacks')
@@ -426,13 +426,13 @@ export class FeedbackController {
   /**
    * Sprint B RBAC: 24h 内改反馈（老师 / admin / boss；教务只读不能改）
    */
-  @Post('db/lesson-feedbacks/:id/update')
+  @Post('db/lesson-feedbacks/:feedbackId/update')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async updateFeedbackInDb(
-    @Param('id') id: string,
+    @Param('feedbackId') feedbackId: string,
     @Body()
     body: {
       patch: {
@@ -455,7 +455,7 @@ export class FeedbackController {
   ): Promise<LessonFeedback> {
     const { homeworkDeadlineMs, ...patchRest } = body.patch;
     return this.feedback.updateInDb(
-      id,
+      feedbackId,
       {
         ...patchRest,
         homeworkDeadline: homeworkDeadlineMs ? new Date(homeworkDeadlineMs) : undefined,
@@ -470,13 +470,13 @@ export class FeedbackController {
    *   - 走 middleware isParentDbPath 分支（/api/db/lesson-feedbacks/ 前缀），parent JWT 也能调
    *   - RbacGuard 这道闸默认放行无 @Roles 路由（含 parent role 走 parent JWT 流时 req.user.role='parent'）
    */
-  @Post('db/lesson-feedbacks/:id/parent-read')
+  @Post('db/lesson-feedbacks/:feedbackId/parent-read')
   @HttpCode(HttpStatus.OK)
   async markParentReadFeedbackInDb(
-    @Param('id') id: string,
+    @Param('feedbackId') feedbackId: string,
     @Body() body: { tenantSchema: string },
   ): Promise<LessonFeedback> {
-    return this.feedback.markParentReadInDb(id, body.tenantSchema);
+    return this.feedback.markParentReadInDb(feedbackId, body.tenantSchema);
   }
 
   // ----- CourseConsumption -----
@@ -515,16 +515,16 @@ export class FeedbackController {
    *   - 反馈提交时由 lesson-feedback 内联调用 → admin / boss 可重放
    *   - teacher 不能直接调（schedule.complete 时反馈服务自动 confirm）
    */
-  @Post('db/course-consumptions/:id/confirm')
+  @Post('db/course-consumptions/:consumptionId/confirm')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async confirmConsumptionInDb(
-    @Param('id') id: string,
+    @Param('consumptionId') consumptionId: string,
     @Body() body: { feedbackId: string; tenantSchema: string },
   ): Promise<CourseConsumption> {
-    return this.consumption.confirmByFeedbackInDb(id, body.feedbackId, body.tenantSchema);
+    return this.consumption.confirmByFeedbackInDb(consumptionId, body.feedbackId, body.tenantSchema);
   }
 
   /**
@@ -549,31 +549,31 @@ export class FeedbackController {
    * Sprint B RBAC (2026-05-11 复审补): teacher / admin / boss
    *   - 老师超期补填时恢复（self-check 在 service 层）
    */
-  @Post('db/course-consumptions/:id/unlock-late')
+  @Post('db/course-consumptions/:consumptionId/unlock-late')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async unlockLateInDb(
-    @Param('id') id: string,
+    @Param('consumptionId') consumptionId: string,
     @Body() body: { feedbackId: string; tenantSchema: string },
   ): Promise<CourseConsumption> {
-    return this.consumption.unlockByLateFeedbackInDb(id, body.feedbackId, body.tenantSchema);
+    return this.consumption.unlockByLateFeedbackInDb(consumptionId, body.feedbackId, body.tenantSchema);
   }
 
   /**
    * Sprint B RBAC (2026-05-11 复审补): admin / boss
    */
-  @Post('db/course-consumptions/:id/cancel')
+  @Post('db/course-consumptions/:consumptionId/cancel')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async cancelConsumptionInDb(
-    @Param('id') id: string,
+    @Param('consumptionId') consumptionId: string,
     @Body() body: { tenantSchema: string },
   ): Promise<CourseConsumption> {
-    return this.consumption.cancelInDb(id, body.tenantSchema);
+    return this.consumption.cancelInDb(consumptionId, body.tenantSchema);
   }
 
   // V38: 删 POST /api/db/teachers/:teacherId/payroll（薪资业务下线 + A04 R3 跨租户漏洞修复）
@@ -647,13 +647,13 @@ export class FeedbackController {
    *   旧实现仅 @UseGuards(TenantScopeGuard) 无 @Roles, parent role JWT 可调此 endpoint
    *   组合 Fix 1 后 parent 已被跨租户校验拦截, 但本 endpoint 应明确拒绝 parent role
    */
-  @Post('db/monthly-reports/:id/finalize')
+  @Post('db/monthly-reports/:reportId/finalize')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async finalizeReportInDb(
-    @Param('id') id: string,
+    @Param('reportId') reportId: string,
     @Body()
     body: {
       teacherBlessing: string;
@@ -675,7 +675,7 @@ export class FeedbackController {
     //   - 先 SELECT 出 report 拿 teacher_id，再核对 teachers.user_id 是否 = req.user.sub
     //   - 如果 report 不存在 → repo 层会抛 NotFoundException；先做 self-check 才能拿到 teacher_id
     //   - admin / boss 跳过 self-check（拍板：boss 是校长，admin 是老板，都能改全 campus 数据）
-    await this.assertTeacherSelfOrPrivileged(req, body.tenantSchema, id);
+    await this.assertTeacherSelfOrPrivileged(req, body.tenantSchema, reportId);
 
     // V36 audience='parent' 合并路径 → 转走 finalize-parent
     if (body.audience === 'parent') {
@@ -685,7 +685,7 @@ export class FeedbackController {
         );
       }
       return this.report.finalizeParentInDb(
-        id,
+        reportId,
         {
           parentBlessing: body.parentBlessing,
           parentHighlights: body.parentHighlights,
@@ -699,7 +699,7 @@ export class FeedbackController {
 
     // 默认 audience='teacher' 路径
     return this.report.finalizeInDb(
-      id,
+      reportId,
       body.teacherBlessing,
       body.renewalSuggestion,
       body.tenantSchema,
@@ -726,13 +726,13 @@ export class FeedbackController {
    * 注：parent role 进入此 endpoint → 应被 RbacGuard 挡住（@Roles 不含 parent）
    *     如未来 c 端要让家长自己写感谢回馈，应另开 endpoint，避免与"老师写给家长"语义混淆
    */
-  @Post('db/monthly-reports/:id/finalize-parent')
+  @Post('db/monthly-reports/:reportId/finalize-parent')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async finalizeReportParentInDb(
-    @Param('id') id: string,
+    @Param('reportId') reportId: string,
     @Body()
     body: {
       parentBlessing: string;
@@ -744,7 +744,7 @@ export class FeedbackController {
     @Req() req: AuthenticatedRequest,
   ): Promise<MonthlyReport> {
     // Sprint B self-check: teacher role 只能补写自己学生的家长版评语
-    await this.assertTeacherSelfOrPrivileged(req, body.tenantSchema, id);
+    await this.assertTeacherSelfOrPrivileged(req, body.tenantSchema, reportId);
 
     const auditCtx = this.buildFinalizeAuditCtx(req);
     const payload: FinalizeParentPayload = {
@@ -753,7 +753,7 @@ export class FeedbackController {
       parentImprovements: body.parentImprovements,
       parentNextPlan: body.parentNextPlan,
     };
-    return this.report.finalizeParentInDb(id, payload, body.tenantSchema, auditCtx);
+    return this.report.finalizeParentInDb(reportId, payload, body.tenantSchema, auditCtx);
   }
 
   /**

@@ -43,12 +43,12 @@
         ]
       }
     },
-    "/api/public/onboarding/tenants/{id}": {
+    "/api/public/onboarding/tenants/{tenantId}": {
       "delete": {
         "operationId": "OnboardingController_deleteTenant",
         "parameters": [
           {
-            "name": "id",
+            "name": "tenantId",
             "required": true,
             "in": "path",
             "schema": {
@@ -80,12 +80,12 @@
         ]
       }
     },
-    "/api/db/teachers/{id}/showcase": {
+    "/api/db/teachers/{teacherId}/showcase": {
       "get": {
         "operationId": "TeacherShowcaseController_getShowcase",
         "parameters": [
           {
-            "name": "id",
+            "name": "teacherId",
             "required": true,
             "in": "path",
             "schema": {
@@ -111,12 +111,12 @@
         ]
       }
     },
-    "/api/db/teachers/{id}/showcase-meta": {
+    "/api/db/teachers/{teacherId}/showcase-meta": {
       "put": {
         "operationId": "TeacherShowcaseController_updateShowcaseMeta",
         "parameters": [
           {
-            "name": "id",
+            "name": "teacherId",
             "required": true,
             "in": "path",
             "schema": {
@@ -196,12 +196,12 @@
         ]
       }
     },
-    "/api/db/leaves/{id}/approve": {
+    "/api/db/leaves/{leaveId}/approve": {
       "post": {
         "operationId": "LeaveController_approveLeave",
         "parameters": [
           {
-            "name": "id",
+            "name": "leaveId",
             "required": true,
             "in": "path",
             "schema": {
@@ -227,12 +227,12 @@
         ]
       }
     },
-    "/api/db/leaves/{id}/reject": {
+    "/api/db/leaves/{leaveId}/reject": {
       "post": {
         "operationId": "LeaveController_rejectLeave",
         "parameters": [
           {
-            "name": "id",
+            "name": "leaveId",
             "required": true,
             "in": "path",
             "schema": {
@@ -281,12 +281,12 @@
         ]
       }
     },
-    "/api/db/recommendations/{id}/toggle": {
+    "/api/db/recommendations/{recommendationId}/toggle": {
       "post": {
         "operationId": "RecommendationController_toggle",
         "parameters": [
           {
-            "name": "id",
+            "name": "recommendationId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1248,12 +1248,12 @@
         ]
       }
     },
-    "/api/db/customers/{id}": {
+    "/api/db/customers/{customerId}": {
       "get": {
         "operationId": "CustomerController_detail",
         "parameters": [
           {
-            "name": "id",
+            "name": "customerId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1279,12 +1279,12 @@
         ]
       }
     },
-    "/api/db/customers/{id}/follows": {
+    "/api/db/customers/{customerId}/follows": {
       "get": {
         "operationId": "CustomerController_listFollows",
         "parameters": [
           {
-            "name": "id",
+            "name": "customerId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1318,12 +1318,12 @@
         ]
       }
     },
-    "/api/db/customers/{id}/claim": {
+    "/api/db/customers/{customerId}/claim": {
       "post": {
         "operationId": "CustomerController_claim",
         "parameters": [
           {
-            "name": "id",
+            "name": "customerId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1341,12 +1341,12 @@
         ]
       }
     },
-    "/api/db/customers/{id}/release": {
+    "/api/db/customers/{customerId}/release": {
       "post": {
         "operationId": "CustomerController_release",
         "parameters": [
           {
-            "name": "id",
+            "name": "customerId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1364,12 +1364,12 @@
         ]
       }
     },
-    "/api/db/customers/{id}/mark-lost": {
+    "/api/db/customers/{customerId}/mark-lost": {
       "post": {
         "operationId": "CustomerController_markLost",
         "parameters": [
           {
-            "name": "id",
+            "name": "customerId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1387,12 +1387,12 @@
         ]
       }
     },
-    "/api/db/customers/{id}/follow": {
+    "/api/db/customers/{customerId}/follow": {
       "post": {
         "operationId": "CustomerController_addFollow",
         "parameters": [
           {
-            "name": "id",
+            "name": "customerId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1511,12 +1511,12 @@
         ]
       }
     },
-    "/api/db/contracts/{id}": {
+    "/api/db/contracts/{contractId}": {
       "get": {
         "operationId": "ContractController_detail",
         "parameters": [
           {
-            "name": "id",
+            "name": "contractId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1589,12 +1589,12 @@
         ]
       }
     },
-    "/api/db/contracts/{id}/activate": {
+    "/api/db/contracts/{contractId}/activate": {
       "post": {
         "operationId": "ContractController_activate",
         "parameters": [
           {
-            "name": "id",
+            "name": "contractId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1711,12 +1711,12 @@
         ]
       }
     },
-    "/api/db/users/{id}": {
+    "/api/db/users/{userId}": {
       "get": {
         "operationId": "UserController_detail",
         "parameters": [
           {
-            "name": "id",
+            "name": "userId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1886,12 +1886,12 @@
         ]
       }
     },
-    "/api/db/students/{id}/contracts": {
+    "/api/db/students/{studentId}/contracts": {
       "post": {
         "operationId": "StudentController_createContract",
         "parameters": [
           {
-            "name": "id",
+            "name": "studentId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1909,12 +1909,12 @@
         ]
       }
     },
-    "/api/db/students/{id}/transfer-sales": {
+    "/api/db/students/{studentId}/transfer-sales": {
       "post": {
         "operationId": "StudentController_transferSales",
         "parameters": [
           {
-            "name": "id",
+            "name": "studentId",
             "required": true,
             "in": "path",
             "schema": {
@@ -1932,12 +1932,12 @@
         ]
       }
     },
-    "/api/db/students/{id}/transfer-teacher": {
+    "/api/db/students/{studentId}/transfer-teacher": {
       "post": {
         "operationId": "StudentController_transferTeacher",
         "parameters": [
           {
-            "name": "id",
+            "name": "studentId",
             "required": true,
             "in": "path",
             "schema": {
@@ -2029,12 +2029,12 @@
         ]
       }
     },
-    "/api/db/course-products/{id}": {
+    "/api/db/course-products/{courseProductId}": {
       "get": {
         "operationId": "CourseProductController_detail",
         "parameters": [
           {
-            "name": "id",
+            "name": "courseProductId",
             "required": true,
             "in": "path",
             "schema": {
@@ -2060,12 +2060,12 @@
         ]
       }
     },
-    "/api/db/course-products/{id}/stats": {
+    "/api/db/course-products/{courseProductId}/stats": {
       "get": {
         "operationId": "CourseProductController_getStats",
         "parameters": [
           {
-            "name": "id",
+            "name": "courseProductId",
             "required": true,
             "in": "path",
             "schema": {
@@ -2099,12 +2099,12 @@
         ]
       }
     },
-    "/api/db/course-products/{id}/status": {
+    "/api/db/course-products/{courseProductId}/status": {
       "post": {
         "operationId": "CourseProductController_toggleStatus",
         "parameters": [
           {
-            "name": "id",
+            "name": "courseProductId",
             "required": true,
             "in": "path",
             "schema": {
@@ -2136,12 +2136,12 @@
         ]
       }
     },
-    "/api/db/parent-bindings/{id}": {
+    "/api/db/parent-bindings/{bindingId}": {
       "patch": {
         "operationId": "ParentBindingController_unbindBinding",
         "parameters": [
           {
-            "name": "id",
+            "name": "bindingId",
             "required": true,
             "in": "path",
             "schema": {
@@ -2658,12 +2658,12 @@
         ]
       }
     },
-    "/api/teachers/{id}/status": {
+    "/api/teachers/{teacherId}/status": {
       "post": {
         "operationId": "TeacherController_changeStatus",
         "parameters": [
           {
-            "name": "id",
+            "name": "teacherId",
             "required": true,
             "in": "path",
             "schema": {
@@ -2723,12 +2723,12 @@
         ]
       }
     },
-    "/api/teachers/{id}/profile-type": {
+    "/api/teachers/{teacherId}/profile-type": {
       "post": {
         "operationId": "TeacherController_profileType",
         "parameters": [
           {
-            "name": "id",
+            "name": "teacherId",
             "required": true,
             "in": "path",
             "schema": {
@@ -2746,12 +2746,12 @@
         ]
       }
     },
-    "/api/teachers/db/{id}/archive": {
+    "/api/teachers/db/{teacherId}/archive": {
       "post": {
         "operationId": "TeacherController_archive",
         "parameters": [
           {
-            "name": "id",
+            "name": "teacherId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3102,12 +3102,12 @@
         ]
       }
     },
-    "/api/schedules/{id}/cancel": {
+    "/api/schedules/{scheduleId}/cancel": {
       "post": {
         "operationId": "ScheduleController_cancelSchedule",
         "parameters": [
           {
-            "name": "id",
+            "name": "scheduleId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3125,12 +3125,12 @@
         ]
       }
     },
-    "/api/schedules/{id}/complete": {
+    "/api/schedules/{scheduleId}/complete": {
       "post": {
         "operationId": "ScheduleController_completeSchedule",
         "parameters": [
           {
-            "name": "id",
+            "name": "scheduleId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3221,12 +3221,12 @@
         ]
       }
     },
-    "/api/recurring/bindings/{id}/unbind": {
+    "/api/recurring/bindings/{bindingId}/unbind": {
       "post": {
         "operationId": "RecurringScheduleController_unbindBinding",
         "parameters": [
           {
-            "name": "id",
+            "name": "bindingId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3258,12 +3258,12 @@
         ]
       }
     },
-    "/api/recurring/schedules/{id}/archive": {
+    "/api/recurring/schedules/{scheduleId}/archive": {
       "post": {
         "operationId": "RecurringScheduleController_archiveRecurring",
         "parameters": [
           {
-            "name": "id",
+            "name": "scheduleId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3309,12 +3309,12 @@
         ]
       }
     },
-    "/api/lesson-feedbacks/{id}": {
+    "/api/lesson-feedbacks/{feedbackId}": {
       "patch": {
         "operationId": "FeedbackController_updateFeedback",
         "parameters": [
           {
-            "name": "id",
+            "name": "feedbackId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3332,12 +3332,12 @@
         ]
       }
     },
-    "/api/lesson-feedbacks/{id}/parent-read": {
+    "/api/lesson-feedbacks/{feedbackId}/parent-read": {
       "post": {
         "operationId": "FeedbackController_markParentReadFeedback",
         "parameters": [
           {
-            "name": "id",
+            "name": "feedbackId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3369,12 +3369,12 @@
         ]
       }
     },
-    "/api/course-consumptions/{id}/confirm": {
+    "/api/course-consumptions/{consumptionId}/confirm": {
       "post": {
         "operationId": "FeedbackController_confirmConsumption",
         "parameters": [
           {
-            "name": "id",
+            "name": "consumptionId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3406,12 +3406,12 @@
         ]
       }
     },
-    "/api/course-consumptions/{id}/unlock-late": {
+    "/api/course-consumptions/{consumptionId}/unlock-late": {
       "post": {
         "operationId": "FeedbackController_unlockLate",
         "parameters": [
           {
-            "name": "id",
+            "name": "consumptionId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3443,12 +3443,12 @@
         ]
       }
     },
-    "/api/monthly-reports/{id}/finalize": {
+    "/api/monthly-reports/{reportId}/finalize": {
       "post": {
         "operationId": "FeedbackController_finalizeReport",
         "parameters": [
           {
-            "name": "id",
+            "name": "reportId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3466,12 +3466,12 @@
         ]
       }
     },
-    "/api/monthly-reports/{id}/parent-read": {
+    "/api/monthly-reports/{reportId}/parent-read": {
       "post": {
         "operationId": "FeedbackController_markParentReadReport",
         "parameters": [
           {
-            "name": "id",
+            "name": "reportId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3503,12 +3503,12 @@
         ]
       }
     },
-    "/api/db/lesson-feedbacks/{id}/find": {
+    "/api/db/lesson-feedbacks/{feedbackId}/find": {
       "post": {
         "operationId": "FeedbackController_findFeedbackInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "feedbackId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3549,12 +3549,12 @@
         ]
       }
     },
-    "/api/db/lesson-feedbacks/{id}/update": {
+    "/api/db/lesson-feedbacks/{feedbackId}/update": {
       "post": {
         "operationId": "FeedbackController_updateFeedbackInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "feedbackId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3572,12 +3572,12 @@
         ]
       }
     },
-    "/api/db/lesson-feedbacks/{id}/parent-read": {
+    "/api/db/lesson-feedbacks/{feedbackId}/parent-read": {
       "post": {
         "operationId": "FeedbackController_markParentReadFeedbackInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "feedbackId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3609,12 +3609,12 @@
         ]
       }
     },
-    "/api/db/course-consumptions/{id}/confirm": {
+    "/api/db/course-consumptions/{consumptionId}/confirm": {
       "post": {
         "operationId": "FeedbackController_confirmConsumptionInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "consumptionId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3646,12 +3646,12 @@
         ]
       }
     },
-    "/api/db/course-consumptions/{id}/unlock-late": {
+    "/api/db/course-consumptions/{consumptionId}/unlock-late": {
       "post": {
         "operationId": "FeedbackController_unlockLateInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "consumptionId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3669,12 +3669,12 @@
         ]
       }
     },
-    "/api/db/course-consumptions/{id}/cancel": {
+    "/api/db/course-consumptions/{consumptionId}/cancel": {
       "post": {
         "operationId": "FeedbackController_cancelConsumptionInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "consumptionId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3729,12 +3729,12 @@
         ]
       }
     },
-    "/api/db/monthly-reports/{id}/finalize": {
+    "/api/db/monthly-reports/{reportId}/finalize": {
       "post": {
         "operationId": "FeedbackController_finalizeReportInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "reportId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3752,12 +3752,12 @@
         ]
       }
     },
-    "/api/db/monthly-reports/{id}/finalize-parent": {
+    "/api/db/monthly-reports/{reportId}/finalize-parent": {
       "post": {
         "operationId": "FeedbackController_finalizeReportParentInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "reportId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3775,12 +3775,12 @@
         ]
       }
     },
-    "/api/db/monthly-reports/{id}/find": {
+    "/api/db/monthly-reports/{reportId}/find": {
       "post": {
         "operationId": "FeedbackController_findReportInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "reportId",
             "required": true,
             "in": "path",
             "schema": {
@@ -3835,12 +3835,12 @@
         ]
       }
     },
-    "/api/db/monthly-reports/{id}/parent-read": {
+    "/api/db/monthly-reports/{reportId}/parent-read": {
       "post": {
         "operationId": "FeedbackController_markParentReadReportInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "reportId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4261,12 +4261,12 @@
         ]
       }
     },
-    "/api/homework/submissions/{id}/grade": {
+    "/api/homework/submissions/{submissionId}/grade": {
       "post": {
         "operationId": "HomeworkController_grade",
         "parameters": [
           {
-            "name": "id",
+            "name": "submissionId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4284,12 +4284,12 @@
         ]
       }
     },
-    "/api/homework/submissions/{id}/return": {
+    "/api/homework/submissions/{submissionId}/return": {
       "post": {
         "operationId": "HomeworkController_returnForRedo",
         "parameters": [
           {
-            "name": "id",
+            "name": "submissionId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4381,12 +4381,12 @@
         ]
       }
     },
-    "/api/homework/db/submissions/{id}/grade": {
+    "/api/homework/db/submissions/{submissionId}/grade": {
       "post": {
         "operationId": "HomeworkController_gradeInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "submissionId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4404,12 +4404,12 @@
         ]
       }
     },
-    "/api/homework/db/submissions/{id}/return": {
+    "/api/homework/db/submissions/{submissionId}/return": {
       "post": {
         "operationId": "HomeworkController_returnForRedoInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "submissionId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4510,12 +4510,12 @@
         ]
       }
     },
-    "/api/assessments/{id}/results": {
+    "/api/assessments/{assessmentId}/results": {
       "post": {
         "operationId": "AssessmentController_recordResult",
         "parameters": [
           {
-            "name": "id",
+            "name": "assessmentId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4533,12 +4533,12 @@
         ]
       }
     },
-    "/api/assessments/{id}/publish": {
+    "/api/assessments/{assessmentId}/publish": {
       "post": {
         "operationId": "AssessmentController_publish",
         "parameters": [
           {
-            "name": "id",
+            "name": "assessmentId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4556,12 +4556,12 @@
         ]
       }
     },
-    "/api/assessments/{id}/close": {
+    "/api/assessments/{assessmentId}/close": {
       "post": {
         "operationId": "AssessmentController_close",
         "parameters": [
           {
-            "name": "id",
+            "name": "assessmentId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4579,12 +4579,12 @@
         ]
       }
     },
-    "/api/assessments/{id}/ranking": {
+    "/api/assessments/{assessmentId}/ranking": {
       "post": {
         "operationId": "AssessmentController_computeRanking",
         "parameters": [
           {
-            "name": "id",
+            "name": "assessmentId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4639,12 +4639,12 @@
         ]
       }
     },
-    "/api/assessments/db/{id}/results": {
+    "/api/assessments/db/{assessmentId}/results": {
       "post": {
         "operationId": "AssessmentController_recordResultInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "assessmentId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4662,12 +4662,12 @@
         ]
       }
     },
-    "/api/assessments/db/{id}/publish": {
+    "/api/assessments/db/{assessmentId}/publish": {
       "post": {
         "operationId": "AssessmentController_publishInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "assessmentId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4685,12 +4685,12 @@
         ]
       }
     },
-    "/api/assessments/db/{id}/close": {
+    "/api/assessments/db/{assessmentId}/close": {
       "post": {
         "operationId": "AssessmentController_closeInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "assessmentId",
             "required": true,
             "in": "path",
             "schema": {
@@ -4708,12 +4708,12 @@
         ]
       }
     },
-    "/api/assessments/db/{id}/results/list": {
+    "/api/assessments/db/{assessmentId}/results/list": {
       "post": {
         "operationId": "AssessmentController_listResultsByAssessmentInDb",
         "parameters": [
           {
-            "name": "id",
+            "name": "assessmentId",
             "required": true,
             "in": "path",
             "schema": {
@@ -5010,12 +5010,12 @@
         ]
       }
     },
-    "/api/db/invoices/{id}": {
+    "/api/db/invoices/{invoiceId}": {
       "get": {
         "operationId": "InvoiceController_detail",
         "parameters": [
           {
-            "name": "id",
+            "name": "invoiceId",
             "required": true,
             "in": "path",
             "schema": {

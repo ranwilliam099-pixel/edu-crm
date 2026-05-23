@@ -106,10 +106,16 @@ export function isCrossCampusRole(role: string): boolean {
 /**
  * Express Request 扩展类型 — controller 用 `@Req() req: AuthenticatedRequest`
  * 替代 `req: any`，保留类型安全又不引入硬依赖
+ *
+ * Sprint Z3 阶段 1 (2026-05-23): 加 tenantSchema?: string —
+ *   tenant.middleware 在 path = /api/* 业务流挂 req.tenantSchema = `tenant_<id>`
+ *   （L124-125 / L414 路径），controller 渐进迁移 @Query('tenantSchema') → @Req() req.tenantSchema 直读
+ *   middleware 仍维持 backfill 兼容（推 Sprint Z 阶段 2 单独删除）
  */
 export interface AuthenticatedRequest {
   user?: JwtPayload;
   parent?: { sub: string; parentId?: string; role: string };
+  tenantSchema?: string;
   headers: Record<string, string | string[] | undefined>;
   ip?: string;
   body?: Record<string, unknown>;
