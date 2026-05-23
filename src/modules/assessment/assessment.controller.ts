@@ -65,10 +65,10 @@ export class AssessmentController {
     });
   }
 
-  @Post(':id/results')
+  @Post(':assessmentId/results')
   @HttpCode(HttpStatus.CREATED)
   recordResult(
-    @Param('id') _id: string,
+    @Param('assessmentId') _assessmentId: string,
     @Body()
     body: {
       input: {
@@ -91,28 +91,28 @@ export class AssessmentController {
     );
   }
 
-  @Post(':id/publish')
+  @Post(':assessmentId/publish')
   @HttpCode(HttpStatus.OK)
   publish(
-    @Param('id') _id: string,
+    @Param('assessmentId') _assessmentId: string,
     @Body() body: { assessment: Assessment },
   ): Assessment {
     return this.service.publishAssessment(this.deserializeAssessment(body.assessment));
   }
 
-  @Post(':id/close')
+  @Post(':assessmentId/close')
   @HttpCode(HttpStatus.OK)
   close(
-    @Param('id') _id: string,
+    @Param('assessmentId') _assessmentId: string,
     @Body() body: { assessment: Assessment },
   ): Assessment {
     return this.service.closeAssessment(this.deserializeAssessment(body.assessment));
   }
 
-  @Post(':id/ranking')
+  @Post(':assessmentId/ranking')
   @HttpCode(HttpStatus.OK)
   computeRanking(
-    @Param('id') _id: string,
+    @Param('assessmentId') _assessmentId: string,
     @Body() body: { results: StudentAssessmentResult[] },
   ): StudentAssessmentResult[] {
     return this.service.computeRanking(
@@ -163,13 +163,13 @@ export class AssessmentController {
     return this.service.createAssessmentWithRecipientsInDb(input, recipientStudentIds, tenantSchema);
   }
 
-  @Post('db/:id/results')
+  @Post('db/:assessmentId/results')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.CREATED)
   async recordResultInDb(
-    @Param('id') assessmentId: string,
+    @Param('assessmentId') assessmentId: string,
     @Body()
     body: {
       id: string;
@@ -185,35 +185,35 @@ export class AssessmentController {
     return this.service.recordResultInDb({ ...rest, assessmentId }, tenantSchema);
   }
 
-  @Post('db/:id/publish')
+  @Post('db/:assessmentId/publish')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async publishInDb(
-    @Param('id') id: string,
+    @Param('assessmentId') assessmentId: string,
     @Body() body: { tenantSchema: string },
   ): Promise<Assessment> {
-    return this.service.publishAssessmentInDb(id, body.tenantSchema);
+    return this.service.publishAssessmentInDb(assessmentId, body.tenantSchema);
   }
 
-  @Post('db/:id/close')
+  @Post('db/:assessmentId/close')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async closeInDb(
-    @Param('id') id: string,
+    @Param('assessmentId') assessmentId: string,
     @Body() body: { tenantSchema: string },
   ): Promise<Assessment> {
-    return this.service.closeAssessmentInDb(id, body.tenantSchema);
+    return this.service.closeAssessmentInDb(assessmentId, body.tenantSchema);
   }
 
   /**
    * Sprint B RBAC (2026-05-11 复审补): 7 role 读（5/15 A-2 删 sales_director）
    *   - teacher / academic / academic_admin / admin / boss / sales / sales_manager
    */
-  @Post('db/:id/results/list')
+  @Post('db/:assessmentId/results/list')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles(
     'teacher',
@@ -227,7 +227,7 @@ export class AssessmentController {
   )
   @HttpCode(HttpStatus.OK)
   async listResultsByAssessmentInDb(
-    @Param('id') assessmentId: string,
+    @Param('assessmentId') assessmentId: string,
     @Body() body: { tenantSchema: string },
   ): Promise<StudentAssessmentResult[]> {
     return this.service.listResultsByAssessmentInDb(assessmentId, body.tenantSchema);
@@ -285,19 +285,19 @@ export class AssessmentController {
    *     - results: V14 student_assessment_results (已录)
    *     - 前端 merge: 每 recipient 找对应 result → 已录/未录
    */
-  @Post('db/:id/detail')
+  @Post('db/:assessmentId/detail')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss', 'sales', 'sales_manager')
   @HttpCode(HttpStatus.OK)
   async getAssessmentDetailInDb(
-    @Param('id') id: string,
+    @Param('assessmentId') assessmentId: string,
     @Body() body: { tenantSchema: string },
   ): Promise<{
     assessment: Assessment;
     recipients: Array<{ studentId: string; studentName: string | null }>;
     results: StudentAssessmentResult[];
   }> {
-    return this.service.getAssessmentDetailInDb(id, body.tenantSchema);
+    return this.service.getAssessmentDetailInDb(assessmentId, body.tenantSchema);
   }
 
   /**

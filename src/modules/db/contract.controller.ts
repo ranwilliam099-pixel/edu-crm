@@ -46,11 +46,16 @@ import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.r
  * 路径前缀 /api/db/contracts/*
  *
  * Endpoints:
- *   GET  /db/contracts/mine          我的签约列表（按 owner_user_id）
- *   GET  /db/contracts/performance   我的业绩 KPI（本月 + 累计）
- *   GET  /db/contracts/:id           详情
- *   POST /db/contracts               新增签约（业绩录入入口）
- *   POST /db/contracts/:id/activate  激活（pending → active）
+ *   GET  /db/contracts/mine                  我的签约列表（按 owner_user_id）
+ *   GET  /db/contracts/performance           我的业绩 KPI（本月 + 累计）
+ *   GET  /db/contracts/:contractId           详情
+ *   POST /db/contracts                       新增签约（业绩录入入口）
+ *   POST /db/contracts/:contractId/activate  激活（pending → active）
+ *
+ * P1-T8 (2026-05-23): @Param('id') → @Param('contractId') 语义化重命名
+ *   - URL 完全不变（NestJS 位置匹配；前端 0 改动）
+ *   - 仅 controller decorator + 局部变量重命名
+ *   - 配套 docs/API-接口参数规范-2026-05-23.md §3.1
  */
 @Controller('db/contracts')
 @UseGuards(TenantScopeGuard, RbacGuard)
@@ -176,16 +181,16 @@ export class ContractController {
     return { items };
   }
 
-  @Get(':id')
+  @Get(':contractId')
   @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin', 'finance') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
   @HttpCode(HttpStatus.OK)
   async detail(
-    @Param('id') id: string,
+    @Param('contractId') contractId: string,
     @Query('tenantSchema') tenantSchema: string,
     @Req() req?: AuthenticatedRequest,
   ): Promise<Contract | { found: false }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    const c = await this.repo.findById(tenantSchema, id);
+    const c = await this.repo.findById(tenantSchema, contractId);
     if (!c) return { found: false };
 
     // Sprint B.3：scope filter 优先 — sales 别人合同 403
@@ -201,7 +206,7 @@ export class ContractController {
           ...this.auditCtx(req),
           action: 'contract.access-denied',
           targetType: 'contract',
-          targetId: id,
+          targetId: contractId,
           before: null,
           after: {
             attempted_role: req.user?.role ?? 'unknown',
@@ -213,7 +218,7 @@ export class ContractController {
       }
       throw new ForbiddenException(
         `CONTRACT_ACCESS_DENIED: role=${req?.user?.role ?? 'unknown'} ` +
-          `contractId=${id} owner=${c.ownerUserId ?? 'null'}`,
+          `contractId=${contractId} owner=${c.ownerUserId ?? 'null'}`,
       );
     }
 
@@ -338,17 +343,17 @@ export class ContractController {
   //   miniprogram/pages/b/student/detail/detail.js:345 用 /db/contracts/by-student/:id (GET) ✅
   //   miniprogram/utils/openapi-schema.json:1592 旧 baseline，需重 gen
 
-  @Post(':id/activate')
+  @Post(':contractId/activate')
   @Roles('sales', 'sales_manager', 'boss', 'admin')
   @HttpCode(HttpStatus.OK)
   async activate(
-    @Param('id') id: string,
+    @Param('contractId') contractId: string,
     @Body() body: { tenantId: string; tenantSchema: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<Contract> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
     const userId = req.user?.sub;
     if (!userId) throw new BadRequestException('user sub required');
-    return this.repo.setStatus(body.tenantSchema, id, 'active', userId);
+    return this.repo.setStatus(body.tenantSchema, contractId, 'active', userId);
   }
 }

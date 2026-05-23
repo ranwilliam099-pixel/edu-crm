@@ -27,10 +27,22 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
  *   - SSOT §4.4 财务字段矩阵 (退费教学人员不看)
  *   - migrations/V59__refund_orders_in_tenant_schema.sql
  *
+ * Endpoints:
+ *   POST /db/refunds/apply                  申请
+ *   POST /db/refunds/:refundId/decide       审批
+ *   POST /db/refunds/pending                待审 list
+ *   POST /db/refunds/list                   历史 list
+ *   GET  /db/refunds/:refundId              find by id
+ *
  * RBAC:
  *   - apply (申请): teacher / sales / academic / finance / boss / admin
  *   - decide (审批): finance / boss / admin
  *   - list / find: finance / boss / admin (财务专属, 教学人员禁看)
+ *
+ * P1-T8 (2026-05-23): @Param('id') → @Param('refundId') 语义化重命名
+ *   - URL 完全不变（NestJS 位置匹配；前端 0 改动）
+ *   - 仅 controller decorator + 局部变量重命名
+ *   - 配套 docs/API-接口参数规范-2026-05-23.md §3.1
  *
  * 注: 区别于 admin/refunds/approve (platform-level platform_admin/finance_admin),
  *     本 controller 走 tenant-scope (jwt.tenantId + RBAC), 服务 B 端 finance-refunds/list 页
@@ -80,17 +92,17 @@ export class RefundController {
   }
 
   /**
-   * POST /api/db/refunds/:id/decide — 审批退费
+   * POST /api/db/refunds/:refundId/decide — 审批退费
    *
    * RBAC: finance (单校) / boss (本校) / admin (跨校)
    * approver_role 从 JWT 派生
    */
-  @Post(':id/decide')
+  @Post(':refundId/decide')
   @UseGuards(RbacGuard)
   @Roles('finance', 'boss', 'admin')
   @HttpCode(HttpStatus.OK)
   async decide(
-    @Param('id') id: string,
+    @Param('refundId') refundId: string,
     @Body() body: {
       decision: 'approve' | 'reject';
       decisionReason: string;
@@ -106,14 +118,14 @@ export class RefundController {
     const role = req.user?.role;
     if (!userId || !role) throw new ForbiddenException('JWT sub/role required');
     const result = await this.refundRepo.decideInDb(body.tenantSchema, {
-      id,
+      id: refundId,
       decision: body.decision,
       approverUserId: userId,
       approverRole: role,
       decisionReason: body.decisionReason || '',
     });
     if (!result) {
-      throw new BadRequestException(`refund ${id} not pending or not found`);
+      throw new BadRequestException(`refund ${refundId} not pending or not found`);
     }
     return result;
   }
@@ -176,19 +188,19 @@ export class RefundController {
   }
 
   /**
-   * GET /api/db/refunds/:id — find by id
+   * GET /api/db/refunds/:refundId — find by id
    */
-  @Get(':id')
+  @Get(':refundId')
   @UseGuards(RbacGuard)
   @Roles('finance', 'boss', 'admin')
   @HttpCode(HttpStatus.OK)
   async find(
-    @Param('id') id: string,
+    @Param('refundId') refundId: string,
     @Query('tenantSchema') tenantSchema: string,
   ): Promise<RefundOrder> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    const result = await this.refundRepo.findByIdInDb(tenantSchema, id);
-    if (!result) throw new BadRequestException(`refund ${id} not found`);
+    const result = await this.refundRepo.findByIdInDb(tenantSchema, refundId);
+    if (!result) throw new BadRequestException(`refund ${refundId} not found`);
     return result;
   }
 }

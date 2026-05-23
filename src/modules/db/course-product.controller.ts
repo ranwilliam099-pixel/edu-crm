@@ -35,12 +35,17 @@ import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.r
  * 来源：用户 2026-05-07 Phase 5「全做」— 校长/老板可补课程产品
  *
  * Endpoints:
- *   GET  /db/course-products              列上架产品（销售签约下拉用）
- *   GET  /db/course-products/all          列全部含下架（admin 管理用）
- *   GET  /db/course-products/:id          详情
- *   GET  /db/course-products/:id/stats    聚合 detail（5/15 拍板 OOUX 中心对象）
- *   POST /db/course-products              创建（admin / boss）
- *   POST /db/course-products/:id/status   上下架切换（admin / boss）
+ *   GET  /db/course-products                          列上架产品（销售签约下拉用）
+ *   GET  /db/course-products/all                      列全部含下架（admin 管理用）
+ *   GET  /db/course-products/:courseProductId         详情
+ *   GET  /db/course-products/:courseProductId/stats   聚合 detail（5/15 拍板 OOUX 中心对象）
+ *   POST /db/course-products                          创建（admin / boss）
+ *   POST /db/course-products/:courseProductId/status  上下架切换（admin / boss）
+ *
+ * P1-T8 (2026-05-23): @Param('id') → @Param('courseProductId') 语义化重命名
+ *   - URL 完全不变（NestJS 位置匹配；前端 0 改动）
+ *   - 仅 controller decorator + 局部变量重命名
+ *   - 配套 docs/API-接口参数规范-2026-05-23.md §3.1
  *
  * 5/15 拍板（feedback_教培业务架构-2026-05-10.md §六）：
  *   course-product 升级为 OOUX 中心对象，与 student 并列；前端 boss/products/detail
@@ -130,14 +135,14 @@ export class CourseProductController {
     return { items };
   }
 
-  @Get(':id')
+  @Get(':courseProductId')
   @HttpCode(HttpStatus.OK)
   async detail(
-    @Param('id') id: string,
+    @Param('courseProductId') courseProductId: string,
     @Query('tenantSchema') tenantSchema: string,
   ): Promise<CourseProduct | { found: false }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    const c = await this.repo.findById(tenantSchema, id);
+    const c = await this.repo.findById(tenantSchema, courseProductId);
     if (!c) return { found: false };
     return c;
   }
@@ -180,18 +185,18 @@ export class CourseProductController {
    *     本 endpoint 是「聚合下钻列表」语义，PII 留到 student/detail 与 teacher detail
    *     再返回（前端从此处下钻进单对象 detail 看完整 PII）
    */
-  @Get(':id/stats')
+  @Get(':courseProductId/stats')
   @UseGuards(RbacGuard)
   @Roles('admin', 'boss', 'academic', 'sales') // 5/15 r2 A-3：加 'sales' 但强制 ownerSalesId=jwt.sub
   @HttpCode(HttpStatus.OK)
   async getStats(
-    @Param('id') id: string,
+    @Param('courseProductId') courseProductId: string,
     @Query('tenantSchema') tenantSchema: string,
     @Req() req: AuthenticatedRequest,
     @Query('ownerSalesId') ownerSalesId?: string,
   ): Promise<CourseProductStats> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    if (!id || id.length !== 32) {
+    if (!courseProductId || courseProductId.length !== 32) {
       throw new BadRequestException('productId must be 32-char ULID');
     }
 
@@ -213,7 +218,7 @@ export class CourseProductController {
           ...this.auditCtx(req),
           action: 'course-product.stats-owner-mismatch',
           targetType: 'course-product',
-          targetId: id,
+          targetId: courseProductId,
           before: null,
           after: {
             attempted_role: 'sales',
@@ -238,7 +243,7 @@ export class CourseProductController {
       callerCampusId = req.user.campusId;
     }
 
-    const stats = await this.repo.findStats(tenantSchema, id, {
+    const stats = await this.repo.findStats(tenantSchema, courseProductId, {
       callerOwnerSalesId,
       callerCampusId,
     });
@@ -252,7 +257,7 @@ export class CourseProductController {
         ...this.auditCtx(req),
         action: 'course-product.stats-not-found',
         targetType: 'course-product',
-        targetId: id,
+        targetId: courseProductId,
         before: null,
         after: {
           attempted_role: req.user?.role ?? 'unknown',
@@ -302,12 +307,12 @@ export class CourseProductController {
     });
   }
 
-  @Post(':id/status')
+  @Post(':courseProductId/status')
   @UseGuards(RbacGuard)
   @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async toggleStatus(
-    @Param('id') id: string,
+    @Param('courseProductId') courseProductId: string,
     @Body() body: { tenantId: string; tenantSchema: string; status: '上架' | '下架' },
     @Req() req: AuthenticatedRequest,
   ): Promise<CourseProduct> {
@@ -317,6 +322,6 @@ export class CourseProductController {
     }
     const operatorUserId = req.user?.sub;
     if (!operatorUserId) throw new BadRequestException('user sub required');
-    return this.repo.setStatus(body.tenantSchema, id, body.status, operatorUserId);
+    return this.repo.setStatus(body.tenantSchema, courseProductId, body.status, operatorUserId);
   }
 }

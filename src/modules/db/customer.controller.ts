@@ -40,14 +40,24 @@ import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.r
  * 路径前缀 /api/db/customers/*
  *
  * Endpoints:
- *   GET  /db/customers/mine              我的客户列表
- *   GET  /db/customers/pool              公共池
- *   GET  /db/customers/:id               详情
- *   GET  /db/customers/:id/follows       跟进时间轴
- *   POST /db/customers/:id/claim         捞客户（FCFS）
- *   POST /db/customers/:id/release       退回池
- *   POST /db/customers/:id/mark-lost     标失单
- *   POST /db/customers/:id/follow        加跟进时间轴
+ *   GET   /db/customers/mine                      我的客户列表
+ *   GET   /db/customers/pool                      公共池
+ *   GET   /db/customers/all                       老板视角 list
+ *   POST  /db/customers                           即时建客户
+ *   GET   /db/customers/:customerId               详情
+ *   PATCH /db/customers/:customerId               编辑家长信息
+ *   GET   /db/customers/:customerId/follows       跟进时间轴
+ *   POST  /db/customers/:customerId/claim         捞客户（FCFS）
+ *   POST  /db/customers/:customerId/release       退回池
+ *   POST  /db/customers/:customerId/mark-lost     标失单
+ *   POST  /db/customers/:customerId/follow        加跟进时间轴
+ *   POST  /db/customers/:customerId/promote-to-student  签约触发 promote
+ *   POST  /db/customers/:customerId/set-parent-account  设为家长端账户
+ *
+ * P1-T8 (2026-05-23): @Param('id') → @Param('customerId') 语义化重命名
+ *   - URL 完全不变（NestJS 位置匹配；前端 0 改动）
+ *   - 仅 controller decorator + 局部变量重命名
+ *   - 配套 docs/API-接口参数规范-2026-05-23.md §3.1
  *
  * 鉴权：TenantScopeGuard（强制 tenantId 一致）
  */
@@ -273,17 +283,17 @@ export class CustomerController {
 
   /**
    * 2026-05-21 销售可随时编辑家长信息
-   *   PATCH /db/customers/:id?tenantSchema=
+   *   PATCH /db/customers/:customerId?tenantSchema=
    *   Body: { parentName?, parentGender?, primaryMobile? }
    *   RBAC: sales/sales_manager/boss/admin/academic/academic_admin 可改家长
    *   finance/teacher/parent 拒绝
    */
-  @Patch(':id')
+  @Patch(':customerId')
   @UseGuards(RbacGuard)
   @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin')
   @HttpCode(HttpStatus.OK)
   async updateCustomer(
-    @Param('id') id: string,
+    @Param('customerId') customerId: string,
     @Query('tenantSchema') tenantSchema: string,
     @Body()
     body: {
@@ -299,7 +309,7 @@ export class CustomerController {
     @Req() req: AuthenticatedRequest,
   ): Promise<{ ok: true; parentAccountSet?: boolean; isNewParent?: boolean }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    if (!id || id.length !== 32) {
+    if (!customerId || customerId.length !== 32) {
       throw new BadRequestException('customerId must be 32-char ULID');
     }
     if (body.primaryMobile !== undefined && !/^1[3-9]\d{9}$/.test(body.primaryMobile)) {
@@ -307,7 +317,7 @@ export class CustomerController {
     }
     const operatorUserId = req.user?.sub;
     if (!operatorUserId) throw new BadRequestException('user sub required');
-    await this.repo.update(tenantSchema, id, operatorUserId, {
+    await this.repo.update(tenantSchema, customerId, operatorUserId, {
       parentName: body.parentName,
       parentGender: body.parentGender,
       primaryMobile: body.primaryMobile,
@@ -319,7 +329,7 @@ export class CustomerController {
       try {
         const result = await this.setParentAccountForCustomer(
           tenantSchema,
-          id,
+          customerId,
           body.studentId,
           req,
         );
@@ -332,7 +342,7 @@ export class CustomerController {
           ...this.auditCtx(req),
           action: 'customer.set-parent-account.error',
           targetType: 'customer',
-          targetId: id,
+          targetId: customerId,
           before: null,
           after: { error: msg, studentId: body.studentId, source: 'PATCH-linkage' },
         });
@@ -345,7 +355,7 @@ export class CustomerController {
   /**
    * § 12B (2026-05-21) — 客户详情页「设为家长端账户」后补打勾
    *
-   * URL: POST /api/db/customers/:id/set-parent-account
+   * URL: POST /api/db/customers/:customerId/set-parent-account
    * Body: { tenantSchema, studentId }
    *
    * 流程：
@@ -354,18 +364,18 @@ export class CustomerController {
    *   3. INSERT parent_student_bindings（V10 三人上限触发器兜底）
    *   4. audit_log customer.set-parent-account
    */
-  @Post(':id/set-parent-account')
+  @Post(':customerId/set-parent-account')
   @UseGuards(RbacGuard)
   @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin')
   @HttpCode(HttpStatus.OK)
   async setParentAccount(
-    @Param('id') id: string,
+    @Param('customerId') customerId: string,
     @Body()
     body: { tenantSchema: string; studentId: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<{ ok: true; parentId: string; isNewParent: boolean }> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
-    if (!id || id.length !== 32) {
+    if (!customerId || customerId.length !== 32) {
       throw new BadRequestException('customerId must be 32-char ULID');
     }
     if (!body.studentId || body.studentId.length !== 32) {
@@ -373,7 +383,7 @@ export class CustomerController {
     }
     const result = await this.setParentAccountForCustomer(
       body.tenantSchema,
-      id,
+      customerId,
       body.studentId,
       req,
     );
@@ -533,16 +543,16 @@ export class CustomerController {
     return { items: items_masked };
   }
 
-  @Get(':id')
+  @Get(':customerId')
   @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
   @HttpCode(HttpStatus.OK)
   async detail(
-    @Param('id') id: string,
+    @Param('customerId') customerId: string,
     @Query('tenantSchema') tenantSchema: string,
     @Req() req?: AuthenticatedRequest,
   ): Promise<Customer | { found: false }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    const c = await this.repo.findById(tenantSchema, id);
+    const c = await this.repo.findById(tenantSchema, customerId);
     if (!c) return { found: false };
 
     // Sprint B.3 (2026-05-11)：范围过滤优先于字段过滤
@@ -561,7 +571,7 @@ export class CustomerController {
           ...this.auditCtx(req),
           action: 'customer.access-denied',
           targetType: 'customer',
-          targetId: id,
+          targetId: customerId,
           before: null,
           after: {
             attempted_role: req.user?.role ?? 'unknown',
@@ -573,7 +583,7 @@ export class CustomerController {
       }
       throw new ForbiddenException(
         `CUSTOMER_ACCESS_DENIED: role=${req?.user?.role ?? 'unknown'} ` +
-          `customerId=${id} owner=${c.ownerUserId ?? 'pool'}`,
+          `customerId=${customerId} owner=${c.ownerUserId ?? 'pool'}`,
       );
     }
 
@@ -587,11 +597,11 @@ export class CustomerController {
     return maskCustomer(c, req?.user, { isOwnerSelf });
   }
 
-  @Get(':id/follows')
+  @Get(':customerId/follows')
   @Roles('sales', 'sales_manager', 'boss', 'admin') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
   @HttpCode(HttpStatus.OK)
   async listFollows(
-    @Param('id') id: string,
+    @Param('customerId') customerId: string,
     @Query('tenantSchema') tenantSchema: string,
     @Query('limit') limit?: string,
     @Req() req?: AuthenticatedRequest,
@@ -604,7 +614,7 @@ export class CustomerController {
     //   - 拍板「教务/财务可看本校客户」→ 直接放行（campus 比对在 controller 层）
     //
     // 实现：先 findById 拿 ownerUserId → canAccessCustomer 判定 → listFollowLog
-    const c = await this.repo.findById(tenantSchema, id);
+    const c = await this.repo.findById(tenantSchema, customerId);
     if (!c) {
       // 客户不存在 → 空数组（避免侧信道泄漏「该 ID 是否存在」）
       return { items: [] };
@@ -617,7 +627,7 @@ export class CustomerController {
           ...this.auditCtx(req),
           action: 'customer.access-denied',
           targetType: 'customer',
-          targetId: id,
+          targetId: customerId,
           before: null,
           after: {
             attempted_role: req.user?.role ?? 'unknown',
@@ -629,23 +639,23 @@ export class CustomerController {
       }
       throw new ForbiddenException(
         `CUSTOMER_ACCESS_DENIED: role=${req?.user?.role ?? 'unknown'} ` +
-          `customerId=${id} owner=${c.ownerUserId ?? 'pool'} (follows)`,
+          `customerId=${customerId} owner=${c.ownerUserId ?? 'pool'} (follows)`,
       );
     }
 
     const items = await this.repo.listFollowLog(
       tenantSchema,
-      id,
+      customerId,
       limit ? Math.min(parseInt(limit, 10), 500) : 100,
     );
     return { items };
   }
 
-  @Post(':id/claim')
+  @Post(':customerId/claim')
   @Roles('sales', 'sales_manager')
   @HttpCode(HttpStatus.OK)
   async claim(
-    @Param('id') id: string,
+    @Param('customerId') customerId: string,
     @Body() body: { tenantId: string; tenantSchema: string; userLabel?: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<Customer> {
@@ -656,10 +666,10 @@ export class CustomerController {
     // Sprint B.5: 先读 before（用于 audit_log diff — 池内 owner=null → 自己抢占）
     //   注：claim 失败（CUSTOMER_ALREADY_OWNED）走 repo 抛 ConflictException，不入 audit
     //   此处 before 用 findById 拿到 ownerUserId（应为 null，否则下面 repo 会抛错）
-    const before = await this.repo.findById(body.tenantSchema, id);
+    const before = await this.repo.findById(body.tenantSchema, customerId);
     const result = await this.repo.claim(
       body.tenantSchema,
-      id,
+      customerId,
       userId,
       body.userLabel || `销售 ${userId.slice(0, 6)}`,
     );
@@ -670,7 +680,7 @@ export class CustomerController {
       ...this.auditCtx(req),
       action: 'customer.claim',
       targetType: 'customer',
-      targetId: id,
+      targetId: customerId,
       before: { ownerUserId: before?.ownerUserId ?? null, stage: before?.stage ?? null },
       after: { ownerUserId: result.ownerUserId, stage: result.stage },
     });
@@ -678,11 +688,11 @@ export class CustomerController {
     return result;
   }
 
-  @Post(':id/release')
+  @Post(':customerId/release')
   @Roles('sales', 'sales_manager', 'boss', 'admin')
   @HttpCode(HttpStatus.OK)
   async release(
-    @Param('id') id: string,
+    @Param('customerId') customerId: string,
     @Body()
     body: { tenantId: string; tenantSchema: string; userLabel?: string; reason?: string },
     @Req() req: AuthenticatedRequest,
@@ -692,10 +702,10 @@ export class CustomerController {
     if (!userId) throw new BadRequestException('user sub required');
 
     // Sprint B.5: before snapshot（owner=me → release 后 null）
-    const before = await this.repo.findById(body.tenantSchema, id);
+    const before = await this.repo.findById(body.tenantSchema, customerId);
     const result = await this.repo.release(
       body.tenantSchema,
-      id,
+      customerId,
       userId,
       body.userLabel || `销售 ${userId.slice(0, 6)}`,
       body.reason,
@@ -707,7 +717,7 @@ export class CustomerController {
       ...this.auditCtx(req),
       action: 'customer.release',
       targetType: 'customer',
-      targetId: id,
+      targetId: customerId,
       before: { ownerUserId: before?.ownerUserId ?? null, stage: before?.stage ?? null },
       after: {
         ownerUserId: result.ownerUserId,
@@ -789,11 +799,11 @@ export class CustomerController {
     return result;
   }
 
-  @Post(':id/mark-lost')
+  @Post(':customerId/mark-lost')
   @Roles('sales', 'sales_manager')
   @HttpCode(HttpStatus.OK)
   async markLost(
-    @Param('id') id: string,
+    @Param('customerId') customerId: string,
     @Body()
     body: {
       tenantId: string;
@@ -809,10 +819,10 @@ export class CustomerController {
     if (!userId) throw new BadRequestException('user sub required');
 
     // Sprint B.5: before snapshot（stage → '已失单'）
-    const before = await this.repo.findById(body.tenantSchema, id);
+    const before = await this.repo.findById(body.tenantSchema, customerId);
     const result = await this.repo.markLost(
       body.tenantSchema,
-      id,
+      customerId,
       userId,
       body.userLabel || `销售 ${userId.slice(0, 6)}`,
       body.lostReason,
@@ -824,7 +834,7 @@ export class CustomerController {
       ...this.auditCtx(req),
       action: 'customer.mark-lost',
       targetType: 'customer',
-      targetId: id,
+      targetId: customerId,
       before: { stage: before?.stage ?? null, lostReason: before?.lostReason ?? null },
       after: { stage: result.stage, lostReason: result.lostReason },
     });
@@ -832,11 +842,11 @@ export class CustomerController {
     return result;
   }
 
-  @Post(':id/follow')
+  @Post(':customerId/follow')
   @Roles('sales', 'sales_manager')
   @HttpCode(HttpStatus.CREATED)
   async addFollow(
-    @Param('id') id: string,
+    @Param('customerId') customerId: string,
     @Body()
     body: {
       tenantId: string;
@@ -852,7 +862,7 @@ export class CustomerController {
     if (!body.label) throw new BadRequestException('label required');
     const userId = req.user?.sub;
     if (!userId) throw new BadRequestException('user sub required');
-    return this.repo.addFollow(body.tenantSchema, id, {
+    return this.repo.addFollow(body.tenantSchema, customerId, {
       followType: body.followType || 'remark',
       label: body.label,
       byUserId: userId,

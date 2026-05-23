@@ -218,10 +218,10 @@ export class ScheduleController {
    *     AuditLogRepository.log 内部 catch fail-open，不抛错）
    *   - cancel/complete/attendance 路径 service 是同步，但本方法因 audit 需 await 而改 async
    */
-  @Post(':id/cancel')
+  @Post(':scheduleId/cancel')
   @HttpCode(HttpStatus.OK)
   async cancelSchedule(
-    @Param('id') _id: string,
+    @Param('scheduleId') _scheduleId: string,
     // Sprint E #3 round 5 (production observation 1): tenantSchema 改必填
     // 与 createSchedule / createScheduleInDb 对齐，避免成功路径 audit 写 'unknown' schema 静默丢失
     @Body() body: { schedule: Schedule; reason?: string; tenantSchema: string },
@@ -276,10 +276,10 @@ export class ScheduleController {
    *
    * Sprint E backlog #3: 成功路径 audit_log 'schedule.complete'；拒绝 'schedule.complete.denied'
    */
-  @Post(':id/complete')
+  @Post(':scheduleId/complete')
   @HttpCode(HttpStatus.OK)
   async completeSchedule(
-    @Param('id') _id: string,
+    @Param('scheduleId') _scheduleId: string,
     // Sprint E #3 round 5: tenantSchema 改必填，与 create 系列对齐
     @Body() body: { schedule: Schedule; tenantSchema: string },
     @Req() req: AuthenticatedRequest,
@@ -498,15 +498,15 @@ export class ScheduleController {
    *   RBAC: teacher (上自己课) / admin / boss / academic (代为完成)
    *   消课链路: 这里产生 pending → 老师填反馈 → 自动 confirmed
    */
-  @Post('db/:id/complete-with-consumption')
+  @Post('db/:scheduleId/complete-with-consumption')
   @HttpCode(HttpStatus.OK)
   async completeWithConsumptionInDb(
-    @Param('id') id: string,
+    @Param('scheduleId') scheduleId: string,
     @Body() body: { tenantSchema: string; consumptionIdPrefix: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<{ schedule: Schedule; consumptionsCreated: number; alreadyComplete: boolean }> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
-    if (!id || id.length !== 32) throw new BadRequestException('schedule id must be 32-char ULID');
+    if (!scheduleId || scheduleId.length !== 32) throw new BadRequestException('schedule id must be 32-char ULID');
     if (!body.consumptionIdPrefix) {
       throw new BadRequestException('consumptionIdPrefix required (前端生成 ULID)');
     }
@@ -515,7 +515,7 @@ export class ScheduleController {
     if (!['teacher', 'admin', 'boss', 'academic', 'academic_admin'].includes(role || '')) {
       throw new ForbiddenException('当前角色不允许标记上完课');
     }
-    return this.service.completeScheduleInDb(body.tenantSchema, id, body.consumptionIdPrefix);
+    return this.service.completeScheduleInDb(body.tenantSchema, scheduleId, body.consumptionIdPrefix);
   }
 
   /**
@@ -524,22 +524,22 @@ export class ScheduleController {
    *   返完整 lesson meta + 学员 list (含每学员 feedback 是否已填)
    *   替代前端 lesson/roster page 整页 mock
    */
-  @Get('db/:id/with-roster')
+  @Get('db/:scheduleId/with-roster')
   @HttpCode(HttpStatus.OK)
   async findByIdWithRosterInDb(
-    @Param('id') id: string,
+    @Param('scheduleId') scheduleId: string,
     @Query('tenantSchema') tenantSchema: string,
     @Req() req: AuthenticatedRequest,
   ): Promise<any> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    if (!id || id.length !== 32) throw new BadRequestException('schedule id must be 32-char ULID');
+    if (!scheduleId || scheduleId.length !== 32) throw new BadRequestException('schedule id must be 32-char ULID');
     const role = req.user?.role;
     if (!['teacher', 'admin', 'boss', 'academic', 'academic_admin', 'sales', 'sales_manager'].includes(role || '')) {
       throw new ForbiddenException('当前角色无权查看课次花名册');
     }
-    const result = await this.service.findByIdWithRosterInDb(tenantSchema, id);
+    const result = await this.service.findByIdWithRosterInDb(tenantSchema, scheduleId);
     if (!result) {
-      throw new NotFoundException(`schedule ${id} not found`);
+      throw new NotFoundException(`schedule ${scheduleId} not found`);
     }
     return result;
   }

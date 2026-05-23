@@ -100,10 +100,10 @@ export class HomeworkController {
     );
   }
 
-  @Post('submissions/:id/grade')
+  @Post('submissions/:submissionId/grade')
   @HttpCode(HttpStatus.OK)
   grade(
-    @Param('id') _id: string,
+    @Param('submissionId') _submissionId: string,
     @Body()
     body: {
       submission: HomeworkSubmission;
@@ -124,10 +124,10 @@ export class HomeworkController {
     );
   }
 
-  @Post('submissions/:id/return')
+  @Post('submissions/:submissionId/return')
   @HttpCode(HttpStatus.OK)
   returnForRedo(
-    @Param('id') _id: string,
+    @Param('submissionId') _submissionId: string,
     @Body() body: { submission: HomeworkSubmission; teacherComment: string; nowMs?: number },
   ): HomeworkSubmission {
     return this.service.returnForRedo(
@@ -219,13 +219,13 @@ export class HomeworkController {
     return this.service.submitForStudentInDb(rest, tenantSchema);
   }
 
-  @Post('db/submissions/:id/grade')
+  @Post('db/submissions/:submissionId/grade')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async gradeInDb(
-    @Param('id') id: string,
+    @Param('submissionId') submissionId: string,
     @Body()
     body: {
       grade: Grade;
@@ -235,7 +235,7 @@ export class HomeworkController {
     },
   ): Promise<HomeworkSubmission> {
     return this.service.gradeInDb(
-      id,
+      submissionId,
       {
         grade: body.grade,
         teacherComment: body.teacherComment,
@@ -245,16 +245,16 @@ export class HomeworkController {
     );
   }
 
-  @Post('db/submissions/:id/return')
+  @Post('db/submissions/:submissionId/return')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async returnForRedoInDb(
-    @Param('id') id: string,
+    @Param('submissionId') submissionId: string,
     @Body() body: { teacherComment: string; tenantSchema: string },
   ): Promise<HomeworkSubmission> {
-    return this.service.returnForRedoInDb(id, body.teacherComment, body.tenantSchema);
+    return this.service.returnForRedoInDb(submissionId, body.teacherComment, body.tenantSchema);
   }
 
   /**
@@ -342,19 +342,19 @@ export class HomeworkController {
    *     - admin / boss 管理
    *     - sales / sales_manager 看自己客户孩子作业
    */
-  @Post('db/assignments/:id/detail')
+  @Post('db/assignments/:assignmentId/detail')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss', 'sales', 'sales_manager')
   @HttpCode(HttpStatus.OK)
   async getAssignmentDetailInDb(
-    @Param('id') id: string,
+    @Param('assignmentId') assignmentId: string,
     @Body() body: { tenantSchema: string },
   ): Promise<{
     assignment: HomeworkAssignment;
     recipients: Array<{ studentId: string; studentName: string | null }>;
     submissions: Array<HomeworkSubmission & { studentName: string | null }>;
   }> {
-    return this.service.getAssignmentDetailInDb(id, body.tenantSchema);
+    return this.service.getAssignmentDetailInDb(assignmentId, body.tenantSchema);
   }
 
   /**
