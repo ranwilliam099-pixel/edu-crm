@@ -135,6 +135,155 @@ export class RecurringScheduleService {
   }
 
   /**
+   * 2026-05-23 (task #37): 持久化版 createBinding
+   *   service.createBinding (RBAC + 校验) + PG INSERT 同事务
+   *   原 createBinding 仍 sync (spec 不变 + B-32 in-memory 路径兼容)
+   */
+  async createBindingInDb(
+    tenantSchema: string,
+    input: {
+      id: string;
+      studentId: string;
+      teacherId: string;
+      subject?: string;
+      boundByUserId: string;
+    },
+    rbacContext: RecurringRbacContext,
+  ): Promise<StudentTeacherBinding> {
+    // 1. 业务逻辑 + RBAC (sync)
+    const binding = this.createBinding(input, rbacContext);
+    // 2. PG INSERT
+    if (!this.pg) throw new BadRequestException('PgPoolService not available');
+    await this.pg.tenantQuery(
+      tenantSchema,
+      `INSERT INTO student_teacher_bindings (id, student_id, teacher_id, subject, status, bound_at, bound_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        binding.id,
+        binding.studentId,
+        binding.teacherId,
+        binding.subject || null,
+        binding.status,
+        binding.boundAt,
+        binding.boundByUserId,
+      ],
+    );
+    this.logger.log(`[task#37] createBindingInDb id=${binding.id} student=${binding.studentId} teacher=${binding.teacherId}`);
+    return binding;
+  }
+
+  /**
+   * 2026-05-23 (task #37): 持久化版 unbindBinding
+   *   service.unbindBinding (sync 校验) + PG UPDATE 同事务
+   *   返新状态对象 (status='unbound', unbound_at=NOW())
+   */
+  async unbindBindingInDb(
+    tenantSchema: string,
+    binding: StudentTeacherBinding,
+  ): Promise<StudentTeacherBinding> {
+    const result = this.unbindBinding(binding);
+    if (!this.pg) throw new BadRequestException('PgPoolService not available');
+    await this.pg.tenantQuery(
+      tenantSchema,
+      `UPDATE student_teacher_bindings
+          SET status = 'unbound', unbound_at = $1
+        WHERE id = $2 AND status = 'active'`,
+      [result.unboundAt, result.id],
+    );
+    this.logger.log(`[task#37] unbindBindingInDb id=${result.id}`);
+    return result;
+  }
+
+  /**
+   * 2026-05-23 (task #37): 持久化版 createRecurring
+   *   service.createRecurring (冲突预检 + RBAC) + PG INSERT 同事务
+   */
+  async createRecurringInDb(
+    tenantSchema: string,
+    input: {
+      id: string;
+      bindingId: string;
+      studentId: string;
+      teacherId: string;
+      courseProductId?: string;
+      byDay: ReadonlyArray<WeekDay>;
+      startMinutes: number;
+      durationMin: number;
+      startDate: Date;
+      endDate?: Date;
+      createdByUserId: string;
+      createdByRole: 'academic';
+    },
+    expandRangeDays: number,
+    existingSchedules: ReadonlyArray<{
+      teacherId: string;
+      studentIds: ReadonlyArray<string>;
+      startAt: Date;
+      endAt: Date;
+      status: string;
+    }>,
+    now: Date,
+    rbacContext: RecurringRbacContext,
+  ): Promise<RecurringSchedule> {
+    const recurring = this.createRecurring(input, expandRangeDays, existingSchedules, now, rbacContext);
+    if (!this.pg) throw new BadRequestException('PgPoolService not available');
+    await this.pg.tenantQuery(
+      tenantSchema,
+      `INSERT INTO recurring_schedules
+         (id, binding_id, student_id, teacher_id, course_product_id,
+          by_day, start_minutes, duration_min, start_date, end_date,
+          status, created_by_user_id, created_by_role, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [
+        recurring.id,
+        recurring.bindingId,
+        recurring.studentId,
+        recurring.teacherId,
+        recurring.courseProductId || null,
+        JSON.stringify(recurring.byDay),
+        recurring.startMinutes,
+        recurring.durationMin,
+        recurring.startDate,
+        recurring.endDate || null,
+        recurring.status,
+        recurring.createdByUserId,
+        recurring.createdByRole,
+        recurring.createdAt,
+      ],
+    );
+    this.logger.log(`[task#37] createRecurringInDb id=${recurring.id} byDay=${recurring.byDay.join(',')}`);
+    return recurring;
+  }
+
+  /**
+   * 2026-05-23 (task #37): 持久化版 archiveRecurring
+   *   status='active' → 'archived', archived_at=NOW()
+   */
+  async archiveRecurringInDb(
+    tenantSchema: string,
+    recurring: RecurringSchedule,
+  ): Promise<RecurringSchedule> {
+    if (recurring.status === 'archived') {
+      throw new BadRequestException('recurring already archived');
+    }
+    const archived: RecurringSchedule = {
+      ...recurring,
+      status: 'archived',
+      archivedAt: new Date(),
+    };
+    if (!this.pg) throw new BadRequestException('PgPoolService not available');
+    await this.pg.tenantQuery(
+      tenantSchema,
+      `UPDATE recurring_schedules
+          SET status = 'archived', archived_at = $1
+        WHERE id = $2 AND status = 'active'`,
+      [archived.archivedAt, archived.id],
+    );
+    this.logger.log(`[task#37] archiveRecurringInDb id=${archived.id}`);
+    return archived;
+  }
+
+  /**
    * 2026-05-23 (task #31): list recurring schedules by teacher
    *   返 status='active' 的周期模板 (archived 不返)
    *   recurring/template 老师视角 page 用

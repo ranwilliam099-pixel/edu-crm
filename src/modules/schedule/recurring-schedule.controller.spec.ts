@@ -36,6 +36,11 @@ describe('RecurringScheduleController — Wave 11 academic 唯一', () => {
     createRecurring: jest.Mock;
     archiveRecurring: jest.Mock;
     expandToCandidates: jest.Mock;
+    // 2026-05-23 task #37: 持久化版 (controller 切到这些)
+    createBindingInDb: jest.Mock;
+    unbindBindingInDb: jest.Mock;
+    createRecurringInDb: jest.Mock;
+    archiveRecurringInDb: jest.Mock;
   };
   let teacherRepo: { findById: jest.Mock };
   let studentRepo: { findBrief: jest.Mock };
@@ -90,7 +95,27 @@ describe('RecurringScheduleController — Wave 11 academic 唯一', () => {
       createRecurring: jest.fn(),
       archiveRecurring: jest.fn(),
       expandToCandidates: jest.fn(),
+      // 2026-05-23 task #37: 持久化版占位, 下面 reassign 委托给 sync 方法
+      createBindingInDb: jest.fn(),
+      unbindBindingInDb: jest.fn(),
+      createRecurringInDb: jest.fn(),
+      archiveRecurringInDb: jest.fn(),
     };
+    // 2026-05-23 task #37: InDb 方法委托 — controller 切到 *InDb, 测试不变
+    //   svc.createBinding.mockReturnValueOnce(...) / toHaveBeenCalled 全部依旧生效
+    svc.createBindingInDb = jest.fn((_tenantSchema: string, input: any, rbacContext: any) =>
+      svc.createBinding(input, rbacContext),
+    );
+    svc.unbindBindingInDb = jest.fn((_tenantSchema: string, binding: any) =>
+      svc.unbindBinding(binding),
+    );
+    svc.createRecurringInDb = jest.fn(
+      (_tenantSchema: string, input: any, expandRangeDays: any, existing: any, now: any, rbac: any) =>
+        svc.createRecurring(input, expandRangeDays, existing, now, rbac),
+    );
+    svc.archiveRecurringInDb = jest.fn((_tenantSchema: string, recurring: any) =>
+      svc.archiveRecurring(recurring),
+    );
     teacherRepo = { findById: jest.fn() };
     studentRepo = { findBrief: jest.fn() };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };

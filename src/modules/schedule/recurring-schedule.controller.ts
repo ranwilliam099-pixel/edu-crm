@@ -157,7 +157,9 @@ export class RecurringScheduleController {
 
     let result: StudentTeacherBinding;
     try {
-      result = await this.service.createBinding(
+      // 2026-05-23 task #37: 切持久化版 createBindingInDb (原 createBinding 仅 in-memory 不写表)
+      result = await this.service.createBindingInDb(
+        body.tenantSchema,
         {
           id: body.id,
           studentId: body.studentId,
@@ -239,7 +241,8 @@ export class RecurringScheduleController {
     }
     const beforeBinding = this.deserializeBinding(body.binding);
     const before = this.bindingSnapshot(beforeBinding, { endpoint: 'unbindBinding' });
-    const result = this.service.unbindBinding(beforeBinding);
+    // 2026-05-23 task #37: 切持久化版 unbindBindingInDb (原 unbindBinding 仅 in-memory 不写 UPDATE)
+    const result = await this.service.unbindBindingInDb(body.tenantSchema, beforeBinding);
     await this.tryAudit(req, body.tenantSchema, {
       action: 'recurring-binding.unbind',
       targetType: 'student_teacher_binding',
@@ -351,7 +354,9 @@ export class RecurringScheduleController {
 
     let result: RecurringSchedule;
     try {
-      result = await this.service.createRecurring(
+      // 2026-05-23 task #37: 切持久化版 createRecurringInDb (原 createRecurring 仅 in-memory)
+      result = await this.service.createRecurringInDb(
+        body.tenantSchema,
         {
           ...body.input,
           startDate: new Date(body.input.startDate),
@@ -366,7 +371,7 @@ export class RecurringScheduleController {
           startAt: new Date(s.startAt),
           endAt: new Date(s.endAt),
         })),
-        undefined, // now 默认值
+        new Date(), // now 默认
         rbacContext,
       );
     } catch (err) {
@@ -444,7 +449,8 @@ export class RecurringScheduleController {
     }
     const beforeRec = this.deserializeRecurring(body.recurring);
     const before = this.recurringSnapshot(beforeRec, { endpoint: 'archiveRecurring' });
-    const result = this.service.archiveRecurring(beforeRec);
+    // 2026-05-23 task #37: 切持久化版 archiveRecurringInDb (原 archiveRecurring 仅 in-memory)
+    const result = await this.service.archiveRecurringInDb(body.tenantSchema, beforeRec);
     await this.tryAudit(req, body.tenantSchema, {
       action: 'recurring-schedule.archive',
       targetType: 'recurring_schedule',
@@ -456,13 +462,12 @@ export class RecurringScheduleController {
   }
 
   /**
-   * 2026-05-23 (task #31) list bindings by student
+   * 2026-05-23 (task #31 + #37) list bindings by student
    *   POST /api/recurring/students/:studentId/bindings { tenantSchema }
    *   返 active 的 student_teacher_bindings (按 student_id 过滤)
    *   RBAC: 7 role (与作业 / 反馈 list 一致)
    *
-   *   注: 当前 createBinding service 仍 in-memory 不持久化, list 表空 → []
-   *      Sprint 后续接通 INSERT 后此 endpoint 自动返真数据
+   *   2026-05-23 task #37 已接通: createBindingInDb 持久化, list 返真数据
    */
   @Post('students/:studentId/bindings')
   @UseGuards(RbacGuard)
@@ -477,12 +482,12 @@ export class RecurringScheduleController {
   }
 
   /**
-   * 2026-05-23 (task #31) list recurring schedules by teacher
+   * 2026-05-23 (task #31 + #37) list recurring schedules by teacher
    *   POST /api/recurring/teachers/:teacherId/schedules { tenantSchema }
    *   返 active 的 recurring_schedules (按 teacher_id 过滤)
    *   RBAC: 7 role (与作业 / 反馈 list 一致)
    *
-   *   注: 当前 createRecurring service 仍 in-memory 不持久化, list 表空 → []
+   *   2026-05-23 task #37 已接通: createRecurringInDb 持久化, list 返真数据
    */
   @Post('teachers/:teacherId/schedules')
   @UseGuards(RbacGuard)

@@ -36,6 +36,10 @@ import { HomeworkRepository } from './homework.repository';
 // ===== V14 测评 =====
 import { AssessmentRepository } from './assessment.repository';
 
+// ===== V59 退费工单 (2026-05-23 task #36) =====
+import { RefundRepository } from './refund.repository';
+import { RefundController } from './refund.controller';
+
 // ===== V15 学情档案 =====
 import { LearningProfileRepository } from './learning-profile.repository';
 
@@ -215,6 +219,8 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     TeacherRatingController,
     // V58 (2026-05-22) — SSOT §6.5 改老师 = 家长同意
     TeacherChangeRequestController,
+    // V59 (2026-05-23) — task #36 退费工单
+    RefundController,
   ],
   providers: [
     // 基础设施
@@ -231,6 +237,8 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     CoursePackageRepository,
     HomeworkRepository,
     AssessmentRepository,
+    // V59 退费工单 (task #36)
+    RefundRepository,
     LearningProfileRepository,
     TeacherShowcaseRepository,
     TeacherShowcaseMetaRepository,
@@ -284,6 +292,8 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     CoursePackageRepository,
     HomeworkRepository,
     AssessmentRepository,
+    // V59 退费工单 (task #36)
+    RefundRepository,
     LearningProfileRepository,
     TeacherShowcaseRepository,
     TeacherShowcaseMetaRepository,
