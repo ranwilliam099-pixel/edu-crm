@@ -50,4 +50,24 @@ if [ -n "$STAGED_TS_FILES" ]; then
   fi
 fi
 
+# ============================================================
+# 3. API 参数规范防回归（Sprint Y Y3 / src/modules/**.controller.ts 改动时跑）
+#    拍板：docs/API-接口参数规范-2026-05-23.md §3.1 ID 语义化
+#    检查 P1-T8 范围 7 controller @Param('id') 防回归 + 其他 backlog WARN
+# ============================================================
+API_LINT="$REPO_ROOT/tools/verify-api-convention.sh"
+if [ -f "$API_LINT" ]; then
+  STAGED_CTRL_FILES=$(git diff --cached --name-only --diff-filter=ACMR | grep -E "src/modules/.*\.controller\.ts$" || true)
+  if [ -n "$STAGED_CTRL_FILES" ]; then
+    echo ""
+    echo "🔍 pre-commit: API 参数规范防回归..."
+    bash "$API_LINT" || {
+      echo ""
+      echo "❌ commit 被阻止：API 参数规范 P1-T8 防回归失败"
+      echo "   修复后重 commit，或紧急用：git commit --no-verify"
+      exit 1
+    }
+  fi
+fi
+
 exit 0

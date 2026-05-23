@@ -506,6 +506,13 @@ export class AuthController {
    *
    * SPRINT-E.1(2026-05-13) 限流: 微信登录 10 次/分钟
    *
+   * Sprint Y Y1 (2026-05-23): IdempotencyInterceptor 策略说明
+   *   - 全局 APP_INTERCEPTOR 已通过 idempotency.module.ts 注入（覆盖所有 POST/PATCH/PUT/DELETE）
+   *   - wechat-login 不需要显式 @UseInterceptors（双重挂载会导致重复执行）
+   *   - 客户端有 Idempotency-Key header 时走 24h Redis dedup / 无 key pass-through fail-open
+   *   - 与 login / login-confirm 同模式（统一不显式挂）
+   *   - SSOT §12.10.4 拍板
+   *
    * @returns { token (ParentJwt), refreshToken, tokenType: 'Bearer', expiresIn, payload }
    */
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
