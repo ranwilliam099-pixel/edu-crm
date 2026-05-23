@@ -120,6 +120,34 @@ export class AssessmentRepository {
     return rows.map((r) => r.student_id);
   }
 
+  /**
+   * 2026-05-23 (task #32): assessment list 统计 batch (类比 homework submission-counts)
+   *   - studentCount = assignment_recipients COUNT (V60)
+   *   - recordedCount = student_assessment_results COUNT WHERE score IS NOT NULL
+   *   单 SQL CTE UNNEST + 子查询, 减 N+1
+   */
+  async listAssessmentCounts(
+    tenantSchema: string,
+    assessmentIds: ReadonlyArray<string>,
+  ): Promise<Array<{ assessmentId: string; studentCount: number; recordedCount: number }>> {
+    if (assessmentIds.length === 0) return [];
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `WITH ids AS (SELECT UNNEST($1::varchar[]) AS aid)
+       SELECT ids.aid AS assessment_id,
+              COALESCE((SELECT COUNT(*) FROM assessment_recipients r WHERE r.assessment_id = ids.aid), 0) AS student_count,
+              COALESCE((SELECT COUNT(*) FROM student_assessment_results s
+                          WHERE s.assessment_id = ids.aid AND s.score IS NOT NULL), 0) AS recorded_count
+       FROM ids`,
+      [assessmentIds],
+    );
+    return rows.map((r) => ({
+      assessmentId: r.assessment_id,
+      studentCount: Number(r.student_count) || 0,
+      recordedCount: Number(r.recorded_count) || 0,
+    }));
+  }
+
   async findAssessmentById(
     tenantSchema: string,
     id: string,

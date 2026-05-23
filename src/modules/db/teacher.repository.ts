@@ -98,6 +98,35 @@ export class TeacherRepository {
   }
 
   /**
+   * 2026-05-23 (task #32) active 教师 + 真值 stats:
+   *   - rating = teacher_ratings.avg_stars (V24, NULL → 0)
+   *   - studentCount = COUNT(student_teacher_bindings WHERE status='active')
+   *
+   * 单 SQL LEFT JOIN 避免 N+1
+   * 用例: schedule/new + teacher-showcase/list
+   */
+  async listActiveWithStatsInTenant(
+    tenantSchema: string,
+  ): Promise<Array<Teacher & { rating: number; studentCount: number }>> {
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT t.id, t.campus_id, t.name, t.phone, t.phone_encrypted, t.user_id, t.subjects, t.status,
+              COALESCE(tr.avg_stars, 0) AS rating,
+              COALESCE((SELECT COUNT(*) FROM student_teacher_bindings b
+                          WHERE b.teacher_id = t.id AND b.status = 'active'), 0) AS student_count
+         FROM teachers t
+         LEFT JOIN teacher_ratings tr ON tr.teacher_id = t.id
+        WHERE t.status = '在职' AND t.deleted_at IS NULL
+        ORDER BY t.created_at DESC`,
+    );
+    return rows.map((r) => ({
+      ...this.mapRow(r),
+      rating: Number(r.rating) || 0,
+      studentCount: Number(r.student_count) || 0,
+    }));
+  }
+
+  /**
    * 按 ID 取
    * V44: deleted_at IS NULL 排除已软删
    */

@@ -259,6 +259,23 @@ export class AssessmentController {
   }
 
   /**
+   * 2026-05-23 (task #32) assessment 列表统计 batch (减 N+1)
+   *   POST /api/assessments/db/counts { tenantSchema, assessmentIds[] }
+   *   返每个 assessment 的 { studentCount (V60 recipients), recordedCount (V14 results) }
+   *   RBAC: 7 role (与 list 一致)
+   */
+  @Post('db/counts')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss', 'sales', 'sales_manager')
+  @HttpCode(HttpStatus.OK)
+  async listAssessmentCountsInDb(
+    @Body() body: { tenantSchema: string; assessmentIds: string[] },
+  ): Promise<Array<{ assessmentId: string; studentCount: number; recordedCount: number }>> {
+    const ids = Array.isArray(body.assessmentIds) ? body.assessmentIds : [];
+    return this.service.listAssessmentCountsInDb(ids, body.tenantSchema);
+  }
+
+  /**
    * 2026-05-22 老师测评录分 page 一站式 — 拉 assessment + recipients + results
    *   POST /api/assessments/db/:id/detail { tenantSchema }
    *

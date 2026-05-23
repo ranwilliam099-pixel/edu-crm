@@ -111,6 +111,19 @@ export class TeacherService {
   }
 
   /**
+   * 2026-05-23 (task #32) teacher list + 真值 stats (rating + studentCount)
+   *   schedule/new 排课页选老师 / teacher-showcase/list 销售拉新视角用
+   */
+  async listWithStatsFromDb(
+    tenantSchema: string,
+  ): Promise<Array<Teacher & { rating: number; studentCount: number }>> {
+    if (!this.repo) {
+      throw new BadRequestException('TeacherRepository not available');
+    }
+    return this.repo.listActiveWithStatsInTenant(tenantSchema);
+  }
+
+  /**
    * 判断教师是否为"纯档案"（无登录账号）— 条目 31 #2
    */
   isPureArchive(teacher: Teacher): boolean {

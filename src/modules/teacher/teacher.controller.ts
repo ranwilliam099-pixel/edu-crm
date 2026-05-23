@@ -201,6 +201,24 @@ export class TeacherController {
   }
 
   /**
+   * 2026-05-23 (task #32) POST /api/teachers/db/list-with-stats
+   *   返 teacher list + 每个老师的 { rating, studentCount } 真值
+   *     - rating = teacher_ratings.avg_stars (V24 聚合表)
+   *     - studentCount = COUNT(student_teacher_bindings WHERE status='active')
+   *   单 SQL LEFT JOIN, 避免前端 N+1
+   *   用例: schedule/new 排课页选老师 + teacher-showcase/list 销售拉新
+   */
+  @Post('db/list-with-stats')
+  @UseGuards(RbacGuard)
+  @Roles('admin', 'boss', 'sales_manager', 'academic', 'academic_admin', 'sales')
+  @HttpCode(HttpStatus.OK)
+  async listWithStatsFromDb(
+    @Body() body: { tenantSchema: string },
+  ): Promise<Array<Teacher & { rating: number; studentCount: number }>> {
+    return this.service.listWithStatsFromDb(body.tenantSchema);
+  }
+
+  /**
    * GET /api/teachers/:id/profile-type — 判断老师类型（含登录账号 / 纯档案）
    *
    * 由调用方传入 teacher 对象（应用层接口），无 DB 查询

@@ -333,6 +333,18 @@ export class AssessmentService {
   }
 
   /**
+   * 2026-05-23 (task #32): assessment 列表统计 batch
+   *   assessment/list 老师视角 hero KPI 真值: 本月测评 N 场 + 完成 X / 进行 Y / 待发 Z
+   */
+  async listAssessmentCountsInDb(
+    assessmentIds: ReadonlyArray<string>,
+    tenantSchema: string,
+  ): Promise<Array<{ assessmentId: string; studentCount: number; recordedCount: number }>> {
+    if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
+    return this.repo.listAssessmentCounts(tenantSchema, assessmentIds);
+  }
+
+  /**
    * 2026-05-22 老师测评录分 page 一站式: { assessment, recipients[], results[] }
    *
    * 2026-05-23 task #33 升级:
