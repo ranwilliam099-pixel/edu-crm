@@ -119,8 +119,24 @@ export class TenantMiddleware implements NestMiddleware {
     }
 
     // ORM session search_path 切换由 ORM 拦截器层落地（BE-W1-4），此处仅记录上下文
-    (req as RequestWithTenant).tenantSchema = `tenant_${user.tenantId}`;
+    const tenantSchema = `tenant_${user.tenantId}`;
+    (req as RequestWithTenant).tenantSchema = tenantSchema;
+    // P1-T7 (2026-05-23) header-only 兼容：把解析的 tenantSchema backfill 到 query + body
+    //   让现有 controller `@Query('tenantSchema')` + `@Body() body.tenantSchema` 透明兼容 header-only
+    //   bGet/bPost 注入 header x-tenant-schema → middleware 解析后回填 query/body → controller 0 改
+    //   规范：docs/API-接口参数规范-2026-05-23.md §2.1 唯一允许位置 header
+    //   兼容期：controller 渐进迁移到 @Req req.tenantSchema 后可删本逻辑（推 Sprint Y）
+    this.backfillTenantSchemaToReq(req, tenantSchema);
     next();
+  }
+
+  private backfillTenantSchemaToReq(req: Request, schema: string): void {
+    if (req.query && typeof req.query === 'object' && !(req.query as any).tenantSchema) {
+      (req.query as any).tenantSchema = schema;
+    }
+    if (req.body && typeof req.body === 'object' && !(req.body as any).tenantSchema) {
+      (req.body as any).tenantSchema = schema;
+    }
   }
 
   // SPRINT-E.1(2026-05-13): tryAttachUser / requireUser / requireParentOrTenantUser
@@ -394,6 +410,8 @@ export class TenantMiddleware implements NestMiddleware {
     };
     if (schema) {
       (req as RequestWithTenant).tenantSchema = schema;
+      // P1-T7 (2026-05-23) header-only 兼容：c-side parent 路径同步 backfill query + body
+      this.backfillTenantSchemaToReq(req, schema);
     }
   }
 
