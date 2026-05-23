@@ -119,7 +119,9 @@ export class TenantMiddleware implements NestMiddleware {
     }
 
     // ORM session search_path 切换由 ORM 拦截器层落地（BE-W1-4），此处仅记录上下文
-    const tenantSchema = `tenant_${user.tenantId}`;
+    // 2026-05-23 P1-T7 修：tenant_id 是 UPPERCASE（public.tenants.id），但 schema 名是 lowercase
+    //   之前 backfill bug 漏 toLowerCase → PgPoolService.tenantQuery regex 拒 + 全 endpoint 500
+    const tenantSchema = `tenant_${user.tenantId.toLowerCase()}`;
     (req as RequestWithTenant).tenantSchema = tenantSchema;
     // P1-T7 (2026-05-23) header-only 兼容：把解析的 tenantSchema backfill 到 query + body
     //   让现有 controller `@Query('tenantSchema')` + `@Body() body.tenantSchema` 透明兼容 header-only
