@@ -206,19 +206,19 @@ export class InvoiceController {
    *
    * @Throttle 30/min：财务操作频次低，防恶意刷
    */
-  @Post(':id/mark-paid')
+  @Post(':invoiceId/mark-paid')
   @Roles('finance')
   @UseInterceptors(IdempotencyInterceptor)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   async markPaid(
-    @Param('id') id: string,
+    @Param('invoiceId') invoiceId: string,
     @Body() body: MarkInvoicePaidDto,
     @Req() req: AuthenticatedRequest,
   ): Promise<MarkInvoicePaidResult> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
-    if (!id || id.length !== 32) {
-      throw new BadRequestException('id must be 32-char ULID');
+    if (!invoiceId || invoiceId.length !== 32) {
+      throw new BadRequestException('invoiceId must be 32-char ULID');
     }
     if (!body.paidAt) {
       throw new BadRequestException('paidAt required (ISO8601)');
@@ -238,7 +238,7 @@ export class InvoiceController {
     }
 
     return this.service.markPaid(
-      id,
+      invoiceId,
       body,
       { sub: userSub, role: userRole },
       {
@@ -281,11 +281,11 @@ export class InvoiceController {
   }
 
   // ============================================================
-  // GET /api/db/invoices/:id — 详情（finance/boss/admin 复查）
+  // GET /api/db/invoices/:invoiceId — 详情（finance/boss/admin 复查）
   // ============================================================
 
   /**
-   * @param id  32-char ULID
+   * @param invoiceId  32-char ULID
    * @query tenantSchema  必填
    *
    * @returns Invoice | { found: false }
@@ -294,18 +294,18 @@ export class InvoiceController {
    *   - 完整 PII（finance/boss/admin 可见）— mask 不在本 endpoint 做
    *   - 未来如扩展 sales/parent 查看，需 maskInvoice helper（当前 RBAC 已挡死）
    */
-  @Get(':id')
+  @Get(':invoiceId')
   @Roles('finance')
   @HttpCode(HttpStatus.OK)
   async detail(
-    @Param('id') id: string,
+    @Param('invoiceId') invoiceId: string,
     @Query('tenantSchema') tenantSchema: string,
   ): Promise<Invoice | { found: false }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    if (!id || id.length !== 32) {
-      throw new BadRequestException('id must be 32-char ULID');
+    if (!invoiceId || invoiceId.length !== 32) {
+      throw new BadRequestException('invoiceId must be 32-char ULID');
     }
-    const inv = await this.service.findById(tenantSchema, id);
+    const inv = await this.service.findById(tenantSchema, invoiceId);
     if (!inv) return { found: false };
     return inv;
   }

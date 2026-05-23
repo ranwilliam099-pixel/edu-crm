@@ -452,7 +452,7 @@ export class CSideController {
   }
 
   /**
-   * PATCH /api/c/messages/:id/mark-read?type=feedback|monthly-report
+   * PATCH /api/c/messages/:messageId/mark-read?type=feedback|monthly-report
    *
    * 标记单条消息已读
    *   - type=feedback         → lesson_feedbacks.parent_read_at
@@ -460,16 +460,16 @@ export class CSideController {
    *
    * RBAC：UPDATE WHERE student_id IN (家长绑定学员 ids)，跨家长 → rowCount=0 → 403
    */
-  @Patch('messages/:id/mark-read')
+  @Patch('messages/:messageId/mark-read')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   async markMessageRead(
-    @Param('id') id: string,
+    @Param('messageId') messageId: string,
     @Query('type') typeRaw: string | undefined,
     @Req() req: ParentRequest,
   ): Promise<{ id: string; type: MessageType; markedAt: string }> {
-    if (!ULID_PATTERN.test(id)) {
-      throw new BadRequestException('id must be 32-char ULID');
+    if (!ULID_PATTERN.test(messageId)) {
+      throw new BadRequestException('messageId must be 32-char ULID');
     }
     if (typeRaw !== 'feedback' && typeRaw !== 'monthly-report') {
       throw new BadRequestException(
@@ -495,7 +495,7 @@ export class CSideController {
     const ok = await this.cside.markMessageRead(
       tenantSchema,
       type,
-      id,
+      messageId,
       studentIds,
     );
     if (!ok) {
@@ -504,7 +504,7 @@ export class CSideController {
         actorUserId: parentId,
         action: 'c.message.deny-mark-read',
         targetType: type,
-        targetId: id,
+        targetId: messageId,
         after: { parentId, tenantId, type },
         req,
       });
@@ -515,11 +515,11 @@ export class CSideController {
       actorUserId: parentId,
       action: 'c.message.mark-read',
       targetType: type,
-      targetId: id,
+      targetId: messageId,
       after: { parentId, tenantId, type },
       req,
     });
-    return { id, type, markedAt: new Date().toISOString() };
+    return { id: messageId, type, markedAt: new Date().toISOString() };
   }
 
   // ===== helpers =====
@@ -551,7 +551,7 @@ export class CSideController {
   }
 
   /**
-   * PATCH /api/c/teacher-changes/:id/decide — 家长同意/拒绝
+   * PATCH /api/c/teacher-changes/:teacherChangeRequestId/decide — 家长同意/拒绝
    *
    * Body: { decision: 'approved' | 'rejected', rejectReason?: string }
    * approved → 自动 update student.assigned_teacher_id + 未来 schedules (service 同事务)
@@ -559,16 +559,16 @@ export class CSideController {
    * RBAC: tcr.parent_id === req.parent.sub (service 内 SELECT FOR UPDATE 校验)
    *   跨家长 → service 抛 PARENT_MISMATCH BadRequest
    */
-  @Patch('teacher-changes/:id/decide')
+  @Patch('teacher-changes/:teacherChangeRequestId/decide')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async decideTeacherChange(
-    @Param('id') id: string,
+    @Param('teacherChangeRequestId') teacherChangeRequestId: string,
     @Body() body: { decision: 'approved' | 'rejected'; rejectReason?: string },
     @Req() req: ParentRequest,
   ): Promise<{ id: string; decision: string; schedulesUpdated: number }> {
-    if (!ULID_PATTERN.test(id)) {
-      throw new BadRequestException('id must be 32-char ULID');
+    if (!ULID_PATTERN.test(teacherChangeRequestId)) {
+      throw new BadRequestException('teacherChangeRequestId must be 32-char ULID');
     }
     if (body.decision !== 'approved' && body.decision !== 'rejected') {
       throw new BadRequestException(`decision must be 'approved' or 'rejected'`);
@@ -579,7 +579,7 @@ export class CSideController {
     }
     const result = await this.tcrService.parentDecide(
       tenantSchema,
-      id,
+      teacherChangeRequestId,
       parentId,
       body.decision,
       body.rejectReason,
@@ -590,12 +590,12 @@ export class CSideController {
         ? 'teacher.change-approved-by-parent'
         : 'teacher.change-rejected-by-parent',
       targetType: 'teacher_change_request',
-      targetId: id,
+      targetId: teacherChangeRequestId,
       before: null,
       after: { schedulesUpdated: result.schedulesUpdated },
       req,
     });
-    return { id, decision: body.decision, schedulesUpdated: result.schedulesUpdated };
+    return { id: teacherChangeRequestId, decision: body.decision, schedulesUpdated: result.schedulesUpdated };
   }
 
   /**

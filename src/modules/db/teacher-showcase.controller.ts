@@ -96,7 +96,7 @@ export class TeacherShowcaseController {
    *   - 双轨硬红线：summary 字段是真实 KPI（仅 admin/boss/academic/校长/老师自己有意义）
    *     但 service 层暂未做字段级过滤 — sales 可看到完整 summary（待 Sprint D RoleFieldFilter 收尾）
    */
-  @Get(':id/showcase')
+  @Get(':teacherId/showcase')
   @UseGuards(RbacGuard)
   @Roles(
     'teacher',
@@ -109,7 +109,7 @@ export class TeacherShowcaseController {
     // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   async getShowcase(
-    @Param('id') teacherId: string,
+    @Param('teacherId') teacherId: string,
     @Headers('x-tenant-schema') tenantSchema: string,
     @Req() req?: AuthenticatedRequest,
   ): Promise<{
@@ -249,13 +249,13 @@ export class TeacherShowcaseController {
    *   - 其他 role: RbacGuard 拒绝
    *   - audit_log actor_role: 透传 JWT 实际 role（admin / boss / teacher）
    */
-  @Put(':id/showcase-meta')
+  @Put(':teacherId/showcase-meta')
   @UseGuards(RbacGuard)
   @Roles('teacher', 'admin', 'boss')
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async updateShowcaseMeta(
-    @Param('id') teacherId: string,
+    @Param('teacherId') teacherId: string,
     @Headers('x-tenant-schema') tenantSchema: string,
     @Body() body: UpsertShowcaseMetaBody,
     @Req() req: AuthenticatedRequest,

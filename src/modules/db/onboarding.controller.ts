@@ -201,20 +201,20 @@ export class OnboardingController {
    * Day 2 Security C-2 (2026-05-19): tenantId 字符集白名单防 SQL injection
    *   - 兜底防御（即便 service 层有校验，controller 层先 reject 减少深度调用）
    */
-  @Delete('onboarding/tenants/:id')
+  @Delete('onboarding/tenants/:tenantId')
   @HttpCode(HttpStatus.OK)
-  async deleteTenant(@Param('id') id: string): Promise<{ ok: true }> {
+  async deleteTenant(@Param('tenantId') tenantId: string): Promise<{ ok: true }> {
     if (process.env.NODE_ENV === 'production') {
       throw new ForbiddenException(
-        'DELETE /api/public/onboarding/tenants/:id is disabled in production (test-only endpoint)',
+        'DELETE /api/public/onboarding/tenants/:tenantId is disabled in production (test-only endpoint)',
       );
     }
-    if (!id || !/^[A-Za-z0-9]{32}$/.test(id)) {
+    if (!tenantId || !/^[A-Za-z0-9]{32}$/.test(tenantId)) {
       throw new BadRequestException(
         'tenantId must be 32-char alphanumeric (ULID Crockford Base32)',
       );
     }
-    await this.provision.deleteTenant(id);
+    await this.provision.deleteTenant(tenantId);
     return { ok: true };
   }
 }

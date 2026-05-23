@@ -762,16 +762,16 @@ export class FeedbackController {
    * 双轨硬红线：parent role JWT 强制 audience='parent'（自动遮蔽不抛 403，UX 友好）
    * 其他 role 默认 audience='teacher'（除非 body 显式传 audience）
    */
-  @Post('db/monthly-reports/:id/find')
+  @Post('db/monthly-reports/:reportId/find')
   @UseGuards(TenantScopeGuard)
   @HttpCode(HttpStatus.OK)
   async findReportInDb(
-    @Param('id') id: string,
+    @Param('reportId') reportId: string,
     @Body() body: { tenantSchema: string; audience?: ReportAudience },
     @Req() req: AuthenticatedRequest,
   ): Promise<MonthlyReport> {
     const audience = this.resolveAudience(req, body.audience);
-    return this.report.findInDb(id, body.tenantSchema, audience);
+    return this.report.findInDb(reportId, body.tenantSchema, audience);
   }
 
   /**
@@ -875,15 +875,15 @@ export class FeedbackController {
    *   - 不加 @Roles: parent role 是合法调用者 (RbacGuard 默认放行无 @Roles 路由)
    *   - Idempotency: parent 双击「已读」防重复写 parent_read_at (虽然 COALESCE 幂等, 加一层稳)
    */
-  @Post('db/monthly-reports/:id/parent-read')
+  @Post('db/monthly-reports/:reportId/parent-read')
   @UseGuards(TenantScopeGuard)
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async markParentReadReportInDb(
-    @Param('id') id: string,
+    @Param('reportId') reportId: string,
     @Body() body: { tenantSchema: string },
   ): Promise<MonthlyReport> {
-    return this.report.markParentReadInDb(id, body.tenantSchema);
+    return this.report.markParentReadInDb(reportId, body.tenantSchema);
   }
 
   // -- Sprint B (2026-05-11) self-check helpers --

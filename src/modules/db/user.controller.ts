@@ -331,17 +331,17 @@ export class UserController {
     return { items };
   }
 
-  @Get(':id')
+  @Get(':userId')
   @UseGuards(RbacGuard)
   // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」
   @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async detail(
-    @Param('id') id: string,
+    @Param('userId') userId: string,
     @Query('tenantSchema') tenantSchema: string,
   ): Promise<User | { found: false }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    const u = await this.repo.findById(tenantSchema, id);
+    const u = await this.repo.findById(tenantSchema, userId);
     if (!u) return { found: false };
     return u;
   }

@@ -115,14 +115,14 @@ export class TeacherController {
   }
 
   /**
-   * POST /api/teachers/:id/status — 教师状态机转换
+   * POST /api/teachers/:teacherId/status — 教师状态机转换
    */
-  @Post(':id/status')
+  @Post(':teacherId/status')
   @UseGuards(RbacGuard)
   @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   changeStatus(
-    @Param('id') _id: string,
+    @Param('teacherId') _teacherId: string,
     @Body() body: { teacher: Teacher; newStatus: TeacherStatus },
   ): Teacher {
     return this.service.changeStatus(body.teacher, body.newStatus);
@@ -219,14 +219,14 @@ export class TeacherController {
   }
 
   /**
-   * GET /api/teachers/:id/profile-type — 判断老师类型（含登录账号 / 纯档案）
+   * GET /api/teachers/:teacherId/profile-type — 判断老师类型（含登录账号 / 纯档案）
    *
    * 由调用方传入 teacher 对象（应用层接口），无 DB 查询
    */
-  @Post(':id/profile-type')
+  @Post(':teacherId/profile-type')
   @HttpCode(HttpStatus.OK)
   profileType(
-    @Param('id') _id: string,
+    @Param('teacherId') _teacherId: string,
     @Body() body: { teacher: Teacher },
   ): { hasLoginAccount: boolean; isPureArchive: boolean; isSchedulable: boolean } {
     return {
@@ -241,24 +241,24 @@ export class TeacherController {
    *
    * 用户 2026-05-07：「校长也应该可以注销老师和销售」
    *
-   * 路由：POST /api/teachers/db/:id/archive
+   * 路由：POST /api/teachers/db/:teacherId/archive
    *   Body: { tenantId, tenantSchema }
    *   Returns: { teacher, transferToTeacherId, transferToTeacherName, studentsReassigned }
    *
    * RBAC：admin / boss / hr
    */
-  @Post('db/:id/archive')
+  @Post('db/:teacherId/archive')
   @UseGuards(TenantScopeGuard, RbacGuard)
   @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async archive(
-    @Param('id') id: string,
+    @Param('teacherId') teacherId: string,
     @Body() body: { tenantId: string; tenantSchema: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<TeacherArchiveResult> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
     const operator = req.user?.sub || 'system';
-    const result = await this.repo.archive(body.tenantSchema, id, operator, {
+    const result = await this.repo.archive(body.tenantSchema, teacherId, operator, {
       role: req.user?.role || null,
       campusId: req.user?.campusId ?? null,
     });
@@ -271,7 +271,7 @@ export class TeacherController {
       ...this.auditCtx(req),
       action: 'teacher.archive',
       targetType: 'teacher',
-      targetId: id,
+      targetId: teacherId,
       // teacher.archive 在 repo 层已设 status='归档'；before 的 'active' 是逻辑推断
       // （repo.archive 会拒绝 status='归档' 的 teacher，所以 before 必然是 '在职' 或 '请假'）
       before: { status: 'active' },

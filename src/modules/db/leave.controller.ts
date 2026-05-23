@@ -100,26 +100,26 @@ export class LeaveController {
     return this.leaveRepo.findByStudent(tenantSchema, studentId, body.limit ?? 50);
   }
 
-  @Post('leaves/:id/approve')
+  @Post('leaves/:leaveId/approve')
   @HttpCode(HttpStatus.OK)
   async approveLeave(
-    @Param('id') id: string,
+    @Param('leaveId') leaveId: string,
     @Headers('x-tenant-schema') tenantSchema: string,
     @Body() body: { newDateMs?: number; newStartAtMs?: number },
   ): Promise<Leave> {
     if (!tenantSchema) {
       throw new BadRequestException('x-tenant-schema header required');
     }
-    return this.leaveRepo.approve(tenantSchema, id, {
+    return this.leaveRepo.approve(tenantSchema, leaveId, {
       newDate: body.newDateMs ? new Date(body.newDateMs) : undefined,
       newStartAt: body.newStartAtMs ? new Date(body.newStartAtMs) : undefined,
     });
   }
 
-  @Post('leaves/:id/reject')
+  @Post('leaves/:leaveId/reject')
   @HttpCode(HttpStatus.OK)
   async rejectLeave(
-    @Param('id') id: string,
+    @Param('leaveId') leaveId: string,
     @Headers('x-tenant-schema') tenantSchema: string,
     @Body() body: { reason: string },
   ): Promise<Leave> {
@@ -129,6 +129,6 @@ export class LeaveController {
     if (!body.reason) {
       throw new BadRequestException('reason required');
     }
-    return this.leaveRepo.reject(tenantSchema, id, body.reason);
+    return this.leaveRepo.reject(tenantSchema, leaveId, body.reason);
   }
 }

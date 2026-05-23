@@ -222,7 +222,7 @@ export class ParentBindingController {
   }
 
   /**
-   * PATCH /api/db/parent-bindings/:id — staff 解绑家长
+   * PATCH /api/db/parent-bindings/:bindingId — staff 解绑家长
    *
    * 来源: SSOT §12.5 解绑流程 + 用户拍板 D10 (仅写 audit_log, 不设 parent.status='停用')
    *
@@ -236,13 +236,13 @@ export class ParentBindingController {
    *
    * RBAC: 同 createParent
    */
-  @Patch('db/parent-bindings/:id')
+  @Patch('db/parent-bindings/:bindingId')
   @UseGuards(RbacGuard)
   @UseInterceptors(IdempotencyInterceptor)
   @Roles('sales', 'sales_manager', 'academic', 'academic_admin', 'admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async unbindBinding(
-    @Param('id') bindingId: string,
+    @Param('bindingId') bindingId: string,
     @Body() body: { tenantId: string; tenantSchema: string; action: 'unbind' },
     @Req() req: AuthenticatedRequest,
   ): Promise<{ binding: ParentStudentBinding }> {

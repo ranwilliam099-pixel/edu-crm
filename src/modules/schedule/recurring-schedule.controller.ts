@@ -192,7 +192,7 @@ export class RecurringScheduleController {
   }
 
   /**
-   * POST /api/recurring/bindings/:id/unbind
+   * POST /api/recurring/bindings/:bindingId/unbind
    *
    * Wave 11 audit (5/15): 早期 403 — 仅 academic 可调
    * （admin/finance/parent/teacher/sales/boss 任何角色原本可调，trust boundary 修复）
@@ -204,13 +204,13 @@ export class RecurringScheduleController {
    * Sprint E backlog #3: 成功 'recurring-binding.unbind' / 拒绝 'recurring-binding.unbind.denied'
    *   - service 是同步方法，本方法因 audit 改 async
    */
-  @Post('bindings/:id/unbind')
+  @Post('bindings/:bindingId/unbind')
   // Security round 2 (2026-05-21): 加 @UseGuards(RbacGuard) 激活 @Roles
   @UseGuards(RbacGuard)
   @Roles('academic', 'academic_admin', 'boss', 'admin')  // 2026-05-21 用户拍板: 销售对学员-老师绑定无权限
   @HttpCode(HttpStatus.OK)
   async unbindBinding(
-    @Param('id') _id: string,
+    @Param('bindingId') _bindingId: string,
     // Sprint E #3 round 5: tenantSchema 改必填，与 createBinding/createRecurring 对齐
     @Body() body: { binding: StudentTeacherBinding; tenantSchema: string },
     @Req() req: AuthenticatedRequest,
@@ -412,13 +412,13 @@ export class RecurringScheduleController {
    * Sprint E backlog #3: 成功 'recurring-schedule.archive' / 拒绝 'recurring-schedule.archive.denied'
    *   - service 是同步方法，本方法因 audit 改 async
    */
-  @Post('schedules/:id/archive')
+  @Post('schedules/:recurringScheduleId/archive')
   // Security round 2 (2026-05-21): 加 @UseGuards(RbacGuard) + @Roles
   @UseGuards(RbacGuard)
   @Roles('academic', 'academic_admin', 'boss', 'admin')
   @HttpCode(HttpStatus.OK)
   async archiveRecurring(
-    @Param('id') _id: string,
+    @Param('recurringScheduleId') _recurringScheduleId: string,
     // Sprint E #3 round 5: tenantSchema 改必填，与 createBinding/createRecurring 对齐
     @Body() body: { recurring: RecurringSchedule; tenantSchema: string },
     @Req() req: AuthenticatedRequest,

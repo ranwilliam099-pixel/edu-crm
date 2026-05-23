@@ -185,9 +185,9 @@ describe('TeacherChangeRequestController (V58 2026-05-22 SSOT §6.5)', () => {
   });
 
   // ============================================================
-  // POST /db/teacher-changes/:id/cancel (academic 撤回)
+  // POST /db/teacher-changes/:teacherChangeRequestId/cancel (academic 撤回)
   // ============================================================
-  describe('cancel POST /db/teacher-changes/:id/cancel', () => {
+  describe('cancel POST /db/teacher-changes/:teacherChangeRequestId/cancel', () => {
     it('happy path: pending → cancelled + audit', async () => {
       svc.cancel.mockResolvedValueOnce({ updated: true });
       const r = await controller.cancel(
@@ -212,7 +212,7 @@ describe('TeacherChangeRequestController (V58 2026-05-22 SSOT §6.5)', () => {
           { tenantSchema: TENANT_SCHEMA },
           req(jwt('academic', ACADEMIC_SUB, CAMPUS_A)),
         ),
-      ).rejects.toThrow(/id must be 32-char/);
+      ).rejects.toThrow(/teacherChangeRequestId must be 32-char/);
     });
   });
 

@@ -88,10 +88,10 @@ export class RecommendationController {
     return created;
   }
 
-  @Post('recommendations/:id/toggle')
+  @Post('recommendations/:recommendationId/toggle')
   @HttpCode(HttpStatus.OK)
   async toggle(
-    @Param('id') id: string,
+    @Param('recommendationId') recommendationId: string,
     @Headers('x-tenant-schema') tenantSchema: string,
     @Body() body: { displayed: boolean },
   ): Promise<ParentRecommendation> {
@@ -101,7 +101,7 @@ export class RecommendationController {
     if (typeof body.displayed !== 'boolean') {
       throw new BadRequestException('displayed must be boolean');
     }
-    return this.recRepo.toggleDisplayed(tenantSchema, id, body.displayed);
+    return this.recRepo.toggleDisplayed(tenantSchema, recommendationId, body.displayed);
   }
 
   @Post('teachers/:teacherId/recommendations/list')

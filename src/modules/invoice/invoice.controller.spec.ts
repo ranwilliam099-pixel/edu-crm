@@ -346,7 +346,7 @@ describe('InvoiceController (Wave 4A.2-T1)', () => {
       );
       await expect(
         controller.markPaid('short_id', validMarkPaidBody(), req),
-      ).rejects.toThrow(/id/);
+      ).rejects.toThrow(/invoiceId/);
       expect(service.markPaid).not.toHaveBeenCalled();
     });
 

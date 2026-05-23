@@ -332,10 +332,10 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
   });
 
   // ============================================================
-  // createContract() POST /db/students/:id/contracts
+  // createContract() POST /db/students/:studentId/contracts
   // Sprint B.3 复审 修 4 OOUX：contract 是 student 子对象
   // ============================================================
-  describe('createContract() — 修 4 OOUX POST :id/contracts', () => {
+  describe('createContract() — 修 4 OOUX POST :studentId/contracts', () => {
     const CONTRACT_ID = 'contract00000000000000000000000A';
     const STUDENT_ID = 'student00000000000000000000000A1';
 

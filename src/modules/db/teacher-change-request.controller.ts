@@ -150,23 +150,23 @@ export class TeacherChangeRequestController {
   /**
    * 教务撤回 pending 请求 (家长还没决定前)
    */
-  @Post(':id/cancel')
+  @Post(':teacherChangeRequestId/cancel')
   @Roles('academic', 'academic_admin')
   @HttpCode(HttpStatus.OK)
   async cancel(
-    @Param('id') id: string,
+    @Param('teacherChangeRequestId') teacherChangeRequestId: string,
     @Body() body: { tenantSchema: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<{ updated: boolean }> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
-    if (!id || id.length !== 32) {
-      throw new BadRequestException('id must be 32-char ULID');
+    if (!teacherChangeRequestId || teacherChangeRequestId.length !== 32) {
+      throw new BadRequestException('teacherChangeRequestId must be 32-char ULID');
     }
     const userId = req.user?.sub;
     if (!userId) throw new BadRequestException('user sub required');
 
-    const result = await this.svc.cancel(body.tenantSchema, id, userId);
-    await this._tryAudit(body.tenantSchema, req, 'teacher.change-cancelled-by-academic', id);
+    const result = await this.svc.cancel(body.tenantSchema, teacherChangeRequestId, userId);
+    await this._tryAudit(body.tenantSchema, req, 'teacher.change-cancelled-by-academic', teacherChangeRequestId);
     return result;
   }
 

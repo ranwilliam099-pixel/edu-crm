@@ -200,17 +200,17 @@ export class StudentController {
    */
   /**
    * 2026-05-21 销售可随时编辑学员字段（V55 新增 + 已有 6 字段）
-   *   PATCH /db/students/:id?tenantSchema=
+   *   PATCH /db/students/:studentId?tenantSchema=
    *   Body: { studentName?, gradeOrAge?, intendedSubject?, gender?, school?, phone?, availableTime? }
    *   RBAC: sales/sales_manager/boss/admin/academic/academic_admin 可改
    *         （RbacGuard 已挡 finance/teacher/parent；service 层暂不校验 owner_sales_id 收紧, Sprint Y 补）
    */
-  @Patch(':id')
+  @Patch(':studentId')
   @UseGuards(RbacGuard)
   @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin')
   @HttpCode(HttpStatus.OK)
   async updateStudent(
-    @Param('id') id: string,
+    @Param('studentId') studentId: string,
     @Query('tenantSchema') tenantSchema: string,
     @Body()
     body: {
@@ -225,7 +225,7 @@ export class StudentController {
     @Req() req: AuthenticatedRequest,
   ): Promise<{ ok: true }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    if (!id || id.length !== 32) {
+    if (!studentId || studentId.length !== 32) {
       throw new BadRequestException('studentId must be 32-char ULID');
     }
     // 2026-05-21 security round 1 P1-A 修：phone 字段也需 11 位中国手机号格式校验
@@ -236,20 +236,20 @@ export class StudentController {
     }
     const operatorUserId = req.user?.sub;
     if (!operatorUserId) throw new BadRequestException('user sub required');
-    await this.repo.update(tenantSchema, id, operatorUserId, body);
+    await this.repo.update(tenantSchema, studentId, operatorUserId, body);
     return { ok: true };
   }
 
   /**
    * 2026-05-21 新增 — 学员档案完整详情（b/student/detail page 用）
-   *   GET /db/students/:id?tenantSchema=tenant_xxx
+   *   GET /db/students/:studentId?tenantSchema=tenant_xxx
    *   返回 StudentDetail (学员 + 主家长 + 校区 + owner 销售 + 主带老师 JOIN)
    *   RBAC: admin/boss/sales/sales_manager/academic/academic_admin/teacher 都可读
    *     - finance 角色禁访（学员档案不涉及财务）
    *     - parent 走 c/student-profile 不走 B 端
    *   注：parentPhone 前端 maskPhone 处理，finance role 此处禁访所以无需后端 mask
    */
-  @Get(':id')
+  @Get(':studentId')
   @UseGuards(RbacGuard)
   @Roles(
     'admin',
@@ -262,16 +262,16 @@ export class StudentController {
   )
   @HttpCode(HttpStatus.OK)
   async findById(
-    @Param('id') id: string,
+    @Param('studentId') studentId: string,
     @Query('tenantSchema') tenantSchema: string,
   ): Promise<StudentDetail> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    if (!id || id.length !== 32) {
+    if (!studentId || studentId.length !== 32) {
       throw new BadRequestException('studentId must be 32-char ULID');
     }
-    const detail = await this.repo.findFullDetail(tenantSchema, id);
+    const detail = await this.repo.findFullDetail(tenantSchema, studentId);
     if (!detail) {
-      throw new NotFoundException(`student ${id} not found`);
+      throw new NotFoundException(`student ${studentId} not found`);
     }
     return detail;
   }
@@ -400,12 +400,12 @@ export class StudentController {
    * RBAC：sales / sales_manager / boss / admin（拍板「销售签约」）— 5/15 A-2 删 sales_director
    * ownerUserId 自动 = req.user.sub（签约归签约销售）
    */
-  @Post(':id/contracts')
+  @Post(':studentId/contracts')
   @UseGuards(RbacGuard)
   @Roles('sales', 'sales_manager', 'boss', 'admin')
   @HttpCode(HttpStatus.CREATED)
   async createContract(
-    @Param('id') studentId: string,
+    @Param('studentId') studentId: string,
     @Body()
     body: {
       tenantId: string;
@@ -497,12 +497,12 @@ export class StudentController {
     return result;
   }
 
-  @Post(':id/transfer-sales')
+  @Post(':studentId/transfer-sales')
   @UseGuards(RbacGuard)
   @Roles('admin', 'boss', 'sales', 'sales_manager') // 5/15 A-2：删 'sales_director'
   @HttpCode(HttpStatus.OK)
   async transferSales(
-    @Param('id') id: string,
+    @Param('studentId') studentId: string,
     @Body()
     body: {
       tenantId: string;
@@ -521,7 +521,7 @@ export class StudentController {
         : '销售主动转交');
     const result = await this.repo.transferSales(
       body.tenantSchema,
-      id,
+      studentId,
       body.toSalesId === undefined ? null : body.toSalesId,
       reason,
     );
@@ -532,7 +532,7 @@ export class StudentController {
       ...this.auditCtx(req),
       action: 'student.transfer-sales',
       targetType: 'student',
-      targetId: id,
+      targetId: studentId,
       before: { ownerSalesId: result.fromUserId },
       after: {
         ownerSalesId: result.toUserId,
@@ -544,13 +544,13 @@ export class StudentController {
     return result;
   }
 
-  @Post(':id/transfer-teacher')
+  @Post(':studentId/transfer-teacher')
   @UseGuards(RbacGuard)
   // Day 2 BLOCKER 4 (2026-05-19): SSOT §1「❌ hr 5/14 Wave 1 删」
   @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async transferTeacher(
-    @Param('id') id: string,
+    @Param('studentId') studentId: string,
     @Body()
     body: {
       tenantId: string;
@@ -563,7 +563,7 @@ export class StudentController {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
     const result = await this.repo.transferTeacher(
       body.tenantSchema,
-      id,
+      studentId,
       body.toTeacherId === undefined ? null : body.toTeacherId,
       body.reason || '校长再分配',
     );
@@ -575,7 +575,7 @@ export class StudentController {
         ...this.auditCtx(req),
         action: 'student.transfer-teacher',
         targetType: 'student',
-        targetId: id,
+        targetId: studentId,
         before: { assignedTeacherId: result.fromUserId },
         after: {
           assignedTeacherId: result.toUserId,
