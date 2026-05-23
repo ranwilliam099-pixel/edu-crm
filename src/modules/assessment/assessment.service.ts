@@ -227,6 +227,28 @@ export class AssessmentService {
     return this.repo.insertAssessment(tenantSchema, memA);
   }
 
+  /**
+   * 2026-05-23 (task #33): 创建 assessment + 自动 fan-out recipients
+   *   recipientStudentIds 未传 → 用老师主带学员 (student_teacher_bindings)
+   *   recipientStudentIds 已传 → 用 input 指定 (跨绑定测评 / 部分学员)
+   *
+   *   record 页接通后 listRecipientsWithStudentName 才有数据列未录学员
+   */
+  async createAssessmentWithRecipientsInDb(
+    input: Parameters<AssessmentService['createAssessment']>[0],
+    recipientStudentIds: ReadonlyArray<string> | undefined,
+    tenantSchema: string,
+  ): Promise<Assessment & { recipientStudentIds: string[] }> {
+    if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
+    const memA = this.createAssessment(input);
+    // 默认 recipients = 老师主带学员
+    let recipients: ReadonlyArray<string> = recipientStudentIds || [];
+    if (recipients.length === 0) {
+      recipients = await this.repo.listMainStudentsByTeacher(tenantSchema, memA.teacherId);
+    }
+    return this.repo.insertAssessmentWithRecipients(tenantSchema, memA, recipients);
+  }
+
   async recordResultInDb(
     input: {
       id: string;
@@ -311,18 +333,29 @@ export class AssessmentService {
   }
 
   /**
-   * 2026-05-22 老师测评录分 page 一站式: { assessment, results[] }
-   *   按用户「禁止幻想」原则: 无 assessment_recipients 表 → 不假造未录学员清单
-   *   results 来自已录 student_assessment_results, 0 → 显示空状态
+   * 2026-05-22 老师测评录分 page 一站式: { assessment, recipients[], results[] }
+   *
+   * 2026-05-23 task #33 升级:
+   *   - 加 recipients[] (V60 assessment_recipients) 让前端列未录学员
+   *   - 前端 merge: 每 recipient 找对应 result → 已录/未录
+   *
+   * 类比 homework getAssignmentDetailInDb 三层聚合
    */
   async getAssessmentDetailInDb(
     assessmentId: string,
     tenantSchema: string,
-  ): Promise<{ assessment: Assessment; results: StudentAssessmentResult[] }> {
+  ): Promise<{
+    assessment: Assessment;
+    recipients: Array<{ studentId: string; studentName: string | null }>;
+    results: StudentAssessmentResult[];
+  }> {
     if (!this.repo) throw new BadRequestException('AssessmentRepository not available');
     const assessment = await this.repo.findAssessmentById(tenantSchema, assessmentId);
     if (!assessment) throw new NotFoundException(`assessment ${assessmentId} not found`);
-    const results = await this.repo.listResultsByAssessment(tenantSchema, assessmentId);
-    return { assessment, results };
+    const [recipients, results] = await Promise.all([
+      this.repo.listAssessmentRecipientsWithStudentName(tenantSchema, assessmentId),
+      this.repo.listResultsByAssessment(tenantSchema, assessmentId),
+    ]);
+    return { assessment, recipients, results };
   }
 }

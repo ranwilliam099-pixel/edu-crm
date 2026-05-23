@@ -151,14 +151,16 @@ export class AssessmentController {
       assessmentType?: AssessmentType;
       totalScore?: number;
       scheduledAtMs?: number;
+      // 2026-05-23 task #33: 测评接收方学员清单 (可选, 未传则默认 = 老师主带学员)
+      recipientStudentIds?: string[];
       tenantSchema: string;
     },
-  ): Promise<Assessment> {
-    const { tenantSchema, scheduledAtMs, ...rest } = body;
-    return this.service.createAssessmentInDb(
-      { ...rest, scheduledAt: scheduledAtMs ? new Date(scheduledAtMs) : undefined },
-      tenantSchema,
-    );
+  ): Promise<Assessment | (Assessment & { recipientStudentIds: string[] })> {
+    const { tenantSchema, scheduledAtMs, recipientStudentIds, ...rest } = body;
+    const input = { ...rest, scheduledAt: scheduledAtMs ? new Date(scheduledAtMs) : undefined };
+    // 2026-05-23 task #33: 新走 fan-out (recipients 默认从 student_teacher_bindings)
+    //   旧 createAssessmentInDb 不带 recipients, 兼容保留 (无 student-binding tenant 走不下来)
+    return this.service.createAssessmentWithRecipientsInDb(input, recipientStudentIds, tenantSchema);
   }
 
   @Post('db/:id/results')
@@ -257,10 +259,14 @@ export class AssessmentController {
   }
 
   /**
-   * 2026-05-22 老师测评录分 page 一站式 — 拉 assessment + results
+   * 2026-05-22 老师测评录分 page 一站式 — 拉 assessment + recipients + results
    *   POST /api/assessments/db/:id/detail { tenantSchema }
-   *   返 { assessment, results[] }（含已录学员; 未录学员靠后续 student-binding endpoint, 当前不返）
-   *   按用户「禁止幻想」原则: 没有学员清单数据源 → 前端只显示已录, 不假造未录列表
+   *
+   *   2026-05-23 task #33 升级返 shape:
+   *     { assessment, recipients[], results[] }
+   *     - recipients: V60 assessment_recipients (含全员 含未录)
+   *     - results: V14 student_assessment_results (已录)
+   *     - 前端 merge: 每 recipient 找对应 result → 已录/未录
    */
   @Post('db/:id/detail')
   @UseGuards(TenantScopeGuard, RbacGuard)
@@ -269,7 +275,11 @@ export class AssessmentController {
   async getAssessmentDetailInDb(
     @Param('id') id: string,
     @Body() body: { tenantSchema: string },
-  ): Promise<{ assessment: Assessment; results: StudentAssessmentResult[] }> {
+  ): Promise<{
+    assessment: Assessment;
+    recipients: Array<{ studentId: string; studentName: string | null }>;
+    results: StudentAssessmentResult[];
+  }> {
     return this.service.getAssessmentDetailInDb(id, body.tenantSchema);
   }
 

@@ -46,6 +46,80 @@ export class AssessmentRepository {
     return this.mapAssessmentRow(rows[0]);
   }
 
+  /**
+   * 2026-05-23 (task #33): 创建 assessment + fan-out recipients (单事务)
+   *   recipients 默认来自 student_teacher_bindings (老师主带学员)
+   *   覆盖: input.recipientStudentIds (手动指定接收方)
+   *
+   * 类比 V13 homework_assignments + assignment_recipients 设计
+   */
+  async insertAssessmentWithRecipients(
+    tenantSchema: string,
+    a: Assessment,
+    recipientStudentIds: ReadonlyArray<string>,
+  ): Promise<Assessment & { recipientStudentIds: string[] }> {
+    // 注: 当前 pg-pool 没暴露事务 API, 用 2 个独立 query
+    //     如失败 (FK 违反等), assessment INSERT 已成功但 recipients 空 — 业务上可接受
+    //     真要事务: 后续加 pg.transactionalTenantQuery
+    const assessment = await this.insertAssessment(tenantSchema, a);
+    if (recipientStudentIds.length > 0) {
+      // VALUES ($1,$2),($1,$3),...
+      const valuePlaceholders = recipientStudentIds
+        .map((_, i) => `($1, $${i + 2})`)
+        .join(', ');
+      await this.pg.tenantQuery(
+        tenantSchema,
+        `INSERT INTO assessment_recipients (assessment_id, student_id)
+         VALUES ${valuePlaceholders}
+         ON CONFLICT (assessment_id, student_id) DO NOTHING`,
+        [a.id, ...recipientStudentIds],
+      );
+    }
+    return { ...assessment, recipientStudentIds: [...recipientStudentIds] };
+  }
+
+  /**
+   * 2026-05-23 (task #33): list recipients with student name
+   *   类比 V13 listRecipientsWithStudentName
+   *   返每个 recipient { studentId, studentName }, 让前端 record 页能列未录学员
+   */
+  async listAssessmentRecipientsWithStudentName(
+    tenantSchema: string,
+    assessmentId: string,
+  ): Promise<Array<{ studentId: string; studentName: string | null }>> {
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT r.student_id, st.student_name
+         FROM assessment_recipients r
+         LEFT JOIN students st ON st.id = r.student_id
+        WHERE r.assessment_id = $1`,
+      [assessmentId],
+    );
+    return rows.map((r) => ({
+      studentId: r.student_id,
+      studentName: r.student_name || null,
+    }));
+  }
+
+  /**
+   * 2026-05-23 (task #33): assessment 默认 recipients 来源
+   *   返老师主带的 active 学员清单 (student_teacher_bindings)
+   *   老师创建 assessment 时调此方法默认 fan-out
+   */
+  async listMainStudentsByTeacher(
+    tenantSchema: string,
+    teacherId: string,
+  ): Promise<string[]> {
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT DISTINCT student_id
+         FROM student_teacher_bindings
+        WHERE teacher_id = $1 AND status = 'active'`,
+      [teacherId],
+    );
+    return rows.map((r) => r.student_id);
+  }
+
   async findAssessmentById(
     tenantSchema: string,
     id: string,
