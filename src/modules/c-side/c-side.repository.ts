@@ -158,6 +158,77 @@ export class CSideRepository {
   }
 
   /**
+   * 2026-05-25 #2 闭环：多日课表查询（C 端 GET /api/c/lessons）
+   *
+   * 复用 findTodayLessons 的 SQL 拓扑，但 WHERE 灵活：
+   *   - opts.from / opts.to: 时间窗（任一可省，省略 = 不限）
+   *   - opts.status: '待出勤' | '已完成' | '已取消'（省略 = 全部，但默认排除「已取消」与 today 一致）
+   *   - opts.studentId: 单指定（必须在 studentIds 内，由 controller 守门）
+   *
+   * 复用场景：
+   *   - c/leave/apply: from=today 拿即将到课（请假选课次）
+   *   - c/lessons/list: 多日筛选（本周/已完成/请假）
+   */
+  async findLessonsForChildren(
+    tenantSchema: string,
+    studentIds: string[],
+    opts: { from?: Date; to?: Date; status?: string; studentId?: string } = {},
+  ): Promise<TodayLesson[]> {
+    if (studentIds.length === 0) return [];
+    const effectiveIds = opts.studentId ? [opts.studentId] : studentIds;
+    const params: any[] = [effectiveIds];
+    const where: string[] = [`ss.student_id = ANY($1::varchar[])`];
+    if (opts.from) {
+      params.push(opts.from);
+      where.push(`sc.start_at >= $${params.length}`);
+    }
+    if (opts.to) {
+      params.push(opts.to);
+      where.push(`sc.start_at < $${params.length}`);
+    }
+    if (opts.status) {
+      params.push(opts.status);
+      where.push(`sc.status = $${params.length}`);
+    } else {
+      // 默认排除「已取消」与 findTodayLessons 一致
+      where.push(`sc.status != '已取消'`);
+    }
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT sc.id,
+              sc.start_at, sc.end_at, sc.duration_min, sc.status,
+              sc.teacher_id, t.name AS teacher_name,
+              ss.student_id,
+              sc.course_product_id,
+              cp.product_name      AS course_product_name,
+              sc.campus_id,
+              ca.name              AS campus_name
+         FROM schedule_students ss
+         JOIN schedules     sc ON sc.id = ss.schedule_id
+         JOIN teachers      t  ON t.id  = sc.teacher_id
+    LEFT JOIN campuses     ca ON ca.id = sc.campus_id
+    LEFT JOIN course_products cp ON cp.id = sc.course_product_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY sc.start_at ASC
+        LIMIT 200`,
+      params,
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      startAt: this.toIso(r.start_at),
+      endAt: this.toIso(r.end_at),
+      durationMin: Number(r.duration_min),
+      status: r.status,
+      teacherId: r.teacher_id,
+      teacherName: r.teacher_name,
+      studentId: r.student_id,
+      courseProductName: r.course_product_name ?? null,
+      campusId: r.campus_id ?? null,
+      campusName: r.campus_name ?? null,
+    }));
+  }
+
+  /**
    * 未读消息统计（lesson_feedbacks + monthly_reports parent_read_at IS NULL）
    */
   async countUnread(

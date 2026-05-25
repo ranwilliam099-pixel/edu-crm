@@ -318,6 +318,84 @@ export class CSideController {
   }
 
   /**
+   * 2026-05-25 #2 闭环：GET /api/c/lessons — C 端家长多日课表查询
+   *
+   * 复用场景：
+   *   - c/lessons/list 多日筛选（本周/已完成/请假）
+   *   - c/leave/apply 请假选课次（status=待出勤 + from=today 拿即将到课）
+   *
+   * Query：
+   *   - studentId?  仅查指定孩子（必须在当前 tenant 的 active binding 内，否则 403）
+   *   - from?       ISO date 起（含），不传 = 不限
+   *   - to?         ISO date 止（不含），不传 = 不限
+   *   - status?     '待出勤'|'已完成'|'已取消'，不传 = 排除「已取消」全部
+   *
+   * 字段权限：复用 TodayLesson 类型（5/20 BLOCKER-1 已脱敏，不返 contract / payroll）
+   *
+   * RBAC：parent JWT + tenant.middleware 已守 binding × tenant 真实关系
+   */
+  @Get('lessons')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async getLessons(
+    @Req() req: ParentRequest,
+    @Query('studentId') studentId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('status') status?: string,
+  ): Promise<{ items: TodayLesson[] }> {
+    const { parentId, tenantSchema, tenantId } = this.assertParent(req);
+
+    // 1. 拿当前 tenant 内 active binding 的学员 ids（防越权 baseline）
+    const bindings = await this.parentRepo.findChildrenByParent(parentId);
+    const studentIds = bindings
+      .filter(
+        (b) =>
+          b.bindingStatus === 'active' &&
+          b.tenantId.toLowerCase() === tenantId.toLowerCase(),
+      )
+      .map((b) => b.studentId);
+
+    if (studentIds.length === 0) return { items: [] };
+
+    // 2. 如果指定 studentId，必须在 binding 内（防越权看他人孩子）
+    if (studentId) {
+      if (!ULID_PATTERN.test(studentId)) {
+        throw new BadRequestException('studentId must be 32-char ULID');
+      }
+      if (!studentIds.includes(studentId)) {
+        throw new ForbiddenException('studentId not in your active bindings');
+      }
+    }
+
+    // 3. 解析 from / to ISO 字符串
+    const fromDate = from ? new Date(from) : undefined;
+    const toDate = to ? new Date(to) : undefined;
+    if (from && fromDate && isNaN(fromDate.getTime())) {
+      throw new BadRequestException('from must be ISO date string');
+    }
+    if (to && toDate && isNaN(toDate.getTime())) {
+      throw new BadRequestException('to must be ISO date string');
+    }
+
+    // 4. 校验 status 白名单（防 SQL 注入 / 模糊语义）
+    const allowedStatus = ['待出勤', '已完成', '已取消'];
+    if (status && !allowedStatus.includes(status)) {
+      throw new BadRequestException(
+        `status must be one of: ${allowedStatus.join(', ')}`,
+      );
+    }
+
+    const items = await this.cside.findLessonsForChildren(
+      tenantSchema,
+      studentIds,
+      { from: fromDate, to: toDate, status, studentId },
+    );
+
+    return { items };
+  }
+
+  /**
    * 2026-05-23 GET /api/c/me/profile — C 端家长「我的」页数据源
    *
    * 返 parent 基础信息 (name/phone/avatarUrl) — 家长本人看自己的 PII 合法
