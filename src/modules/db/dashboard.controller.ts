@@ -69,14 +69,22 @@ export class DashboardController {
   @HttpCode(HttpStatus.OK)
   async salesFunnel(
     @Headers('x-tenant-schema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
     @Query('campusId') campusId?: string,
+    @Query('owner') owner?: string,
   ): Promise<SalesFunnel> {
     if (!tenantSchema) {
       throw new BadRequestException('x-tenant-schema header required');
     }
     // V26 老板视角校区切换：admin 切到具体校区时传 campusId 过滤；
     // boss / sales 等单校 role 由前端从 jwt.campusId 自动带上。
-    return this.dashRepo.getSalesFunnel(tenantSchema, { campusId });
+    //
+    // 2026-05-25 #3 闭环 — owner filter（销售看自己的漏斗，老板看全机构）：
+    //   owner === 'me' → 从 JWT 取 req.user.sub 作为 ownerUserId filter
+    //   其他值（如显式 userId）不解析（防止越权看他人漏斗）— 仅支持 'me' 一种语义
+    //   缺省（admin/boss）→ 不过滤，看全机构
+    const ownerUserId = owner === 'me' ? req?.user?.sub : undefined;
+    return this.dashRepo.getSalesFunnel(tenantSchema, { campusId, ownerUserId });
   }
 
   @Get('teacher-leaderboard')

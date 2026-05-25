@@ -114,6 +114,33 @@ describe('DashboardRepository', () => {
       expect(lossCall[1]).not.toContain('AND campus_id');
       expect(lossCall[2]).toEqual([]);
     });
+
+    it('#3 ownerUserId 过滤 → SQL where owner_user_id = $1 + params 带 userId（销售看自己漏斗）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ stage: '已报名', count: '3' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ reason: '价格', count: '2' }]);
+      const OWNER = 'user000000000000000000000000U001';
+      await repo.getSalesFunnel(TENANT, { ownerUserId: OWNER });
+      const stageCall = pg.tenantQuery.mock.calls[0];
+      expect(stageCall[1]).toContain('WHERE owner_user_id = $1');
+      expect(stageCall[2]).toEqual([OWNER]);
+      const lossCall = pg.tenantQuery.mock.calls[1];
+      expect(lossCall[1]).toContain('AND owner_user_id = $1');
+      expect(lossCall[2]).toEqual([OWNER]);
+    });
+
+    it('#3 campusId + ownerUserId 同传 → SQL where 两条件 AND，params 顺序对（销售经理看本校区自己团队）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ stage: '已报名', count: '2' }]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      const CAMPUS = 'campus0000000000000000000000A001';
+      const OWNER = 'user000000000000000000000000U001';
+      await repo.getSalesFunnel(TENANT, { campusId: CAMPUS, ownerUserId: OWNER });
+      const stageCall = pg.tenantQuery.mock.calls[0];
+      expect(stageCall[1]).toContain('WHERE campus_id = $1 AND owner_user_id = $2');
+      expect(stageCall[2]).toEqual([CAMPUS, OWNER]);
+      const lossCall = pg.tenantQuery.mock.calls[1];
+      expect(lossCall[1]).toContain('AND campus_id = $1 AND owner_user_id = $2');
+      expect(lossCall[2]).toEqual([CAMPUS, OWNER]);
+    });
   });
 
   describe('getTeacherLeaderboard', () => {

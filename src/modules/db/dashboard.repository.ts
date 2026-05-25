@@ -177,7 +177,7 @@ export class DashboardRepository {
    */
   async getSalesFunnel(
     tenantSchema: string,
-    options: { campusId?: string } = {},
+    options: { campusId?: string; ownerUserId?: string } = {},
   ): Promise<SalesFunnel> {
     const STAGE_MAP: Array<{ key: string; label: string; pgStages: string[] }> = [
       { key: 'consult',   label: '咨询',   pgStages: ['初步接触', '需求诊断'] },
@@ -191,8 +191,20 @@ export class DashboardRepository {
     let overallConversion = 0;
 
     // V26 老板视角校区切换：campusId 提供时按校区过滤；undefined = 全机构
-    const where = options.campusId ? `WHERE campus_id = $1` : '';
-    const params: any[] = options.campusId ? [options.campusId] : [];
+    // 2026-05-25 #3 闭环：ownerUserId 提供时按 owner_user_id 过滤（销售看自己的漏斗）
+    //   admin/boss = 不传 ownerUserId 看全机构
+    //   sales/sales_manager = 传 ownerUserId 看自己/团队（controller 解析 'me' → req.user.sub）
+    const whereClauses: string[] = [];
+    const params: any[] = [];
+    if (options.campusId) {
+      params.push(options.campusId);
+      whereClauses.push(`campus_id = $${params.length}`);
+    }
+    if (options.ownerUserId) {
+      params.push(options.ownerUserId);
+      whereClauses.push(`owner_user_id = $${params.length}`);
+    }
+    const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
     try {
       const rows = await this.pg.tenantQuery<{
@@ -243,11 +255,11 @@ export class DashboardRepository {
     }
 
     // 流失原因 Top3（基于 opportunities.lost_reason，V26 同样按 campusId 过滤）
+    // 2026-05-25 #3 闭环：复用上方 params 拼接 ownerUserId（与 stages 同 filter 保持一致）
     let lossReasons: Array<{ reason: string; pct: number }> = [];
     try {
-      const lossWhere = options.campusId
-        ? `WHERE stage = '已失单' AND lost_reason IS NOT NULL AND campus_id = $1`
-        : `WHERE stage = '已失单' AND lost_reason IS NOT NULL`;
+      const lossExtra = whereClauses.length > 0 ? ` AND ${whereClauses.join(' AND ')}` : '';
+      const lossWhere = `WHERE stage = '已失单' AND lost_reason IS NOT NULL${lossExtra}`;
       const rows = await this.pg.tenantQuery<{
         reason: string;
         count: string;
