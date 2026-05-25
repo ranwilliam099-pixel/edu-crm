@@ -6,6 +6,7 @@ import { ParentJwtStrategy } from './parent-jwt.strategy';
 import { TenantMiddleware } from './tenant.middleware';
 import { AuthController } from './auth.controller';
 import { WxCodeSessionService } from './wx-code-session.service';
+import { WxPhoneService } from './wx-phone.service';
 // T11 (2026-05-16) refresh token rotation
 import { RefreshTokenRepository } from './refresh-token.repository';
 import { RefreshTokenService } from './refresh-token.service';
@@ -61,6 +62,9 @@ import { PasswordHasher } from '../../common/crypto/password-hasher';
     //   PasswordHasher 是无依赖 stateless service（bcrypt wrapper）
     PhoneLookupService,
     PasswordHasher,
+    // 2026-05-25 #统一登录 ①: WxPhoneService 调微信 getuserphonenumber 拿真手机号
+    //   依赖 WxAccessTokenService（SecurityModule @Global 提供）
+    WxPhoneService,
   ],
   exports: [
     JwtStrategy,
@@ -71,6 +75,7 @@ import { PasswordHasher } from '../../common/crypto/password-hasher';
     RefreshTokenService,
     PhoneLookupService,
     PasswordHasher,
+    WxPhoneService,
   ],
 })
 export class AuthModule implements NestModule {
