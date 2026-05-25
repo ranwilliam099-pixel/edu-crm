@@ -309,6 +309,18 @@ export class InvoiceService {
   }
 
   /**
+   * 2026-05-25 #7 闭环：列已开 invoice (已开票 / 全部 tab 用)
+   *   passthrough 到 repository.listInvoices
+   *   注：本方法不脱敏（finance 看完整 PII 合法，与 createInvoice / findById 一致）
+   */
+  async listInvoices(
+    tenantSchema: string,
+    options: { status?: string; limit?: number; offset?: number } = {},
+  ): Promise<Invoice[]> {
+    return this.repo.listInvoices(tenantSchema, options);
+  }
+
+  /**
    * Mask 家长姓名：王二 → 王*；王小明 → 王** ；空 → null
    *   - finance 不应看完整 customer.联系人（fields-by-role.md），列表中仅辅助识别用
    */

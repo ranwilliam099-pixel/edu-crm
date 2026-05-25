@@ -280,6 +280,46 @@ export class InvoiceController {
     });
   }
 
+  /**
+   * 2026-05-25 #7 闭环：GET /api/db/invoices?status=issued|pending|cancelled
+   *
+   * 用户审计：finance-invoices/list 「已开票」「全部」tab 之前无后端数据源，
+   * 仅靠前端 filter status 但实际数据只是 pending-contracts → 显示「同一数据」。
+   *
+   * 本 endpoint 直接列 invoices 表（已创建过的发票），与 pending-contracts（未开票合同）互补：
+   *   - 「待开票」tab 走 GET /api/db/invoices/pending-contracts（contract 视角）
+   *   - 「已开票」tab 走 GET /api/db/invoices?status=issued (invoice 视角)
+   *   - 「全部」  tab 走 GET /api/db/invoices (无 filter)
+   *
+   * RBAC: @Roles('finance') 与 listPending 一致
+   *
+   * 注：本 endpoint 必须放在 @Get(':invoiceId') 之前，否则 NestJS 路由匹配会把 ''
+   * 当 invoiceId（空字符串）。NestJS @Get() 无 path = root，可正常匹配。
+   */
+  @Get()
+  @Roles('finance')
+  @HttpCode(HttpStatus.OK)
+  async listInvoices(
+    @Query('tenantSchema') tenantSchema: string,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ): Promise<{ items: Invoice[] }> {
+    if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    const allowedStatus = ['pending', 'issued', 'cancelled'];
+    if (status && !allowedStatus.includes(status)) {
+      throw new BadRequestException(
+        `status must be one of: ${allowedStatus.join(', ')}`,
+      );
+    }
+    const items = await this.service.listInvoices(tenantSchema, {
+      status: status || undefined,
+      limit: limit ? Math.min(parseInt(limit, 10), 200) : 50,
+      offset: offset ? parseInt(offset, 10) : 0,
+    });
+    return { items };
+  }
+
   // ============================================================
   // GET /api/db/invoices/:invoiceId — 详情（finance/boss/admin 复查）
   // ============================================================

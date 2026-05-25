@@ -544,6 +544,41 @@ export class InvoiceRepository {
   }
 
   /**
+   * 2026-05-25 #7 闭环：列发票（B 端 finance/list 「已开票」「全部」tab 用）
+   *
+   * 过滤：
+   *   - status?: 'pending' | 'issued' | 'cancelled' (省略 = 全部)
+   *   - limit / offset 分页（默认 50 / 0）
+   *
+   * 排序：created_at DESC（最新优先）
+   * 软删 deleted_at IS NULL 自动过滤
+   */
+  async listInvoices(
+    tenantSchema: string,
+    options: { status?: string; limit?: number; offset?: number } = {},
+  ): Promise<Invoice[]> {
+    const limit = options.limit ?? 50;
+    const offset = options.offset ?? 0;
+    const params: unknown[] = [];
+    const where: string[] = ['deleted_at IS NULL'];
+    if (options.status) {
+      params.push(options.status);
+      where.push(`status = $${params.length}`);
+    }
+    params.push(limit);
+    params.push(offset);
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT * FROM invoices
+        WHERE ${where.join(' AND ')}
+        ORDER BY created_at DESC
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+    return rows.map((r) => this.mapRow(r));
+  }
+
+  /**
    * 列待开票合同（B 端 finance/new sheet 用）
    *
    * 过滤：
