@@ -34,6 +34,12 @@ import { TeacherChangeRequestService } from '../db/teacher-change-request.servic
 import { PgPoolService } from '../db/pg-pool.service';
 // 2026-05-25 #4 闭环: C 端家长「我的请假」多孩聚合 endpoint
 import { LeaveRepository, Leave } from '../db/leave.repository';
+// 2026-05-25 #5 闭环: C 端家长「作业详情」endpoint（代交时知道交的是哪份）
+import { HomeworkRepository } from '../db/homework.repository';
+import {
+  HomeworkAssignment,
+  HomeworkSubmission,
+} from '../homework/homework.service';
 
 /**
  * CSideController — P4-Y 2026-05-20 C 端家长聚合 endpoint
@@ -97,6 +103,8 @@ export class CSideController {
     //   Optional 容错: 现有 spec 没 mock leaveRepo 时 endpoint 注入 undefined → 调用时报错
     //   生产 module 必须 providers 注册 LeaveRepository
     @Optional() private readonly leaveRepo?: LeaveRepository,
+    // 2026-05-25 #5: C 端「家长代交作业」detail endpoint (GET /api/c/homework/assignments/:id)
+    @Optional() private readonly homeworkRepo?: HomeworkRepository,
   ) {}
 
   /**
@@ -436,6 +444,89 @@ export class CSideController {
 
     const items = await this.leaveRepo.findByStudents(tenantSchema, studentIds, 100);
     return { items };
+  }
+
+  /**
+   * 2026-05-25 #5 闭环：GET /api/c/homework/assignments/:assignmentId — 家长代交作业 detail
+   *
+   * 业务：c/homework/submit 入口需知道交的是哪份作业（标题/截止时间/科目）
+   *   旧：page header 隐藏，仅靠前端 URL 传 homeworkId 占位
+   *   新：调本 endpoint 返 { assignment, mySubmission?, childName }
+   *
+   * 必填 query: studentId（指定哪个孩子，必须在 active binding 内 + 是该 assignment recipient）
+   *
+   * RBAC: parent JWT + tenant.middleware + 双重 binding 守门
+   *   - studentId 必须在当前 tenant active binding 内（防越权看他人孩子）
+   *   - studentId 必须是该 assignment 的 recipient（防越权看他人作业）
+   */
+  @Get('homework/assignments/:assignmentId')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async getHomeworkAssignment(
+    @Param('assignmentId') assignmentId: string,
+    @Query('studentId') studentId: string,
+    @Req() req: ParentRequest,
+  ): Promise<{
+    assignment: HomeworkAssignment;
+    mySubmission: HomeworkSubmission | null;
+    childName: string;
+  }> {
+    if (!this.homeworkRepo) {
+      this.logger.error('homeworkRepo not injected — check DbModule providers');
+      throw new NotFoundException('HOMEWORK_NOT_AVAILABLE');
+    }
+    if (!ULID_PATTERN.test(assignmentId)) {
+      throw new BadRequestException('assignmentId must be 32-char ULID');
+    }
+    if (!studentId || !ULID_PATTERN.test(studentId)) {
+      throw new BadRequestException('studentId must be 32-char ULID');
+    }
+    const { parentId, tenantSchema, tenantId } = this.assertParent(req);
+
+    // 守门 1: studentId 必须在 active binding 内
+    const bindings = await this.parentRepo.findChildrenByParent(parentId);
+    const isBoundActive = bindings.some(
+      (b) =>
+        b.studentId === studentId &&
+        b.bindingStatus === 'active' &&
+        b.tenantId.toLowerCase() === tenantId.toLowerCase(),
+    );
+    if (!isBoundActive) {
+      throw new ForbiddenException('studentId not in your active bindings');
+    }
+
+    // 拿 assignment
+    const assignment = await this.homeworkRepo.findAssignmentById(
+      tenantSchema,
+      assignmentId,
+    );
+    if (!assignment) {
+      throw new NotFoundException('HOMEWORK_NOT_FOUND');
+    }
+
+    // 守门 2: studentId 必须是该 assignment recipient
+    const recipients = await this.homeworkRepo.listRecipientsWithStudentName(
+      tenantSchema,
+      assignmentId,
+    );
+    const myRecipient = recipients.find((r) => r.studentId === studentId);
+    if (!myRecipient) {
+      throw new ForbiddenException('your child is not a recipient of this homework');
+    }
+
+    // 拿 mySubmission（如果已交）
+    const submissions = await this.homeworkRepo.listSubmissionsByAssignmentWithStudentName(
+      tenantSchema,
+      assignmentId,
+    );
+    const mySubmission =
+      submissions.find((s) => s.studentId === studentId) || null;
+
+    return {
+      assignment,
+      mySubmission,
+      childName: myRecipient.studentName || '',
+    };
   }
 
   /**
