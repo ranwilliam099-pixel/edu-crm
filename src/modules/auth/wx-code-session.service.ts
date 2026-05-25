@@ -96,9 +96,16 @@ export class WxCodeSessionService {
       });
     }
 
+    // 2026-05-25 加诊断上下文（脱敏 appid/code，便于定位 40029/40013/40125 等错码根因）
+    //   - appid 前 8 字符：区分多 appid 配置错（理论上应等于前端 project.config.json）
+    //   - code 前 6 字符：定位 code 是否被重用 / 重复请求（同 code 重复出现 = 前端 bug）
+    //   - 全部走 server log，不透传 client
+    const appidMasked = appid.slice(0, 8) + '****';
+    const codeMasked = code.slice(0, 6) + '****';
+
     if (status < 200 || status >= 300) {
       this.logger.error(
-        `jscode2session HTTP ${status} body=${JSON.stringify(data)}`,
+        `jscode2session HTTP ${status} body=${JSON.stringify(data)} appid=${appidMasked} code=${codeMasked}`,
       );
       throw new InternalServerErrorException({
         code: 'WX_CODE2SESSION_FAILED',
@@ -109,7 +116,7 @@ export class WxCodeSessionService {
     if (data.errcode && data.errcode !== 0) {
       // 微信 errcode 不透传 client (A05 内部 ID 暴露规避)
       this.logger.warn(
-        `jscode2session errcode=${data.errcode} errmsg=${data.errmsg}`,
+        `jscode2session errcode=${data.errcode} errmsg=${data.errmsg} appid=${appidMasked} code=${codeMasked}`,
       );
       throw new InternalServerErrorException({
         code: 'WX_CODE2SESSION_FAILED',
