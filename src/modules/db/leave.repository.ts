@@ -29,6 +29,13 @@ export interface Leave {
   rejectReason?: string;
   createdAt: Date;
   decidedAt?: Date;
+  // 2026-05-25 #4 闭环: JOIN students + schedules + teachers + course_products 聚合字段
+  //   仅 findByStudent / findByStudents 返回；create / approve / reject 不返
+  studentName?: string;
+  lessonDate?: string;       // YYYY-MM-DD（从 schedules.start_at 派生）
+  lessonStartAt?: string;    // HH:MM（从 schedules.start_at 派生）
+  subject?: string;          // course_products.product_name
+  teacherName?: string;
 }
 
 @Injectable()
@@ -81,16 +88,62 @@ export class LeaveRepository {
     studentId: string,
     limit: number = 50,
   ): Promise<Leave[]> {
+    // 2026-05-25 #4 闭环：JOIN students + schedules + teachers + course_products 拿 UI 必要字段
+    //   旧：仅 leaves 单表，前端 child/subject/teacher/date 全显「—」
+    //   新：5 个 LEFT JOIN（lesson_id 可空，所以全用 LEFT 防丢行）
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, student_id, lesson_id, type, reason, reason_note,
-              new_date, new_start_at, status, reject_reason,
-              created_at, decided_at
-       FROM leaves
-       WHERE student_id = $1
-       ORDER BY created_at DESC
-       LIMIT $2`,
+      `SELECT l.id, l.student_id, l.lesson_id, l.type, l.reason, l.reason_note,
+              l.new_date, l.new_start_at, l.status, l.reject_reason,
+              l.created_at, l.decided_at,
+              st.student_name AS student_name,
+              sc.start_at      AS lesson_start_at,
+              cp.product_name  AS subject,
+              t.name           AS teacher_name
+         FROM leaves l
+    LEFT JOIN students        st ON st.id = l.student_id
+    LEFT JOIN schedules       sc ON sc.id = l.lesson_id
+    LEFT JOIN teachers        t  ON t.id  = sc.teacher_id
+    LEFT JOIN course_products cp ON cp.id = sc.course_product_id
+        WHERE l.student_id = $1
+        ORDER BY l.created_at DESC
+        LIMIT $2`,
       [studentId, limit],
+    );
+    return rows.map((r) => this.mapRow(r));
+  }
+
+  /**
+   * 2026-05-25 #4 闭环：C 端家长「我的请假」多孩聚合
+   *
+   * c-side.controller GET /api/c/leaves 调本方法
+   *   - studentIds 由 controller 从 parent_student_bindings 取（active + 当前 tenant）
+   *   - 复用 findByStudent 同款 JOIN 字段，避免重复 mapper 逻辑
+   */
+  async findByStudents(
+    tenantSchema: string,
+    studentIds: string[],
+    limit: number = 100,
+  ): Promise<Leave[]> {
+    if (studentIds.length === 0) return [];
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT l.id, l.student_id, l.lesson_id, l.type, l.reason, l.reason_note,
+              l.new_date, l.new_start_at, l.status, l.reject_reason,
+              l.created_at, l.decided_at,
+              st.student_name AS student_name,
+              sc.start_at      AS lesson_start_at,
+              cp.product_name  AS subject,
+              t.name           AS teacher_name
+         FROM leaves l
+    LEFT JOIN students        st ON st.id = l.student_id
+    LEFT JOIN schedules       sc ON sc.id = l.lesson_id
+    LEFT JOIN teachers        t  ON t.id  = sc.teacher_id
+    LEFT JOIN course_products cp ON cp.id = sc.course_product_id
+        WHERE l.student_id = ANY($1::varchar[])
+        ORDER BY l.created_at DESC
+        LIMIT $2`,
+      [studentIds, limit],
     );
     return rows.map((r) => this.mapRow(r));
   }
@@ -148,6 +201,19 @@ export class LeaveRepository {
 
   // ===== helpers =====
   private mapRow(row: PgRow): Leave {
+    // 2026-05-25 #4 闭环：lesson_start_at 派生 lessonDate (YYYY-MM-DD) + lessonStartAt (HH:MM)
+    let lessonDate: string | undefined;
+    let lessonStartAt: string | undefined;
+    if (row.lesson_start_at) {
+      const d = row.lesson_start_at instanceof Date
+        ? row.lesson_start_at
+        : new Date(row.lesson_start_at);
+      if (!isNaN(d.getTime())) {
+        const pad = (n: number) => (n < 10 ? '0' + n : String(n));
+        lessonDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        lessonStartAt = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+    }
     return {
       id: row.id,
       studentId: row.student_id,
@@ -161,6 +227,12 @@ export class LeaveRepository {
       rejectReason: row.reject_reason || undefined,
       createdAt: row.created_at,
       decidedAt: row.decided_at || undefined,
+      // 2026-05-25 #4: JOIN 字段（如果 SQL 没 SELECT 这些就是 undefined，create / approve / reject 不返）
+      studentName: row.student_name || undefined,
+      lessonDate,
+      lessonStartAt,
+      subject: row.subject || undefined,
+      teacherName: row.teacher_name || undefined,
     };
   }
 }

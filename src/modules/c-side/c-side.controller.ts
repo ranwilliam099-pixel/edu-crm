@@ -32,6 +32,8 @@ import {
 import { TeacherChangeRequestService } from '../db/teacher-change-request.service';
 // 2026-05-23 P0 T1: tenant-contexts endpoint 反查 public.tenants 拿 tenant.name
 import { PgPoolService } from '../db/pg-pool.service';
+// 2026-05-25 #4 闭环: C 端家长「我的请假」多孩聚合 endpoint
+import { LeaveRepository, Leave } from '../db/leave.repository';
 
 /**
  * CSideController — P4-Y 2026-05-20 C 端家长聚合 endpoint
@@ -91,6 +93,10 @@ export class CSideController {
     //   PgPoolService 是 @Global DbModule 提供, c-side module 不显式 import 也可注入.
     //   Optional 容错: spec 没 mock PG 时跳过 tenant 名查询走 fallback string.
     @Optional() private readonly pg?: PgPoolService,
+    // 2026-05-25 #4: C 端「我的请假」多孩聚合 endpoint (GET /api/c/leaves)
+    //   Optional 容错: 现有 spec 没 mock leaveRepo 时 endpoint 注入 undefined → 调用时报错
+    //   生产 module 必须 providers 注册 LeaveRepository
+    @Optional() private readonly leaveRepo?: LeaveRepository,
   ) {}
 
   /**
@@ -392,6 +398,43 @@ export class CSideController {
       { from: fromDate, to: toDate, status, studentId },
     );
 
+    return { items };
+  }
+
+  /**
+   * 2026-05-25 #4 闭环：GET /api/c/leaves — C 端家长「我的请假」多孩聚合
+   *
+   * 替代旧流程（前端需先调 /parents/:id/children 拿 studentIds → 循环调 POST /db/students/:id/leaves/list）
+   *   - 后端一站式：parentId → bindings → studentIds → leaveRepo.findByStudents
+   *   - 多孩聚合 + JOIN students/schedules/teachers/course_products 字段齐备
+   *
+   * RBAC: parent JWT + tenant.middleware 校验 + studentIds 仅当前 tenant active binding
+   */
+  @Get('leaves')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async getLeaves(
+    @Req() req: ParentRequest,
+  ): Promise<{ items: Leave[] }> {
+    // @Optional leaveRepo: 生产 DbModule @Global 自动注入；spec 不 mock 时 undefined
+    if (!this.leaveRepo) {
+      this.logger.error('leaveRepo not injected — check DbModule providers');
+      return { items: [] };
+    }
+    const { parentId, tenantSchema, tenantId } = this.assertParent(req);
+
+    const bindings = await this.parentRepo.findChildrenByParent(parentId);
+    const studentIds = bindings
+      .filter(
+        (b) =>
+          b.bindingStatus === 'active' &&
+          b.tenantId.toLowerCase() === tenantId.toLowerCase(),
+      )
+      .map((b) => b.studentId);
+
+    if (studentIds.length === 0) return { items: [] };
+
+    const items = await this.leaveRepo.findByStudents(tenantSchema, studentIds, 100);
     return { items };
   }
 

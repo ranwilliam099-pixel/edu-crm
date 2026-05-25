@@ -79,7 +79,12 @@ describe('LeaveRepository', () => {
       const r = await repo.findByStudent(TENANT, SAMPLE.studentId, 30);
       expect(r).toHaveLength(2);
       const sql = pg.tenantQuery.mock.calls[0][1] as string;
-      expect(sql).toContain('ORDER BY created_at DESC');
+      // 2026-05-25 #4: SQL JOIN students/schedules/teachers/course_products → l.created_at
+      expect(sql).toContain('ORDER BY l.created_at DESC');
+      expect(sql).toContain('LEFT JOIN students');
+      expect(sql).toContain('LEFT JOIN schedules');
+      expect(sql).toContain('LEFT JOIN teachers');
+      expect(sql).toContain('LEFT JOIN course_products');
       expect(pg.tenantQuery.mock.calls[0][2]).toEqual([SAMPLE.studentId, 30]);
     });
 
@@ -87,6 +92,27 @@ describe('LeaveRepository', () => {
       pg.tenantQuery.mockResolvedValueOnce([]);
       await repo.findByStudent(TENANT, SAMPLE.studentId);
       expect(pg.tenantQuery.mock.calls[0][2]).toEqual([SAMPLE.studentId, 50]);
+    });
+  });
+
+  describe('findByStudents (2026-05-25 #4 多孩聚合)', () => {
+    it('uses ANY($1::varchar[]) + LEFT JOIN，默认 limit 100', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([ROW, ROW, ROW]);
+      const STUDENT_A = 'studentA0000000000000000000000A';
+      const STUDENT_B = 'studentB0000000000000000000000B';
+      const r = await repo.findByStudents(TENANT, [STUDENT_A, STUDENT_B]);
+      expect(r).toHaveLength(3);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('l.student_id = ANY($1::varchar[])');
+      expect(sql).toContain('LEFT JOIN students');
+      expect(sql).toContain('ORDER BY l.created_at DESC');
+      expect(pg.tenantQuery.mock.calls[0][2]).toEqual([[STUDENT_A, STUDENT_B], 100]);
+    });
+
+    it('空 studentIds 数组 → 直接返 [] 不打 SQL', async () => {
+      const r = await repo.findByStudents(TENANT, []);
+      expect(r).toEqual([]);
+      expect(pg.tenantQuery).not.toHaveBeenCalled();
     });
   });
 
