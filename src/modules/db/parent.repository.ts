@@ -138,6 +138,26 @@ export class ParentRepository {
     return plainRows.length === 0 ? null : this.mapParentRow(plainRows[0]);
   }
 
+  /**
+   * 2026-05-25 统一登录 ②: 首次微信手机号登录时绑定 openid
+   *
+   * 语义：仅当 wechat_openid IS NULL 或与新 openid 不同时才更新
+   *   - 防止已绑老 openid 的 row 被新 openid 覆盖（家长换微信账号场景需手动 ops）
+   *   - 防止重复 UPDATE（同一 openid 多次登录）
+   *
+   * 调用方：wechatPhoneLogin endpoint（fail-open，更新失败不阻断登录）
+   */
+  async updateOpenidIfChanged(parentId: string, openid: string): Promise<void> {
+    if (!openid) return;
+    await this.pg.query(
+      `UPDATE public.parents
+          SET wechat_openid = $1
+        WHERE id = $2
+          AND (wechat_openid IS NULL OR wechat_openid = '' OR wechat_openid = $1)`,
+      [openid, parentId],
+    );
+  }
+
   // ===== bindings =====
 
   /**

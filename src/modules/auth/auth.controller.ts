@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  NotFoundException,
   Req,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -23,6 +24,7 @@ import {
 } from './jwt-payload.interface';
 import { RedisService } from '../redis/redis.service';
 import { WxCodeSessionService } from './wx-code-session.service';
+import { WxPhoneService } from './wx-phone.service';
 // T11 (2026-05-16) refresh token rotation
 import { RefreshTokenService } from './refresh-token.service';
 // T-DEPLOY-FIX-1 round 2 (2026-05-16 user 拍板决策 #2 + 3 agent 共识 HIGH-3)：
@@ -76,6 +78,8 @@ export class AuthController {
     private readonly auditLog: AuditLogRepository,
     // 2026-05-23 P0 T2: wechatLogin openid 反查 parents 表 (取代旧 body.parentId mock)
     private readonly parentRepo: ParentRepository,
+    // 2026-05-25 统一登录 ②: 微信手机号一键登录（取代密码 + jscode2session）
+    private readonly wxPhone: WxPhoneService,
   ) {}
 
   /**
@@ -88,7 +92,12 @@ export class AuthController {
    */
   private async tryAuditLogin(
     tenantSchema: string,
-    action: 'auth.login.success' | 'auth.login.failed' | 'auth.check-phone.queried',
+    action:
+      | 'auth.login.success'
+      | 'auth.login.failed'
+      | 'auth.check-phone.queried'
+      | 'auth.wechat-phone-login.success'
+      | 'auth.wechat-phone-login.failed',
     actorUserId: string | null,
     actorRoleRaw: string,
     targetId: string,
@@ -616,6 +625,217 @@ export class AuthController {
       expiresIn: 30 * 86400,
       refreshExpiresIn: refresh.refreshExpiresIn,
       payload: { parentId: parent.id, type: 'parent' },
+    };
+  }
+
+  /**
+   * 2026-05-25 统一登录 ② — POST /api/public/auth/wechat-phone-login
+   *
+   * 取代旧链路：
+   *   旧 B 端: phone + password (bcrypt)
+   *   旧 C 端: wx.login → jscode2session → openid 反查 parents
+   *
+   * 新链路（B/C 统一一键登录）:
+   *   前端 <button open-type="getPhoneNumber"> bindgetphonenumber → e.detail.code
+   *   wx.login → openidCode（可选，仅用于 binding，失败不阻断）
+   *   POST 本 endpoint { phoneCode, openidCode? }
+   *
+   * 流程：
+   *   1. WxPhoneService.exchange(phoneCode) → 真 11 位 phone (微信验证过)
+   *   2. WxCodeSessionService.exchange(openidCode) → openid （fail-open: 失败不阻断登录，仅跳过 openid 绑定）
+   *   3. PhoneLookupService.lookupByPhone(phone) → { bUsers, parent }
+   *   4. 路由分流（同 password login D5 互斥语义）：
+   *        - bUsers + parent 同 phone → 401 互斥违反（数据问题）
+   *        - parent only → C 端 → 更新 openid + 签 ParentJwt
+   *        - bUsers === 1 → B 端 → 更新 openid + 签 BJwt
+   *        - bUsers >= 2 → 返候选 list（多 tenant 让前端选）
+   *        - 都没有 → 404 PHONE_NOT_REGISTERED
+   *
+   * 与 password login 关键差异：
+   *   - 不需要 bcrypt（手机号已被微信验证）
+   *   - 不需要 timing attack 防御（无密码比对）
+   *   - 公开 endpoint，限频 20/min/IP
+   *
+   * RBAC: parent / B 端任何角色（按 phone 命中表决定 audience）
+   */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('wechat-phone-login')
+  @HttpCode(HttpStatus.OK)
+  async wechatPhoneLogin(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { phoneCode: string; openidCode?: string },
+  ): Promise<
+    // C 端单一
+    | {
+        audience: 'c';
+        token: string;
+        refreshToken: string;
+        tokenType: 'Bearer';
+        expiresIn: number;
+        refreshExpiresIn: number;
+        payload: { parentId: string; type: 'parent' };
+      }
+    // B 端单一 tenant
+    | {
+        audience: 'b';
+        token: string;
+        refreshToken: string;
+        tokenType: 'Bearer';
+        expiresIn: number;
+        refreshExpiresIn: number;
+        payload: JwtPayload;
+      }
+    // B 端多 tenant 需选择
+    | {
+        audience: 'b';
+        needTenantSelection: true;
+        candidates: Array<{
+          tenantId: string;
+          tenantName: string;
+          campusName: string;
+          role: string;
+        }>;
+      }
+  > {
+    // 1. 校验入参
+    if (!body || !body.phoneCode || typeof body.phoneCode !== 'string') {
+      throw new BadRequestException('phoneCode is required');
+    }
+    if (body.phoneCode.length < 5 || body.phoneCode.length > 200) {
+      throw new BadRequestException('phoneCode length must be 5-200');
+    }
+    if (body.openidCode !== undefined && typeof body.openidCode !== 'string') {
+      throw new BadRequestException('openidCode must be string if provided');
+    }
+
+    // 2. phoneCode → 真手机号（微信验证）
+    const phoneResult = await this.wxPhone.exchange(body.phoneCode);
+    const phone = phoneResult.phone;
+    const phoneMask = `***${phone.slice(-4)}`;
+
+    // 3. 可选 openidCode → openid (fail-open: jscode2session 失败也允许登录，仅跳过 openid 绑定)
+    let openid: string | null = null;
+    if (body.openidCode) {
+      try {
+        const session = await this.wxCodeSession.exchange(body.openidCode);
+        openid = session.openid;
+      } catch (err) {
+        this.logger.warn(
+          `[wechat-phone-login] jscode2session failed (fail-open): ${(err as Error).message} phone=${phoneMask}`,
+        );
+        // 不阻断 — phone 验证已足以登录
+      }
+    }
+
+    // 4. 跨表 phone 反查
+    const lookup = await this.phoneLookup.lookupByPhone(phone);
+    const activeBUsers = lookup.bUsers.filter(
+      (u) => u.status === '启用' && u.deletedAt === null,
+    );
+    const activeParent =
+      lookup.parent && lookup.parent.status === '启用' ? lookup.parent : null;
+
+    // 5a. 互斥违反（D5 拍板）→ 401 + ops warn
+    if (activeBUsers.length > 0 && activeParent) {
+      this.logger.warn(
+        `[wechat-phone-login.mutex-violation] phone=${phoneMask} bUsers=${activeBUsers.length} parent=1 — manual ops review required`,
+      );
+      await this.tryAuditLogin('', 'auth.wechat-phone-login.failed', null, 'system', phoneMask, {
+        reason: 'MUTEX_VIOLATION',
+        bUsers: activeBUsers.length,
+        parent: 1,
+      }, req);
+      throw new UnauthorizedException('INVALID_CREDENTIALS');
+    }
+
+    // 5b. C 端 parent only → 更新 openid（首次绑定）+ 签 ParentJwt
+    if (activeBUsers.length === 0 && activeParent) {
+      // 更新 openid（如果拿到了 + parent.openid 是空或与拿到的不同）
+      if (openid) {
+        try {
+          await this.parentRepo.updateOpenidIfChanged(activeParent.parentId, openid);
+        } catch (err) {
+          // fail-open: openid 更新失败不阻断登录（下次登录再尝试更新）
+          this.logger.warn(
+            `[wechat-phone-login] update parent openid failed (fail-open): ${(err as Error).message}`,
+          );
+        }
+      }
+      const token = this.parentJwt.sign({
+        parentId: activeParent.parentId,
+        openid: openid || '',
+      });
+      const refresh = await this.refreshTokenService.issue({
+        subjectType: 'parent',
+        subjectId: activeParent.parentId,
+        tenantId: null,
+        userAgent: this.getUserAgent(req),
+        ip: this.getIp(req),
+      });
+      await this.tryAuditLogin('', 'auth.wechat-phone-login.success', activeParent.parentId, 'parent', activeParent.parentId, {
+        audience: 'c',
+        openidBound: !!openid,
+        phoneLast4: phone.slice(-4),
+      }, req);
+      return {
+        audience: 'c',
+        token,
+        refreshToken: refresh.refreshToken,
+        tokenType: 'Bearer',
+        expiresIn: 30 * 86400,
+        refreshExpiresIn: refresh.refreshExpiresIn,
+        payload: { parentId: activeParent.parentId, type: 'parent' },
+      };
+    }
+
+    // 5c. 都没命中 → 404 友好提示（不暴露互斥语义，与失败路径同 401 防枚举）
+    if (activeBUsers.length === 0) {
+      await this.tryAuditLogin('', 'auth.wechat-phone-login.failed', null, 'system', phoneMask, {
+        reason: 'PHONE_NOT_REGISTERED',
+      }, req);
+      // 友好提示：404 而非 401（让前端区分「未登记」vs「凭证错」UI 文案）
+      throw new NotFoundException({
+        code: 'PHONE_NOT_REGISTERED',
+        message: '该手机号未在任何机构登记，请联系机构添加员工或家长资料',
+      });
+    }
+
+    // 5d. B 端单 tenant → 签 BJwt（不需要 password 校验，phone 已被微信验证）
+    //   注：B 端 users 表无 openid 列（设计上 B 端身份 = phone + role + tenant，
+    //   openid 仅对 C 端 parent 有意义。如未来需要 B 端消息推送可加列）
+    if (activeBUsers.length === 1) {
+      const match = activeBUsers[0];
+      await this.tryAuditLogin(
+        `tenant_${match.tenantId.toLowerCase()}`,
+        'auth.wechat-phone-login.success', match.userId, match.role, match.userId,
+        {
+          audience: 'b',
+          tenantId: match.tenantId,
+          role: match.role,
+          campusId: match.campusId,
+          phoneLast4: phone.slice(-4),
+        },
+        req,
+      );
+      const tokenResp = await this.signBUserToken(req, match, phone);
+      return { audience: 'b', ...tokenResp };
+    }
+
+    // 5e. B 端多 tenant → 返候选 list（前端弹选择器 → 调 /wechat-phone-login-confirm）
+    await this.tryAuditLogin('', 'auth.wechat-phone-login.success', null, 'system', phoneMask, {
+      audience: 'b',
+      reason: 'MULTI_TENANT_PROMPT',
+      candidatesCount: activeBUsers.length,
+    }, req);
+    return {
+      audience: 'b',
+      needTenantSelection: true,
+      candidates: activeBUsers.map((u) => ({
+        tenantId: u.tenantId,
+        tenantName: u.tenantName,
+        campusName: u.campusName,
+        role: u.role,
+      })),
     };
   }
 

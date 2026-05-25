@@ -16,6 +16,7 @@ import { ParentJwtStrategy } from './parent-jwt.strategy';
 import { RedisService } from '../redis/redis.service';
 import { AuthenticatedRequest } from './jwt-payload.interface';
 import { WxCodeSessionService } from './wx-code-session.service';
+import { WxPhoneService } from './wx-phone.service';
 import { RefreshTokenService } from './refresh-token.service';
 import { RefreshTokenRow } from './refresh-token.repository';
 import { UserRepository } from '../db/user.repository';
@@ -55,6 +56,8 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
   let jwt: JwtService;
   let redisSetSpy: jest.Mock<Promise<void>, [string, string, number?]>;
   let wxCodeSessionExchangeSpy: jest.Mock;
+  let wxPhoneExchangeSpy: jest.Mock;
+  let parentRepoUpdateOpenidSpy: jest.Mock;
   let refreshIssueSpy: jest.Mock;
   let refreshRotateSpy: jest.Mock;
   let refreshRevokeByRawSpy: jest.Mock;
@@ -83,6 +86,13 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
       sessionKey: 'test_session_key_should_not_return',
       unionid: undefined,
     });
+    // 2026-05-25 统一登录 ② mock：默认返 13800138000（happy path）
+    wxPhoneExchangeSpy = jest.fn().mockResolvedValue({
+      phone: '13800138000',
+      countryCode: '86',
+      watermarkAppid: 'wxc4b3ce5dd7e060b4',
+    });
+    parentRepoUpdateOpenidSpy = jest.fn().mockResolvedValue(undefined);
     refreshIssueSpy = jest.fn().mockResolvedValue({
       refreshToken: 'rt_mock_raw_token_xxxxxxxxxxxxxxxxxxxxxxx',
       refreshExpiresIn: 604800,
@@ -121,6 +131,8 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
         { provide: ConfigService, useValue: { get: () => 'test-secret' } },
         { provide: RedisService, useValue: { set: redisSetSpy } },
         { provide: WxCodeSessionService, useValue: { exchange: wxCodeSessionExchangeSpy } },
+        // 2026-05-25 统一登录 ②: mock WxPhoneService（不调真微信 API）
+        { provide: WxPhoneService, useValue: { exchange: wxPhoneExchangeSpy } },
         {
           provide: RefreshTokenService,
           useValue: {
@@ -147,7 +159,10 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
         // 2026-05-23 T2: parent.repository.findParentByOpenid mock (wechatLogin 新依赖)
         {
           provide: ParentRepository,
-          useValue: { findParentByOpenid: parentRepoFindByOpenidSpy },
+          useValue: {
+            findParentByOpenid: parentRepoFindByOpenidSpy,
+            updateOpenidIfChanged: parentRepoUpdateOpenidSpy,
+          },
         },
       ],
     }).compile();
@@ -751,6 +766,139 @@ describe('AuthController - Sprint X.2 + 既有 endpoint 回归', () => {
       await expect(
         controller.wxJscode2Session({ code: '' } as never),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ============================================================
+  // 2026-05-25 统一登录 ②: POST /api/public/auth/wechat-phone-login
+  //   微信手机号一键登录（取代密码 + jscode2session 双链路）
+  // ============================================================
+  describe('wechatPhoneLogin - 微信手机号一键登录（B+C 统一）', () => {
+    it('phoneCode 缺失 → 400', async () => {
+      await expect(
+        controller.wechatPhoneLogin(buildReqWithMeta(), { phoneCode: '' } as never),
+      ).rejects.toThrow(BadRequestException);
+      expect(wxPhoneExchangeSpy).not.toHaveBeenCalled();
+    });
+
+    it('phoneCode 太短 → 400 (length < 5)', async () => {
+      await expect(
+        controller.wechatPhoneLogin(buildReqWithMeta(), { phoneCode: 'abc' } as never),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('WxPhoneService.exchange 抛错 → 透传 500 (微信侧错)', async () => {
+      wxPhoneExchangeSpy.mockRejectedValueOnce(
+        new (require('@nestjs/common').InternalServerErrorException)('WX_PHONE_FAILED'),
+      );
+      await expect(
+        controller.wechatPhoneLogin(buildReqWithMeta(), {
+          phoneCode: 'badcode123456',
+        } as never),
+      ).rejects.toThrow();
+    });
+
+    it('D5 互斥违反: B+C 同 phone 命中 → 401 INVALID_CREDENTIALS', async () => {
+      phoneLookupSpy.mockResolvedValueOnce({
+        bUsers: [makeBUser()],
+        parent: { parentId: ULID32, status: '启用' },
+      });
+      await expect(
+        controller.wechatPhoneLogin(buildReqWithMeta(), {
+          phoneCode: 'codetest12345',
+        } as never),
+      ).rejects.toThrow('INVALID_CREDENTIALS');
+    });
+
+    it('C 端命中 (parent only) → audience="c" + 签 ParentJwt + 更新 openid', async () => {
+      phoneLookupSpy.mockResolvedValueOnce({
+        bUsers: [],
+        parent: { parentId: ULID32, status: '启用' },
+      });
+      const result: any = await controller.wechatPhoneLogin(buildReqWithMeta(), {
+        phoneCode: 'codetest12345',
+        openidCode: 'openidcode98765',
+      } as never);
+      expect(result.audience).toBe('c');
+      expect(result.token).toBeTruthy();
+      expect(result.payload.type).toBe('parent');
+      expect(result.payload.parentId).toBe(ULID32);
+      // 更新 openid (拿到了 openid 才调用)
+      expect(parentRepoUpdateOpenidSpy).toHaveBeenCalledWith(
+        ULID32,
+        'oTestOpenidExchangedSuccessfully',
+      );
+    });
+
+    it('C 端命中 + openidCode 缺失 → 仍登录成功，不调 updateOpenid', async () => {
+      phoneLookupSpy.mockResolvedValueOnce({
+        bUsers: [],
+        parent: { parentId: ULID32, status: '启用' },
+      });
+      const result: any = await controller.wechatPhoneLogin(buildReqWithMeta(), {
+        phoneCode: 'codetest12345',
+      } as never);
+      expect(result.audience).toBe('c');
+      expect(parentRepoUpdateOpenidSpy).not.toHaveBeenCalled();
+    });
+
+    it('C 端命中 + jscode2session 失败 → fail-open 仍登录（不调 updateOpenid）', async () => {
+      phoneLookupSpy.mockResolvedValueOnce({
+        bUsers: [],
+        parent: { parentId: ULID32, status: '启用' },
+      });
+      wxCodeSessionExchangeSpy.mockRejectedValueOnce(
+        new Error('WX_CODE2SESSION_FAILED'),
+      );
+      const result: any = await controller.wechatPhoneLogin(buildReqWithMeta(), {
+        phoneCode: 'codetest12345',
+        openidCode: 'badopenidcode',
+      } as never);
+      expect(result.audience).toBe('c');
+      expect(result.token).toBeTruthy();
+      expect(parentRepoUpdateOpenidSpy).not.toHaveBeenCalled();
+    });
+
+    it('B 端单 tenant → audience="b" + 签 BJwt', async () => {
+      phoneLookupSpy.mockResolvedValueOnce({
+        bUsers: [makeBUser()],
+        parent: null,
+      });
+      const result: any = await controller.wechatPhoneLogin(buildReqWithMeta(), {
+        phoneCode: 'codetest12345',
+      } as never);
+      expect(result.audience).toBe('b');
+      expect(result.token).toBeTruthy();
+      expect(result.needTenantSelection).toBeUndefined();
+    });
+
+    it('B 端多 tenant (2+ rows) → audience="b" + needTenantSelection + candidates', async () => {
+      phoneLookupSpy.mockResolvedValueOnce({
+        bUsers: [
+          makeBUser({ tenantId: 'tenantA_'.repeat(4).slice(0, 32), tenantName: 'OrgA' }),
+          makeBUser({ tenantId: 'tenantB_'.repeat(4).slice(0, 32), tenantName: 'OrgB' }),
+        ],
+        parent: null,
+      });
+      const result: any = await controller.wechatPhoneLogin(buildReqWithMeta(), {
+        phoneCode: 'codetest12345',
+      } as never);
+      expect(result.audience).toBe('b');
+      expect(result.needTenantSelection).toBe(true);
+      expect(result.candidates).toHaveLength(2);
+      expect(result.candidates[0]).toHaveProperty('tenantId');
+      expect(result.candidates[0]).toHaveProperty('tenantName');
+      expect(result.candidates[0]).not.toHaveProperty('userId');
+      expect(result.candidates[0]).not.toHaveProperty('passwordHash');
+    });
+
+    it('phone 未注册 (0 B-user + 0 parent) → 404 PHONE_NOT_REGISTERED', async () => {
+      phoneLookupSpy.mockResolvedValueOnce({ bUsers: [], parent: null });
+      await expect(
+        controller.wechatPhoneLogin(buildReqWithMeta(), {
+          phoneCode: 'codetest12345',
+        } as never),
+      ).rejects.toThrow(/PHONE_NOT_REGISTERED|未在任何机构登记/);
     });
   });
 });
