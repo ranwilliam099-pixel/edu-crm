@@ -30,6 +30,8 @@ import { RedisModule } from '../redis/redis.module';
   imports: [RedisModule],
   controllers: [SecurityController],
   providers: [SecurityService, WxAccessTokenService],
-  exports: [SecurityService],
+  // 2026-05-25 统一登录: AuthModule 的 WxPhoneService 注入 WxAccessTokenService
+  //   @Global 也必须 export 才能跨模块注入（否则 502 DI resolve 失败）
+  exports: [SecurityService, WxAccessTokenService],
 })
 export class SecurityModule {}
