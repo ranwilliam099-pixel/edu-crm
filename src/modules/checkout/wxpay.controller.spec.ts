@@ -49,6 +49,7 @@ describe('WxPayController', () => {
   let auditLog: { log: jest.Mock };
   let config: { get: jest.Mock; getOrThrow: jest.Mock };
   let pg: { query: jest.Mock };
+  let subRepo: { getCurrent: jest.Mock };
 
   // T9-FU-1 round 2 (2026-05-16 production-validator SPEC GAP)：
   //   buildController 加 pg 可选参数，使 V3 callback subscription UPDATE
@@ -62,6 +63,7 @@ describe('WxPayController', () => {
       withAudit ? (auditLog as never) : undefined,
       config as never,
       withPg ? (pg as never) : undefined,
+      subRepo as never,
     );
   }
 
@@ -78,6 +80,8 @@ describe('WxPayController', () => {
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     pg = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    // 2026-05-29 §12C.5: subscription 服务端定价 mock（getCurrent.actualPriceYuan=1999 → 199900 分）
+    subRepo = { getCurrent: jest.fn().mockResolvedValue({ actualPriceYuan: 1999 }) };
     config = {
       get: jest.fn((k: string) => {
         if (k === 'WXPAY_NOTIFY_URL') {

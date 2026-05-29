@@ -15,6 +15,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SubscriptionRepository } from '../db/subscription.repository';
 import { Throttle } from '@nestjs/throttler';
 import { ulid } from 'ulid';
 import * as crypto from 'crypto';
@@ -100,6 +101,8 @@ export class WxPayController {
     // T9-EPIC(2026-05-16) §6.3：付款成功 → UPDATE public.tenants 解锁订阅
     //   @Optional 兼容 spec / 单测可 new 不传（与 auditLog 同 fail-open 哲学）
     @Optional() private readonly pg?: PgPoolService,
+    // 2026-05-29 §12C.5: subscription 服务端权威定价（DbModule @Global，@Optional 兼容 spec）
+    @Optional() private readonly subscriptionRepo?: SubscriptionRepository,
   ) {}
 
   // ============================================================
@@ -199,12 +202,25 @@ export class WxPayController {
     //     platform 路径：req.user.tenantId 可能 null → attach 不传 →
     //                   callback UPDATE 跳过（attach 缺失 → log warn）→
     //                   留 T9-FU-2 backlog（platform 代付场景 OrderRepository W3-3 介入后用 outTradeNo 反查）
+    // 2026-05-29 §12C.5 P0-3: subscription 服务端权威定价 —— 不信前端 amountCents（防篡改）。
+    //   按租户 plan + 已配折扣服务端重算（与升级页同源 SubscriptionRepository.getCurrent.actualPriceYuan：
+    //   promotion_price_yuan ?? PLAN_META 基价）。fail-closed：取不到定价能力 / tenantId → 拒绝，绝不回退客户端金额。
+    let chargeAmountCents = body.amountCents;
+    if (body.type === 'subscription') {
+      const pricingTenantId = req.user?.tenantId ?? body.tenantId;
+      if (!this.subscriptionRepo || !pricingTenantId) {
+        throw new BadRequestException('subscription pricing unavailable (server-side)');
+      }
+      const sub = await this.subscriptionRepo.getCurrent(pricingTenantId);
+      chargeAmountCents = Math.round(sub.actualPriceYuan * 100);
+    }
+
     let result: CreatePrepayResult;
     try {
       result = await this.wxpay.createPrepay({
         outTradeNo: body.outTradeNo,
         openid: body.openid,
-        amountCents: body.amountCents,
+        amountCents: chargeAmountCents,
         description: body.description,
         notifyUrl,
         tenantId:
@@ -223,7 +239,7 @@ export class WxPayController {
         targetId: body.outTradeNo,
         after: {
           type: body.type,
-          amountCents: body.amountCents,
+          amountCents: chargeAmountCents,
           tenantId: req.user?.tenantId ?? null,
           reason: (err as Error).message?.slice(0, 200) ?? 'unknown',
         },
@@ -239,7 +255,7 @@ export class WxPayController {
       targetId: body.outTradeNo,
       after: {
         type: body.type,
-        amountCents: body.amountCents,
+        amountCents: chargeAmountCents,
         tenantId: req.user?.tenantId ?? null,
         prepayId: result.prepayId,
         // openid 是用户标识，入 audit 用于运营对账；不属于 PII 个保法红线
