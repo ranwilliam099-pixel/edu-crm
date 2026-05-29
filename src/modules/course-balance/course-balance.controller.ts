@@ -13,6 +13,10 @@ import {
   StudentCoursePackage,
 } from './course-balance.service';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
+// 2026-05-29 全面检测 P0: 课时包「金钱」端点必须 RBAC（manifest §390 update=admin/boss/finance）
+//   RbacGuard 对无 @Roles 的方法放行，故只锁 mutating 端点，读端点不受影响
+import { RbacGuard } from '../../guards/rbac.guard';
+import { Roles } from '../../guards/rbac.decorator';
 
 /**
  * CourseBalanceController — V12 课时包 + 余额 HTTP 暴露 BE-V12-1
@@ -24,7 +28,7 @@ import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
  * Sprint B.6 mini (2026-05-11) 深度防御：
  *   - class-level @UseGuards(TenantScopeGuard) — 兜底所有 /db endpoint 跨租户校验
  */
-@UseGuards(TenantScopeGuard)
+@UseGuards(TenantScopeGuard, RbacGuard)
 @Controller('course-balance')
 export class CourseBalanceController {
   constructor(private readonly service: CourseBalanceService) {}
@@ -33,6 +37,7 @@ export class CourseBalanceController {
    * POST /api/course-balance/activate — 合同签约时激活课时包
    */
   @Post('activate')
+  @Roles('admin', 'boss', 'finance')
   @HttpCode(HttpStatus.CREATED)
   activatePackage(
     @Body()
@@ -57,6 +62,7 @@ export class CourseBalanceController {
    * POST /api/course-balance/:packageId/deduct — schedule.complete 触发扣 1 课时
    */
   @Post(':packageId/deduct')
+  @Roles('admin', 'boss', 'finance')
   @HttpCode(HttpStatus.OK)
   deduct(
     @Param('packageId') _id: string,
@@ -69,6 +75,7 @@ export class CourseBalanceController {
    * POST /api/course-balance/:packageId/refund — 退费冲减
    */
   @Post(':packageId/refund')
+  @Roles('admin', 'boss', 'finance')
   @HttpCode(HttpStatus.OK)
   refund(
     @Param('packageId') _id: string,
@@ -122,6 +129,7 @@ export class CourseBalanceController {
    * POST /api/course-balance/:packageId/freeze — 学员请长假冻结
    */
   @Post(':packageId/freeze')
+  @Roles('admin', 'boss', 'finance')
   @HttpCode(HttpStatus.OK)
   freeze(
     @Param('packageId') _id: string,
@@ -134,6 +142,7 @@ export class CourseBalanceController {
    * POST /api/course-balance/:packageId/unfreeze — 复课，到期日按冻结天数顺延
    */
   @Post(':packageId/unfreeze')
+  @Roles('admin', 'boss', 'finance')
   @HttpCode(HttpStatus.OK)
   unfreeze(
     @Param('packageId') _id: string,
@@ -150,6 +159,7 @@ export class CourseBalanceController {
   // ================ /db 真存盘版 ================
 
   @Post('db/packages')
+  @Roles('admin', 'boss', 'finance')
   @HttpCode(HttpStatus.CREATED)
   async insertPackageInDb(
     @Body()
@@ -171,6 +181,7 @@ export class CourseBalanceController {
   }
 
   @Post('db/activate')
+  @Roles('admin', 'boss', 'finance')
   @HttpCode(HttpStatus.CREATED)
   async activateStudentPackageInDb(
     @Body()
@@ -187,6 +198,7 @@ export class CourseBalanceController {
   }
 
   @Post('db/:packageId/deduct')
+  @Roles('admin', 'boss', 'finance')
   @HttpCode(HttpStatus.OK)
   async deductInDb(
     @Param('packageId') id: string,
@@ -196,6 +208,7 @@ export class CourseBalanceController {
   }
 
   @Post('db/:packageId/refund')
+  @Roles('admin', 'boss', 'finance')
   @HttpCode(HttpStatus.OK)
   async refundInDb(
     @Param('packageId') id: string,
@@ -233,6 +246,7 @@ export class CourseBalanceController {
   }
 
   @Post('db/:packageId/freeze')
+  @Roles('admin', 'boss', 'finance')
   @HttpCode(HttpStatus.OK)
   async freezeInDb(
     @Param('packageId') id: string,
@@ -242,6 +256,7 @@ export class CourseBalanceController {
   }
 
   @Post('db/:packageId/unfreeze')
+  @Roles('admin', 'boss', 'finance')
   @HttpCode(HttpStatus.OK)
   async unfreezeInDb(
     @Param('packageId') id: string,

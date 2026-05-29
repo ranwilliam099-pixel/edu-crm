@@ -308,10 +308,16 @@ export class ScheduleService {
     tenantSchema: string,
     scheduleId: string,
     consumptionIdPrefix: string,
+    caller?: { userId?: string; role?: string },
   ): Promise<{ schedule: Schedule; consumptionsCreated: number; alreadyComplete: boolean }> {
     if (!this.repo) throw new BadRequestException('ScheduleRepository not available');
+    // 2026-05-29 §12C.1: 老师角色只能完成自己任教的课 → 传 requireTeacherUserId 让 repo 事务内校验；
+    //   admin/boss/academic 代操作不传（可完成任意课）
+    const requireTeacherUserId =
+      caller?.role === 'teacher' ? caller.userId : undefined;
     return this.repo.completeWithConsumptions(tenantSchema, scheduleId, {
       consumptionIdPrefix,
+      requireTeacherUserId,
     });
   }
 

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PgPoolService, PgRow } from './pg-pool.service';
 import {
   Schedule,
@@ -297,6 +297,7 @@ export class ScheduleRepository {
     options: {
       consumptionIdPrefix: string;     // ULID 前缀 (调用方提供, 服务端补 student_id hash)
       feedbackDueAtHours?: number;     // 默认 24h (V9 锁定窗口)
+      requireTeacherUserId?: string;   // 2026-05-29 §12C.1: 传则校验 schedule.teacher 属于此 user（老师只能完成自己的课）
     },
   ): Promise<{ schedule: Schedule; consumptionsCreated: number; alreadyComplete: boolean }> {
     return this.pg.transaction(
@@ -310,6 +311,17 @@ export class ScheduleRepository {
           throw new NotFoundException(`schedule ${scheduleId} not found`);
         }
         const cur = schRows.rows[0];
+        // 2026-05-29 全面检测 P0 (§12C.1): 老师只能完成「自己任教」的课（事务内 FOR UPDATE 锁下校验）。
+        //   admin/boss/academic 代操作时不传 requireTeacherUserId → 跳过此校验。
+        if (options.requireTeacherUserId) {
+          const ownRows = await client.query<{ id: string }>(
+            `SELECT id FROM teachers WHERE id = $1 AND user_id = $2`,
+            [cur.teacher_id, options.requireTeacherUserId],
+          );
+          if (ownRows.rows.length === 0) {
+            throw new ForbiddenException('只能完成自己任教的课次');
+          }
+        }
         if (cur.status === '已完成') {
           // 幂等: 已经完成过, 不重复创建 consumption
           const fullRows = await client.query<any>(

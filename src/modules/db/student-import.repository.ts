@@ -82,6 +82,11 @@ export class StudentImportRepository {
       campusId: string; // 默认 campus_id（students/customers 都需要）
     },
   ): Promise<StudentImportResult> {
+    // 2026-05-29 全面检测 P0: tenantSchema 直接进 SET search_path，必须正则校验防 SQL 注入
+    //   （与 pg-pool.service.ts:70 同护栏；本 repo 用 withClient 绕过了 tenantQuery 的校验 → 漏网之鱼）
+    if (!tenantSchema || !/^tenant_[a-z0-9_]+$/.test(tenantSchema)) {
+      throw new Error('invalid tenant schema');
+    }
     if (rows.length === 0) {
       return { successCount: 0, errorRows: [] };
     }

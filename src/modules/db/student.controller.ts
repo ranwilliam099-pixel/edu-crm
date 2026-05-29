@@ -247,7 +247,8 @@ export class StudentController {
    *   RBAC: admin/boss/sales/sales_manager/academic/academic_admin/teacher 都可读
    *     - finance 角色禁访（学员档案不涉及财务）
    *     - parent 走 c/student-profile 不走 B 端
-   *   注：parentPhone 前端 maskPhone 处理，finance role 此处禁访所以无需后端 mask
+   *   注：finance 角色禁访；teacher 角色后端硬脱敏家长联系字段（parentName/Phone/Gender）
+   *      防客户端绕过前端 maskPhone（SSOT §4.1 teacher ❌ 联系人信息 / §2 一级 PII）
    */
   @Get(':studentId')
   @UseGuards(RbacGuard)
@@ -264,6 +265,7 @@ export class StudentController {
   async findById(
     @Param('studentId') studentId: string,
     @Query('tenantSchema') tenantSchema: string,
+    @Req() req: AuthenticatedRequest,
   ): Promise<StudentDetail> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
     if (!studentId || studentId.length !== 32) {
@@ -272,6 +274,15 @@ export class StudentController {
     const detail = await this.repo.findFullDetail(tenantSchema, studentId);
     if (!detail) {
       throw new NotFoundException(`student ${studentId} not found`);
+    }
+    // 2026-05-29 全面检测 P0: teacher ❌ 联系人信息（SSOT §4.1 / §2 一级 PII）。
+    //   前端 maskPhone 客户端可绕过 → 后端按 role 硬脱敏家长 + 学员联系字段。
+    //   安全审 round-1 finding 3: detail.phone（学员本人电话）也是一级 PII，补 null。
+    if (req.user?.role === 'teacher') {
+      detail.parentName = null;
+      detail.parentPhone = null;
+      detail.parentGender = null;
+      detail.phone = null;
     }
     return detail;
   }

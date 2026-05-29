@@ -134,7 +134,7 @@ export class WxPayController {
       amountCents: number;
       description: string;
       type: 'subscription' | 'parent-extra';
-      notifyUrl?: string;
+      // 2026-05-29 全面检测：删 notifyUrl 死字段（已不再回退客户端值，防未来误用注入回调 url）
     },
     @Req() req: AuthenticatedRequest,
   ): Promise<CreatePrepayResult> {
@@ -184,8 +184,9 @@ export class WxPayController {
     }
 
     // 3. notifyUrl 强制服务端 ENV，避免 client 注入伪 callback url
-    const notifyUrl =
-      this.config?.get<string>('WXPAY_NOTIFY_URL') ?? body.notifyUrl;
+    //   2026-05-29 全面检测 P0: 删 `?? body.notifyUrl` 回退 —— 注释说"避免 client 注入"但原代码
+    //   在 config 缺失时回退到客户端值（自相矛盾）。改为：缺 ENV 直接抛，绝不用客户端传入的 url。
+    const notifyUrl = this.config?.get<string>('WXPAY_NOTIFY_URL');
     if (!notifyUrl?.startsWith('https://')) {
       throw new BadRequestException('WXPAY_NOTIFY_URL not configured (must be https)');
     }

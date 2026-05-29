@@ -116,7 +116,9 @@ export class ContractController {
   }
 
   @Get('mine')
-  @Roles('sales', 'sales_manager', 'boss', 'admin', 'finance') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
+  // 2026-05-29 §12C.2 拍板：finance 可看合同列表（作账用）。Contract 仅含金额/学员ID/状态，
+  //   无联系人字段（无 PII 泄露面）；maskContract 按 owner/角色控金额可见性。finance 角色正式保留。
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'finance')
   @HttpCode(HttpStatus.OK)
   async listMine(
     @Query('tenantSchema') tenantSchema: string,

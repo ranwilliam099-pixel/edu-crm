@@ -363,19 +363,21 @@ describe('KpiService (P4-X 2026-05-20)', () => {
       expect(sql).toContain(`cc.confirmed_at >= NOW() - INTERVAL '30 days'`);
       expect(sql).toContain(`cc.status = 'confirmed'`);
       expect(sql).toContain(`LEFT JOIN active_30d a ON a.student_id = s.id`);
-      expect(sql).toContain(`LEFT JOIN campuses ca ON ca.id = s.campus_id`);
+      // 2026-05-29 全面检测：students 表无 campus_id（2026-05-22 修），campus 来自 customers cu
+      expect(sql).toContain(`LEFT JOIN campuses ca ON ca.id = cu.campus_id`);
       expect(sql).toContain(`s.deleted_at IS NULL`);
       expect(sql).toContain(`COUNT(*) FILTER (WHERE a.student_id IS NOT NULL) AS active_count`);
     });
 
-    it('campusIds 多选注入 s.campus_id', async () => {
+    it('campusIds 多选注入 cu.campus_id', async () => {
       pg.tenantQuery.mockResolvedValueOnce([]);
       await svc.getStudentActivityKpi(TENANT, {
         campusIds: [CAMPUS_A, CAMPUS_B],
       });
       const sql = pg.tenantQuery.mock.calls[0][1] as string;
       const params = pg.tenantQuery.mock.calls[0][2];
-      expect(sql).toContain(`AND s.campus_id IN ($1,$2)`);
+      // 2026-05-29 全面检测：campus filter 走 customers cu.campus_id（students 无此列）
+      expect(sql).toContain(`AND cu.campus_id IN ($1,$2)`);
       expect(params).toEqual([CAMPUS_A, CAMPUS_B]);
     });
 

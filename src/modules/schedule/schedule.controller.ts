@@ -513,9 +513,40 @@ export class ScheduleController {
     // RBAC: teacher / admin / boss / academic 可触发
     const role = req.user?.role;
     if (!['teacher', 'admin', 'boss', 'academic', 'academic_admin'].includes(role || '')) {
+      // 2026-05-29 生产审 缺口1: 拒绝路径写 audit
+      await this.tryAuditDenied(req, body.tenantSchema, 'schedule.complete-with-consumption.denied', scheduleId, {
+        reason: `ROLE_NOT_ALLOWED: role=${role}`,
+      });
       throw new ForbiddenException('当前角色不允许标记上完课');
     }
-    return this.service.completeScheduleInDb(body.tenantSchema, scheduleId, body.consumptionIdPrefix);
+    // 2026-05-29 §12C.1: 传 caller 让 service/repo 校验「老师只能完成自己任教的课」（teacher 角色）
+    //   2026-05-29 生产审 缺口1: 消课写操作补 audit（成功 + 拒绝/失败路径，含老师非本人课 403）
+    try {
+      const result = await this.service.completeScheduleInDb(
+        body.tenantSchema,
+        scheduleId,
+        body.consumptionIdPrefix,
+        { userId: req.user?.sub, role: req.user?.role },
+      );
+      await this.tryAudit(req, body.tenantSchema, {
+        action: 'schedule.complete-with-consumption',
+        targetType: 'schedule',
+        targetId: scheduleId,
+        before: null,
+        after: {
+          consumptionsCreated: result.consumptionsCreated,
+          alreadyComplete: result.alreadyComplete,
+          callerRole: role,
+          callerUserId: req.user?.sub ?? null,
+        },
+      });
+      return result;
+    } catch (err) {
+      await this.tryAuditDenied(req, body.tenantSchema, 'schedule.complete-with-consumption.denied', scheduleId, {
+        reason: this.reasonFromError(err),
+      });
+      throw err;
+    }
   }
 
   /**
