@@ -88,6 +88,29 @@ export class PromotionRepository {
     return rows.length === 0 ? null : PromotionRepository.mapRow(rows[0]);
   }
 
+  /**
+   * 2026-05-29 §12C.5 自动匹配：选一个可「无码自动应用」的折扣档（付款时用）。
+   *   条件：active + 非 kol（kol 是输码专用，不自动套）+ 名额未满 + 在时间窗 + 适用本 plan。
+   *   多个匹配取「折扣最狠 = 实付最低 = discount_pct 最小」。无匹配返 null。
+   *   注：本方法只「选码」；实际抢名额由 PromotionQuotaService.reserveQuota 原子完成
+   *       （auto 与输码共用同一 quota_used 名额池 → 拍板「不管自不自动都算前 N 位」）。
+   */
+  async findBestAutoPromotion(planTier: PlanTier): Promise<PromotionTier | null> {
+    const rows = await this.pg.query<any>(
+      `SELECT * FROM public.promotion_tiers
+         WHERE active = TRUE
+           AND source_type <> 'kol'
+           AND (quota_total IS NULL OR quota_used < quota_total)
+           AND (starts_at IS NULL OR NOW() >= starts_at)
+           AND (ends_at IS NULL OR NOW() < ends_at)
+           AND $1 = ANY(applies_to_plans)
+         ORDER BY discount_pct ASC
+         LIMIT 1`,
+      [planTier],
+    );
+    return rows.length === 0 ? null : PromotionRepository.mapRow(rows[0]);
+  }
+
   async getTenantPlanTier(tenantId: string): Promise<PlanTier | null> {
     const rows = await this.pg.query<{ plan_tier: PlanTier | null }>(
       `SELECT plan_tier FROM public.tenants WHERE id = $1`,

@@ -16,6 +16,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SubscriptionRepository } from '../db/subscription.repository';
+import { PromotionRepository } from '../db/promotion.repository';
+import { PromotionQuotaService } from '../db/promotion-quota.service';
 import { Throttle } from '@nestjs/throttler';
 import { ulid } from 'ulid';
 import * as crypto from 'crypto';
@@ -103,6 +105,9 @@ export class WxPayController {
     @Optional() private readonly pg?: PgPoolService,
     // 2026-05-29 §12C.5: subscription 服务端权威定价（DbModule @Global，@Optional 兼容 spec）
     @Optional() private readonly subscriptionRepo?: SubscriptionRepository,
+    // 2026-05-29 §12C.5: 付款时自动匹配折扣（前 N 位自动 N 折，与输码共用名额池）
+    @Optional() private readonly promotionRepo?: PromotionRepository,
+    @Optional() private readonly promotionQuota?: PromotionQuotaService,
   ) {}
 
   // ============================================================
@@ -211,8 +216,24 @@ export class WxPayController {
       if (!this.subscriptionRepo || !pricingTenantId) {
         throw new BadRequestException('subscription pricing unavailable (server-side)');
       }
-      const sub = await this.subscriptionRepo.getCurrent(pricingTenantId);
-      chargeAmountCents = Math.round(sub.actualPriceYuan * 100);
+      let cur = await this.subscriptionRepo.getCurrent(pricingTenantId);
+      // 2026-05-29 §12C.5 自动匹配：租户无生效促销时，付款自动抢一个「无码」折扣档（与输码共用名额）。
+      //   best-effort fail-open：抢不到（名额满 / 已锁 reserved|committed / 无匹配 / 并发）→ 原价，绝不阻断付款。
+      if (this.promotionRepo && this.promotionQuota) {
+        try {
+          const auto = await this.promotionRepo.findBestAutoPromotion(cur.planTier);
+          if (auto) {
+            await this.promotionQuota.reserveQuota(pricingTenantId, auto.code, {
+              operatorId: req.user?.sub || undefined,
+              operatorRole: 'auto_checkout',
+            });
+            cur = await this.subscriptionRepo.getCurrent(pricingTenantId); // 重读：反映已抢到的折扣价
+          }
+        } catch {
+          /* 名额满 / 已锁 / 无匹配 / 并发失败 → 用 cur 现价（不打折），不阻断付款 */
+        }
+      }
+      chargeAmountCents = Math.round(cur.actualPriceYuan * 100);
     }
 
     let result: CreatePrepayResult;

@@ -50,6 +50,8 @@ describe('WxPayController', () => {
   let config: { get: jest.Mock; getOrThrow: jest.Mock };
   let pg: { query: jest.Mock };
   let subRepo: { getCurrent: jest.Mock };
+  let promoRepo: { findBestAutoPromotion: jest.Mock };
+  let quotaSvc: { reserveQuota: jest.Mock };
 
   // T9-FU-1 round 2 (2026-05-16 production-validator SPEC GAP)：
   //   buildController 加 pg 可选参数，使 V3 callback subscription UPDATE
@@ -64,6 +66,8 @@ describe('WxPayController', () => {
       config as never,
       withPg ? (pg as never) : undefined,
       subRepo as never,
+      promoRepo as never,
+      quotaSvc as never,
     );
   }
 
@@ -81,7 +85,10 @@ describe('WxPayController', () => {
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     pg = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     // 2026-05-29 §12C.5: subscription 服务端定价 mock（getCurrent.actualPriceYuan=1999 → 199900 分）
-    subRepo = { getCurrent: jest.fn().mockResolvedValue({ actualPriceYuan: 1999 }) };
+    subRepo = { getCurrent: jest.fn().mockResolvedValue({ actualPriceYuan: 1999, planTier: 'single' }) };
+    // 2026-05-29 §12C.5 自动匹配 mock：默认无可用折扣（→null）走原价；reserveQuota 默认成功。用例可 override
+    promoRepo = { findBestAutoPromotion: jest.fn().mockResolvedValue(null) };
+    quotaSvc = { reserveQuota: jest.fn().mockResolvedValue({ actualPriceYuan: 999.5 }) };
     config = {
       get: jest.fn((k: string) => {
         if (k === 'WXPAY_NOTIFY_URL') {
@@ -114,6 +121,36 @@ describe('WxPayController', () => {
       description: '教育培训行业销售 CRM 标准版年费',
       type: 'subscription' as const,
     };
+
+    it('§12C.5 自动匹配：无生效促销 → 付款自动抢折扣档 → 实收服务端折后价（不是前端 amountCents）', async () => {
+      // 抢之前 base 1999 / 抢之后 5 折 999.5（reserveQuota 改写 promotion_price_yuan，第二次 getCurrent 反映）
+      subRepo.getCurrent
+        .mockReset()
+        .mockResolvedValueOnce({ actualPriceYuan: 1999, planTier: 'single' })
+        .mockResolvedValueOnce({ actualPriceYuan: 999.5, planTier: 'single' });
+      promoRepo.findBestAutoPromotion.mockResolvedValue({ code: 'first30_half', discountPct: 50 });
+      wxpay.createPrepay.mockResolvedValueOnce({ prepayId: 'pp_auto', jsApiParams: { x: 1 } });
+      const req = makeReq({
+        user: {
+          sub: 'usr00000000000000000000000000000a',
+          role: 'admin',
+          tenantId: 'tnnt0000000000000000000000000001',
+          campusId: null,
+        },
+        body: validSubBody,
+      });
+      await controller.unifiedOrder(validSubBody, req);
+      expect(promoRepo.findBestAutoPromotion).toHaveBeenCalledWith('single');
+      expect(quotaSvc.reserveQuota).toHaveBeenCalledWith(
+        validSubBody.tenantId,
+        'first30_half',
+        expect.objectContaining({ operatorRole: 'auto_checkout' }),
+      );
+      // 实收 = 服务端折后价 999.5 → 99950 分（不是前端传的 199900，证明自动 5 折生效 + 防篡改）
+      expect(wxpay.createPrepay).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 99950 }),
+      );
+    });
 
     it('subscription happy path（admin）→ 返 prepayId + jsApiParams + audit_log 写入', async () => {
       wxpay.createPrepay.mockResolvedValueOnce({
