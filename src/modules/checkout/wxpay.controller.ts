@@ -220,6 +220,7 @@ export class WxPayController {
       // 2026-05-29 §12C.5 自动匹配：租户无生效促销时，付款自动抢一个「无码」折扣档（与输码共用名额）。
       //   best-effort fail-open：抢不到（名额满 / 已锁 reserved|committed / 无匹配 / 并发）→ 原价，绝不阻断付款。
       if (this.promotionRepo && this.promotionQuota) {
+        let reservedCode: string | null = null;
         try {
           const auto = await this.promotionRepo.findBestAutoPromotion(cur.planTier);
           if (auto) {
@@ -227,10 +228,23 @@ export class WxPayController {
               operatorId: req.user?.sub || undefined,
               operatorRole: 'auto_checkout',
             });
-            cur = await this.subscriptionRepo.getCurrent(pricingTenantId); // 重读：反映已抢到的折扣价
+            reservedCode = auto.code;
           }
         } catch {
           /* 名额满 / 已锁 / 无匹配 / 并发失败 → 用 cur 现价（不打折），不阻断付款 */
+        }
+        if (reservedCode) {
+          // 安全审 finding：重读单独捕获 —— 抢到名额后若重读 getCurrent 失败（罕见 PG 瞬断），
+          //   回滚刚抢的名额 + 按原价计费，避免「名额已抢但按原价收」的 reserved/金额不一致。
+          try {
+            cur = await this.subscriptionRepo.getCurrent(pricingTenantId); // 重读：反映折后价
+          } catch {
+            try {
+              await this.promotionQuota.releaseQuota(pricingTenantId, 'auto_reprice_read_failed');
+            } catch {
+              /* 回滚也失败 → 留给支付成功回调 commitQuota 对账兜底 */
+            }
+          }
         }
       }
       chargeAmountCents = Math.round(cur.actualPriceYuan * 100);
