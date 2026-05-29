@@ -144,37 +144,42 @@ export class ContractRepository {
     campusId?: string,
   ): Promise<Array<{
     ownerUserId: string;
+    ownerName: string;
     totalCount: number;
     totalAmount: number;
     thisMonthCount: number;
     thisMonthAmount: number;
   }>> {
+    // 5/30 #1：JOIN 租户内 users 表取销售名字（前端不再静态假数据；users 在同一 tenant schema）
     const where = [
-      `owner_user_id IS NOT NULL`,
-      `status IN ('pending', 'active')`,
-      `deleted_at IS NULL`,
+      `c.owner_user_id IS NOT NULL`,
+      `c.status IN ('pending', 'active')`,
+      `c.deleted_at IS NULL`,
     ];
     const params: any[] = [];
     if (campusId) {
       params.push(campusId);
-      where.push(`campus_id = $${params.length}`);
+      where.push(`c.campus_id = $${params.length}`);
     }
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `SELECT
-         owner_user_id,
+         c.owner_user_id,
+         u.name AS owner_name,
          COUNT(*) AS total_count,
-         COALESCE(SUM(total_amount), 0) AS total_amount,
-         COUNT(*) FILTER (WHERE signed_at >= date_trunc('month', NOW())) AS this_month_count,
-         COALESCE(SUM(total_amount) FILTER (WHERE signed_at >= date_trunc('month', NOW())), 0) AS this_month_amount
-       FROM contracts
+         COALESCE(SUM(c.total_amount), 0) AS total_amount,
+         COUNT(*) FILTER (WHERE c.signed_at >= date_trunc('month', NOW())) AS this_month_count,
+         COALESCE(SUM(c.total_amount) FILTER (WHERE c.signed_at >= date_trunc('month', NOW())), 0) AS this_month_amount
+       FROM contracts c
+       LEFT JOIN users u ON u.id = c.owner_user_id AND u.deleted_at IS NULL
        WHERE ${where.join(' AND ')}
-       GROUP BY owner_user_id
+       GROUP BY c.owner_user_id, u.name
        ORDER BY this_month_amount DESC, total_amount DESC`,
       params,
     );
     return rows.map((r) => ({
       ownerUserId: r.owner_user_id,
+      ownerName: r.owner_name || '—',
       totalCount: parseInt(r.total_count, 10),
       totalAmount: Number(r.total_amount),
       thisMonthCount: parseInt(r.this_month_count, 10),

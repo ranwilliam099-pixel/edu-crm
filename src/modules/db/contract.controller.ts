@@ -159,12 +159,12 @@ export class ContractController {
 
   /**
    * 老板视角：团队业绩排行
-   * 仅 admin（老板）/ sales_manager（销售校内主管）可调 — 5/15 A-2 删 sales_director
+   * admin（老板）/ boss（校长）/ sales_manager（销售主管）可调 — 5/30 §12D.4 加 boss
    * @query campusId V26 校区切换过滤
    */
   @Get('team-performance')
   @UseGuards(RbacGuard)
-  @Roles('admin', 'sales_manager') // 5/15 A-2：删 'sales_director'
+  @Roles('admin', 'boss', 'sales_manager') // 5/30 §12D.4：boss(校长) 可看团队业绩
   @HttpCode(HttpStatus.OK)
   async teamPerformance(
     @Query('tenantSchema') tenantSchema: string,
@@ -172,6 +172,7 @@ export class ContractController {
   ): Promise<{
     items: Array<{
       ownerUserId: string;
+      ownerName: string;
       totalCount: number;
       totalAmount: number;
       thisMonthCount: number;
