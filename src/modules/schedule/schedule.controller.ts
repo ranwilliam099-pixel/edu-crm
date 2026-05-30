@@ -22,6 +22,7 @@ import {
   CreateScheduleInput,
   AttendanceStatus,
   SchedulerRole,
+  isSchedulerRole,
   CurrentUser,
 } from './schedule.service';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
@@ -656,11 +657,14 @@ export class ScheduleController {
 
   /**
    * 从 JWT 派生 callerRole + currentUser，并在 controller 层挡掉
-   * non-academic 角色（不让到 service 才挡，避免业务路径多走一次冲突检测）。
+   * 非排课角色（不让到 service 才挡，避免业务路径多走一次冲突检测）。
    *
-   * Wave 11 拍板修复：教务唯一创建（fields-by-role.md L201 「务 ✅ 创建」）
-   *   - admin / boss / sales / teacher / finance / academic_admin 全早期 403
-   *   - 教务也是单校 role（campusId 必填 32-char ULID）
+   * 2026-05-30 SSOT §5.3 line 426 修订：教务双层创建（[academic, academic_admin]）
+   *   - admin / boss / sales / teacher / finance / 家长 全早期 403（只多放 academic_admin）
+   *   - academic + academic_admin 均是单校 role（campusId 必填 32-char ULID）
+   *   - callerRole / currentUser.role 取实际 jwt.role（academic_admin 调用时 context 要对，
+   *     不能恒为 academic — schedulableTeachers 校区过滤 / audit actorRole 才准确）
+   *   - 错误码 ONLY_ACADEMIC_CAN_CREATE_SCHEDULE 字符串保留（兼容；语义现含教务主管）
    */
   private assertCallerRoleAndDeriveContext(req: AuthenticatedRequest): {
     callerRole: SchedulerRole;
@@ -670,14 +674,14 @@ export class ScheduleController {
     if (!jwt?.sub || !jwt.role) {
       throw new BadRequestException('JWT sub/role required');
     }
-    if (jwt.role !== 'academic') {
-      // Wave 11 拍板：仅 academic 可创建/调度/标考勤，其他 role 一律 403
+    if (!isSchedulerRole(jwt.role)) {
+      // SSOT §5.3：仅 academic + academic_admin 可创建/调度/标考勤，其他 role 一律 403
       throw new ForbiddenException(
         `ONLY_ACADEMIC_CAN_CREATE_SCHEDULE: role=${jwt.role}`,
       );
     }
     return {
-      callerRole: 'academic',
+      callerRole: jwt.role,
       currentUser: {
         id: jwt.sub,
         role: jwt.role,
@@ -726,12 +730,12 @@ export class ScheduleController {
     currentUser: CurrentUser,
     jwtCampusId: string | null,
   ): Promise<Array<{ id: string; userId?: string }>> {
-    if (callerRole !== 'academic') {
+    if (!isSchedulerRole(callerRole)) {
       // 防御性，controller 早期 403 已挡，这里兜底
       throw new ForbiddenException('ONLY_ACADEMIC_CAN_CREATE_SCHEDULE');
     }
     if (!jwtCampusId) {
-      // academic 是单校 role（jwt.strategy.ts L122-126 校验过）
+      // academic / academic_admin 均是单校 role（jwt.strategy.ts L122-126 校验过）
       // 此处兜底防止极端情况 (jwt 篡改 / token 无 campusId)
       throw new ForbiddenException(
         'ACADEMIC_CAMPUS_REQUIRED: 教务必须归属单一校区',

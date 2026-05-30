@@ -158,6 +158,39 @@ describe('RecurringScheduleController — Wave 11 academic 唯一', () => {
       expect(rbac.teacherCampusId).toBe(CAMPUS_X);
     });
 
+    // 2026-05-30 SSOT §5.3 line 426：教务主管 academic_admin 可绑老师（rbac.callerRole 取实际角色）
+    it('academic_admin 给同校老师创建绑定 → ✅，rbac.callerRole=academic_admin', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(teacherT1SameCampus);
+      svc.createBinding.mockResolvedValueOnce({
+        id: BINDING_ID,
+        status: 'active',
+      } as StudentTeacherBinding);
+
+      await controller.createBinding(
+        {
+          id: BINDING_ID,
+          studentId: STUDENT_S1,
+          teacherId: TEACHER_T1,
+          tenantSchema: TENANT,
+        },
+        mkReq({
+          user: {
+            sub: 'admamin_xxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+            role: 'academic_admin',
+            tenantId: 'tenant-x',
+            campusId: CAMPUS_X,
+          },
+        }),
+      );
+
+      const passed = svc.createBinding.mock.calls[0][0];
+      expect(passed.boundByUserId).toBe('admamin_xxxxxxxxxxxxxxxxxxxxxxxxxxx1');
+      const rbac = svc.createBinding.mock.calls[0][1];
+      expect(rbac.callerRole).toBe('academic_admin');
+      expect(rbac.academicCampusId).toBe(CAMPUS_X);
+      expect(rbac.teacherCampusId).toBe(CAMPUS_X);
+    });
+
     it('academic 给跨校老师创建绑定 → rbac.teacherCampusId !== academicCampusId, service 抛 TEACHER_NOT_IN_ACADEMIC_CAMPUS', async () => {
       teacherRepo.findById.mockResolvedValueOnce(teacherT2OtherCampus);
       svc.createBinding.mockImplementationOnce(() => {
@@ -320,6 +353,39 @@ describe('RecurringScheduleController — Wave 11 academic 唯一', () => {
       const rbac = svc.createRecurring.mock.calls[0][4]; // 第 5 参数
       expect(rbac.callerRole).toBe('academic');
       expect(rbac.academicCampusId).toBe(CAMPUS_X);
+      expect(rbac.teacherCampusId).toBe(CAMPUS_X);
+    });
+
+    // 2026-05-30 SSOT §5.3 line 426：教务主管 academic_admin 可建周期模板（createdByRole/rbac 取实际角色）
+    it('academic_admin 创建周期模板（同校老师）→ ✅，createdByRole=academic_admin', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(teacherT1SameCampus);
+      svc.createRecurring.mockResolvedValueOnce({
+        id: REC_ID,
+        status: 'active',
+      } as RecurringSchedule);
+
+      await controller.createRecurring(
+        {
+          input: baseInputDto,
+          expandRangeDays: 30,
+          existingSchedules: [],
+          tenantSchema: TENANT,
+        },
+        mkReq({
+          user: {
+            sub: 'admamin_xxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+            role: 'academic_admin',
+            tenantId: 'tenant-x',
+            campusId: CAMPUS_X,
+          },
+        }),
+      );
+
+      const passedInput = svc.createRecurring.mock.calls[0][0];
+      expect(passedInput.createdByUserId).toBe('admamin_xxxxxxxxxxxxxxxxxxxxxxxxxxx1');
+      expect(passedInput.createdByRole).toBe('academic_admin'); // server 派生取实际角色
+      const rbac = svc.createRecurring.mock.calls[0][4];
+      expect(rbac.callerRole).toBe('academic_admin');
       expect(rbac.teacherCampusId).toBe(CAMPUS_X);
     });
 
@@ -539,6 +605,35 @@ describe('RecurringScheduleController — Wave 11 academic 唯一', () => {
         }),
       );
     });
+
+    // 2026-05-30 SSOT §5.3：教务主管 academic_admin 同样可解绑
+    it('JWT role=academic_admin → 调用 service + 成功 audit_log（actorRole=academic_admin）', async () => {
+      svc.unbindBinding.mockReturnValueOnce({
+        ...dummyBinding,
+        status: 'unbound',
+        unboundAt: new Date(),
+      } as StudentTeacherBinding);
+      await controller.unbindBinding(
+        BINDING_ID,
+        { binding: dummyBinding, tenantSchema: TENANT },
+        mkReq({
+          user: {
+            sub: 'admamin_xxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+            role: 'academic_admin',
+            tenantId: 'tenant-x',
+            campusId: CAMPUS_X,
+          },
+        }),
+      );
+      expect(svc.unbindBinding).toHaveBeenCalledTimes(1);
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'recurring-binding.unbind',
+          actorRole: 'academic_admin',
+        }),
+      );
+    });
   });
 
   describe('archiveRecurring — Wave 11 早期 403 仅 academic', () => {
@@ -655,6 +750,35 @@ describe('RecurringScheduleController — Wave 11 academic 唯一', () => {
           targetType: 'recurring_schedule',
           targetId: REC_ID,
           actorRole: 'academic',
+        }),
+      );
+    });
+
+    // 2026-05-30 SSOT §5.3：教务主管 academic_admin 同样可归档
+    it('JWT role=academic_admin → 调用 service + 成功 audit_log（actorRole=academic_admin）', async () => {
+      svc.archiveRecurring.mockReturnValueOnce({
+        ...dummyRecurring,
+        status: 'archived',
+        archivedAt: new Date(),
+      } as RecurringSchedule);
+      await controller.archiveRecurring(
+        REC_ID,
+        { recurring: dummyRecurring, tenantSchema: TENANT },
+        mkReq({
+          user: {
+            sub: 'admamin_xxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+            role: 'academic_admin',
+            tenantId: 'tenant-x',
+            campusId: CAMPUS_X,
+          },
+        }),
+      );
+      expect(svc.archiveRecurring).toHaveBeenCalledTimes(1);
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'recurring-schedule.archive',
+          actorRole: 'academic_admin',
         }),
       );
     });

@@ -296,20 +296,35 @@ describe('ScheduleController — Wave 11 academic 唯一创建', () => {
       ).rejects.toThrow(/ONLY_ACADEMIC/);
     });
 
-    it('JWT role=academic_admin → 403（仅 academic 单一角色，不含 academic_admin）', async () => {
-      await expect(
-        controller.createScheduleInDb(
-          { input: mkInput(), tenantSchema: TENANT },
-          mkReq({
-            user: {
-              sub: 'admamin_xxxxxxxxxxxxxxxxxxxxxxxxxxx1',
-              role: 'academic_admin',
-              tenantId: 'tenant-x',
-              campusId: CAMPUS_X,
-            },
-          }),
-        ),
-      ).rejects.toThrow(/ONLY_ACADEMIC/);
+    // 2026-05-30 SSOT §5.3 line 426：教务双层（academic_admin）放行（原 Wave 11 仅 academic 已解封）
+    it('JWT role=academic_admin → ✅ 教务主管可排课，server-derive callerRole=academic_admin', async () => {
+      teacherRepo.listActiveInTenant.mockResolvedValueOnce([teacherT1Row, teacherT2Row]);
+      svc.createScheduleInDb.mockResolvedValueOnce({
+        schedule: { id: SCHEDULE_ID } as Schedule,
+        students: [],
+      });
+
+      await controller.createScheduleInDb(
+        { input: mkInput({ callerRole: 'sales' as any }), tenantSchema: TENANT },
+        mkReq({
+          user: {
+            sub: 'admamin_xxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+            role: 'academic_admin',
+            tenantId: 'tenant-x',
+            campusId: CAMPUS_X,
+          },
+        }),
+      );
+
+      const callArgs = svc.createScheduleInDb.mock.calls[0];
+      const passedInput = callArgs[0] as CreateScheduleInput;
+      // server-derive 取实际 jwt.role（不恒为 academic）
+      expect(passedInput.callerRole).toBe('academic_admin');
+      expect(passedInput.currentUser.role).toBe('academic_admin');
+      // schedulableTeachers 仍按 academic_admin.campusId 过滤（单校 role）
+      const passedTeachers = callArgs[3] as Array<{ id: string; userId?: string }>;
+      expect(passedTeachers).toHaveLength(2);
+      expect(teacherRepo.listActiveInTenant).toHaveBeenCalledWith(TENANT);
     });
 
     it('JWT 缺 sub → BadRequestException', async () => {
@@ -586,6 +601,35 @@ describe('ScheduleController — Wave 11 academic 唯一创建', () => {
         }),
       );
     });
+
+    // 2026-05-30 SSOT §5.3：教务主管 academic_admin 同样放行（actorRole 取实际角色）
+    it('JWT role=academic_admin → 调用 service + 成功 audit_log（actorRole=academic_admin）', async () => {
+      svc.cancelSchedule.mockReturnValueOnce({
+        ...dummySchedule,
+        status: '已取消',
+      } as Schedule);
+      await controller.cancelSchedule(
+        SCHEDULE_ID,
+        { schedule: dummySchedule, tenantSchema: TENANT, reason: 'parent-request' },
+        mkReq({
+          user: {
+            sub: 'admamin_xxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+            role: 'academic_admin',
+            tenantId: 'tenant-x',
+            campusId: CAMPUS_X,
+          },
+        }),
+      );
+      expect(svc.cancelSchedule).toHaveBeenCalledTimes(1);
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'schedule.cancel',
+          targetType: 'schedule',
+          actorRole: 'academic_admin',
+        }),
+      );
+    });
   });
 
   describe('completeSchedule — Wave 11 早期 403 仅 academic', () => {
@@ -683,6 +727,34 @@ describe('ScheduleController — Wave 11 academic 唯一创建', () => {
           action: 'schedule.complete',
           targetType: 'schedule',
           targetId: SCHEDULE_ID,
+        }),
+      );
+    });
+
+    // 2026-05-30 SSOT §5.3：教务主管 academic_admin 同样放行
+    it('JWT role=academic_admin → 调用 service + 成功 audit_log', async () => {
+      svc.completeSchedule.mockReturnValueOnce({
+        ...dummySchedule,
+        status: '已完成',
+      } as Schedule);
+      await controller.completeSchedule(
+        SCHEDULE_ID,
+        { schedule: dummySchedule, tenantSchema: TENANT },
+        mkReq({
+          user: {
+            sub: 'admamin_xxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+            role: 'academic_admin',
+            tenantId: 'tenant-x',
+            campusId: CAMPUS_X,
+          },
+        }),
+      );
+      expect(svc.completeSchedule).toHaveBeenCalledTimes(1);
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'schedule.complete',
+          actorRole: 'academic_admin',
         }),
       );
     });
@@ -911,6 +983,35 @@ describe('ScheduleController — Wave 11 academic 唯一创建', () => {
             studentId: STUDENT_S1,
             attendanceStatus: newStatus,
           }),
+        }),
+      );
+    });
+
+    // 2026-05-30 SSOT §5.3：教务主管 academic_admin 同样可标考勤
+    it('JWT role=academic_admin → 调用 service + 成功 audit_log', async () => {
+      svc.markAttendance.mockReturnValueOnce({
+        ...dummyStudent,
+        attendanceStatus: newStatus,
+      } as ScheduleStudent);
+      await controller.markAttendance(
+        SCHEDULE_ID,
+        STUDENT_S1,
+        { scheduleStudent: dummyStudent, newStatus, tenantSchema: TENANT },
+        mkReq({
+          user: {
+            sub: 'admamin_xxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+            role: 'academic_admin',
+            tenantId: 'tenant-x',
+            campusId: CAMPUS_X,
+          },
+        }),
+      );
+      expect(svc.markAttendance).toHaveBeenCalledTimes(1);
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT,
+        expect.objectContaining({
+          action: 'schedule.mark-attendance',
+          actorRole: 'academic_admin',
         }),
       );
     });

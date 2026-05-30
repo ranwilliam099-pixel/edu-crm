@@ -38,11 +38,31 @@ export type ScheduleStatus = '已排课' | '已完成' | '已取消' | '缺席';
 export type ScheduleSource = 'one_off' | 'recurring_expansion';
 export type AttendanceStatus = '待出勤' | '出勤' | '迟到' | '缺席' | '请假';
 /**
- * 排课调用角色（Wave 11 拍板修复）
+ * 排课调用角色（教务双层）
  *
- * 仅 academic（教务）可创建。其他 role 在 controller / service 层早期 403。
+ * 2026-05-30 SSOT §5.3 line 426 修订：schedule.create / recurring.create /
+ *   student.binding.edit = [academic, academic_admin]。教务（academic）+ 教务主管
+ *   （academic_admin）双层均可排课/周期排课/绑老师；boss/admin/teacher/sales/finance/
+ *   家长仍早期 403（只在 Wave 11「仅 academic」基础上多放 academic_admin 一个角色）。
+ *   academic_admin 同 academic 也是单校 role（campusId 必填），本校校区过滤一致复用。
+ *
+ * 原 Wave 11（2026-05-15）= 'academic' 单一角色，5/30 解封 academic_admin。
+ *
+ * 共享给 recurring-schedule.service.ts（同模块）复用，避免散落字面量。
  */
-export type SchedulerRole = 'academic';
+export type SchedulerRole = 'academic' | 'academic_admin';
+
+/**
+ * 排课允许角色运行时白名单（与 SchedulerRole 类型对齐）。
+ * controller / service 层 assertCallerRole 用 SCHEDULER_ROLES.includes(role) 收口，
+ * 单一源避免散落 `role !== 'academic' && role !== 'academic_admin'` 字面量。
+ */
+export const SCHEDULER_ROLES: readonly SchedulerRole[] = ['academic', 'academic_admin'];
+
+/** SCHEDULER_ROLES 运行时收口判定（接受任意 string，便于直接传 JWT.role） */
+export function isSchedulerRole(role: string | undefined | null): role is SchedulerRole {
+  return role === 'academic' || role === 'academic_admin';
+}
 
 export interface Schedule {
   id: string;
@@ -135,9 +155,10 @@ export class ScheduleService {
     // ① 输入校验
     this.assertInputs(input);
 
-    // ② RBAC: 仅 academic 可创建（Wave 11 拍板）— controller 层已早期 403,
-    //   service 层兜底防内部直调
-    if (input.callerRole !== 'academic') {
+    // ② RBAC: 教务双层可创建（2026-05-30 SSOT §5.3 = [academic, academic_admin]）—
+    //   controller 层已早期 403，service 层兜底防内部直调。
+    //   错误码 ONLY_ACADEMIC_CAN_CREATE_SCHEDULE 字符串保留（兼容；语义现含教务主管）。
+    if (!isSchedulerRole(input.callerRole)) {
       throw new ForbiddenException(
         `ONLY_ACADEMIC_CAN_CREATE_SCHEDULE: callerRole=${input.callerRole}`,
       );
@@ -218,8 +239,8 @@ export class ScheduleService {
     }
     this.assertInputs(input);
 
-    // RBAC（同 createSchedule 内存版 — Wave 11 拍板：仅 academic 可创建）
-    if (input.callerRole !== 'academic') {
+    // RBAC（同 createSchedule 内存版 — 2026-05-30 SSOT §5.3：教务双层可创建）
+    if (!isSchedulerRole(input.callerRole)) {
       throw new ForbiddenException(
         `ONLY_ACADEMIC_CAN_CREATE_SCHEDULE: callerRole=${input.callerRole}`,
       );

@@ -6,6 +6,7 @@ import {
   ScheduleStudent,
   ScheduleStatus,
   AttendanceStatus,
+  SchedulerRole,
 } from '../schedule/schedule.service';
 
 /**
@@ -551,9 +552,10 @@ export class ScheduleRepository {
       source: row.source,
       recurringScheduleId: row.recurring_schedule_id || undefined,
       createdByUserId: row.created_by_user_id,
-      // Wave 11: 历史 row.created_by_role 可能含 'teacher' / 'sales'（5/12-5/15 写入）；
-      // 类型断言为 'academic'，运行时仍保持原值用于审计 / 兼容显示，新建必走 'academic'
-      createdByRole: row.created_by_role as 'academic',
+      // 历史 row.created_by_role 可能含 'teacher' / 'sales'（5/12-5/15 写入）；
+      // 类型断言为 SchedulerRole（'academic' | 'academic_admin'，2026-05-30 SSOT §5.3），
+      // 运行时仍保持原值用于审计 / 兼容显示，新建必走 academic / academic_admin
+      createdByRole: row.created_by_role as SchedulerRole,
       notes: row.notes || undefined,
     };
   }

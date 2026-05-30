@@ -18,6 +18,8 @@ import {
   WeekDay,
   RecurringRbacContext,
 } from './recurring-schedule.service';
+// 2026-05-30 SSOT §5.3：排课角色（教务双层）共享类型 + 运行时白名单（单一源自 schedule.service）
+import { SchedulerRole, isSchedulerRole } from './schedule.service';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
@@ -91,7 +93,9 @@ export class RecurringScheduleController {
   //     (Sprint Y backlog: 扩展 RecurringRbacContext.callerRole 到 4 roles)
   //   - 当前更严方向: @Roles 4 roles 列入,运行时收紧到 academic 不破坏现状
   @UseGuards(RbacGuard)
-  @Roles('academic', 'academic_admin', 'boss', 'admin')  // 2026-05-21 用户拍板: 销售对学员-老师绑定无权限
+  // 2026-05-30 SSOT §5.3 line 426: 收成 [academic, academic_admin] 与运行时 assertCallerRole 一致
+  //   （去 boss/admin — 教务双层才排课/绑老师；销售对学员-老师绑定仍无权限）
+  @Roles('academic', 'academic_admin')
   @HttpCode(HttpStatus.CREATED)
   async createBinding(
     @Body()
@@ -117,7 +121,7 @@ export class RecurringScheduleController {
       );
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
-    let callerRole: 'academic';
+    let callerRole: SchedulerRole;
     let currentUserId: string;
     let academicCampusId: string | null;
     try {
@@ -207,7 +211,9 @@ export class RecurringScheduleController {
   @Post('bindings/:bindingId/unbind')
   // Security round 2 (2026-05-21): 加 @UseGuards(RbacGuard) 激活 @Roles
   @UseGuards(RbacGuard)
-  @Roles('academic', 'academic_admin', 'boss', 'admin')  // 2026-05-21 用户拍板: 销售对学员-老师绑定无权限
+  // 2026-05-30 SSOT §5.3 line 426: 收成 [academic, academic_admin] 与运行时 assertCallerRole 一致
+  //   （去 boss/admin — 教务双层才排课/绑老师；销售对学员-老师绑定仍无权限）
+  @Roles('academic', 'academic_admin')
   @HttpCode(HttpStatus.OK)
   async unbindBinding(
     @Param('bindingId') _bindingId: string,
@@ -270,7 +276,8 @@ export class RecurringScheduleController {
   //   - 周期课表 (recurring schedule) = 学员-老师绑定的扩展, 走同一 RBAC
   //   - assertCallerRoleAndDeriveContext 运行时仍 academic only (Sprint Y 扩展)
   @UseGuards(RbacGuard)
-  @Roles('academic', 'academic_admin', 'boss', 'admin')
+  // 2026-05-30 SSOT §5.3 line 426: 收成 [academic, academic_admin]（去 boss/admin，与运行时一致）
+  @Roles('academic', 'academic_admin')
   @HttpCode(HttpStatus.CREATED)
   async createRecurring(
     @Body()
@@ -314,7 +321,7 @@ export class RecurringScheduleController {
       );
       throw new BadRequestException('TENANT_SCHEMA_REQUIRED');
     }
-    let callerRole: 'academic';
+    let callerRole: SchedulerRole;
     let currentUserId: string;
     let academicCampusId: string | null;
     try {
@@ -415,7 +422,8 @@ export class RecurringScheduleController {
   @Post('schedules/:recurringScheduleId/archive')
   // Security round 2 (2026-05-21): 加 @UseGuards(RbacGuard) + @Roles
   @UseGuards(RbacGuard)
-  @Roles('academic', 'academic_admin', 'boss', 'admin')
+  // 2026-05-30 SSOT §5.3 line 426: 收成 [academic, academic_admin]（去 boss/admin，与运行时一致）
+  @Roles('academic', 'academic_admin')
   @HttpCode(HttpStatus.OK)
   async archiveRecurring(
     @Param('recurringScheduleId') _recurringScheduleId: string,
@@ -506,9 +514,16 @@ export class RecurringScheduleController {
    *
    * 用于前端创建模板前预览展开时段（不写入 DB）
    *
-   * Sprint E backlog #3: pure calc read-only，不补 audit_log（本拍板范围仅写操作）
+   * 2026-05-30 SSOT §5.3 line 426：预览是「新建周期排课」流程前置步骤，RBAC 与
+   *   createRecurring 对齐 = [academic, academic_admin]（教务双层）。原先无 @Roles =
+   *   任意已登录角色可调（过宽）；收口后 boss/admin/teacher/sales/finance/家长 403，
+   *   且 academic_admin 进页可预览（修复前端「无权预览」UX，§12D.1）。
+   *   纯计算 read-only（不写 DB，无 PII），不补 audit_log（本拍板范围仅写操作）。
    */
   @Post('schedules/expand-preview')
+  // Security round 2 (2026-05-21) 模式：class-level 仅 TenantScopeGuard，@Roles 需 RbacGuard 激活
+  @UseGuards(RbacGuard)
+  @Roles('academic', 'academic_admin')
   @HttpCode(HttpStatus.OK)
   expandPreview(
     @Body()
@@ -536,13 +551,15 @@ export class RecurringScheduleController {
   // -- helpers --
 
   /**
-   * Wave 11 拍板修复：仅 academic 可创建/调度
+   * 2026-05-30 SSOT §5.3 line 426 修订：教务双层可创建/调度（[academic, academic_admin]）
    *
-   * - admin / boss / sales / teacher / finance / academic_admin 全早期 403
-   * - academic 是单校 role（campusId 必填，jwt.strategy.ts L122-126 已校验）
+   * - admin / boss / sales / teacher / finance / 家长 全早期 403（只多放 academic_admin 一个）
+   * - academic / academic_admin 均是单校 role（campusId 必填，jwt.strategy.ts L122-126 已校验）
+   * - callerRole 返回实际 jwt.role（academic_admin 调用时 context 要对，不能恒为 academic）
+   * - 错误码 ONLY_ACADEMIC_CAN_CREATE_SCHEDULE 字符串保留（兼容；语义现含教务主管）
    */
   private assertCallerRoleAndDeriveContext(req: AuthenticatedRequest): {
-    callerRole: 'academic';
+    callerRole: SchedulerRole;
     currentUserId: string;
     campusId: string | null;
   } {
@@ -550,13 +567,13 @@ export class RecurringScheduleController {
     if (!jwt?.sub || !jwt.role) {
       throw new BadRequestException('JWT sub/role required');
     }
-    if (jwt.role !== 'academic') {
+    if (!isSchedulerRole(jwt.role)) {
       throw new ForbiddenException(
         `ONLY_ACADEMIC_CAN_CREATE_SCHEDULE: role=${jwt.role}`,
       );
     }
     return {
-      callerRole: 'academic',
+      callerRole: jwt.role,
       currentUserId: jwt.sub,
       campusId: jwt.campusId ?? null,
     };
@@ -573,7 +590,7 @@ export class RecurringScheduleController {
    */
   private async deriveRbacContext(
     tenantSchema: string,
-    callerRole: 'academic',
+    callerRole: SchedulerRole,
     currentUserId: string,
     target: { studentId: string; teacherId: string },
     academicCampusId: string | null,

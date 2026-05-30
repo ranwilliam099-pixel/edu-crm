@@ -7,6 +7,9 @@ import {
   Optional,
 } from '@nestjs/common';
 import { PgPoolService } from '../db/pg-pool.service';
+// 2026-05-30 SSOT §5.3：排课角色（教务双层）共享类型 + 运行时白名单，
+//   单一源自 schedule.service（同模块），避免 'academic' 字面量散落各层。
+import { SchedulerRole, isSchedulerRole } from './schedule.service';
 
 /**
  * RecurringScheduleService — V8.1 周期性课表 BE-V8-2
@@ -59,10 +62,10 @@ export interface RecurringSchedule {
   status: 'active' | 'archived';
   createdByUserId: string;
   /**
-   * Wave 11 拍板修复：教务唯一创建（fields-by-role.md L201）
-   * 仅 'academic' 合法
+   * 2026-05-30 SSOT §5.3 line 426：教务双层创建
+   * 合法值 = SchedulerRole（'academic' | 'academic_admin'）
    */
-  createdByRole: 'academic';
+  createdByRole: SchedulerRole;
   createdAt: Date;
   archivedAt?: Date;
 }
@@ -70,19 +73,19 @@ export interface RecurringSchedule {
 /**
  * RBAC 上下文（controller 派生后注入）
  *
- * Wave 11 拍板修复：
- *   - callerRole: 仅 'academic' 合法（旧 {teacher, sales} 已淘汰）
+ * 2026-05-30 SSOT §5.3 line 426 修订：
+ *   - callerRole: SchedulerRole（'academic' | 'academic_admin'，旧 {teacher, sales} 已淘汰）
  *   - currentUserId: JWT.sub
  *   - teacherCampusId: input.teacherId 反查到的 campus_id
- *     必须 === academic 的 JWT.campusId（防止教务跨校排课）
+ *     必须 === 教务（academic / academic_admin）的 JWT.campusId（防止教务跨校排课）
  *     若 controller 未传或反查不一致 → service 抛 ForbiddenException
  *
  * 学生 ownership 校验已移除（教务 ✅ 创建拍板无限定）
  */
 export interface RecurringRbacContext {
-  callerRole: 'academic';
+  callerRole: SchedulerRole;
   currentUserId: string;
-  /** academic 的 JWT.campusId（必填，单校 role） */
+  /** 教务（academic / academic_admin）的 JWT.campusId（必填，单校 role） */
   academicCampusId: string | null;
   /** input.teacherId 反查的 campus_id（用于本校校验） */
   teacherCampusId?: string | null;
@@ -223,7 +226,7 @@ export class RecurringScheduleService {
       startDate: Date;
       endDate?: Date;
       createdByUserId: string;
-      createdByRole: 'academic';
+      createdByRole: SchedulerRole;
     },
     expandRangeDays: number,
     existingSchedules: ReadonlyArray<{
@@ -428,8 +431,8 @@ export class RecurringScheduleService {
       startDate: Date;
       endDate?: Date;
       createdByUserId: string;
-      /** Wave 11: 仅 'academic' 合法 */
-      createdByRole: 'academic';
+      /** 2026-05-30 SSOT §5.3：教务双层（'academic' | 'academic_admin'） */
+      createdByRole: SchedulerRole;
     },
     expandRangeDays: number,
     existingSchedules: ReadonlyArray<{
@@ -586,13 +589,16 @@ export class RecurringScheduleService {
   // -- helpers --
 
   /**
-   * Wave 11 拍板修复 — academic 唯一创建：
+   * 2026-05-30 SSOT §5.3 line 426 修订 — 教务双层创建（[academic, academic_admin]）：
    *
-   *   - callerRole !== 'academic' → 403 ONLY_ACADEMIC_CAN_CREATE_SCHEDULE
+   *   - callerRole 非 academic/academic_admin → 403 ONLY_ACADEMIC_CAN_CREATE_SCHEDULE
+   *     （boss/admin/teacher/sales/finance/家长 仍 403，只多放 academic_admin 一个）
    *   - academicCampusId 缺 → 403 ACADEMIC_CAMPUS_REQUIRED（单校 role 必填）
    *   - teacherCampusId 缺（反查不到老师）→ 403 TEACHER_NOT_IN_ACADEMIC_CAMPUS
    *   - teacherCampusId !== academicCampusId → 403 TEACHER_NOT_IN_ACADEMIC_CAMPUS
-   *     （防止教务跨校排课 — 拍板 L211 教务 👁 本校）
+   *     （防止教务跨校排课 — 拍板 L211 教务 👁 本校；academic_admin 同样单校受限）
+   *
+   * 错误码 ONLY_ACADEMIC_CAN_CREATE_SCHEDULE 字符串保留（兼容；语义现含教务主管）。
    *
    * A05 hardening 保留: 错误 message 不嵌入内部 ID（campusId/userId），
    *   避免攻击者通过 403 响应枚举本校信息。内部排查走 audit_log + reqId 链路追踪。
@@ -603,7 +609,7 @@ export class RecurringScheduleService {
     ctx: RecurringRbacContext,
     _target: { studentId: string; teacherId: string },
   ): void {
-    if (ctx.callerRole !== 'academic') {
+    if (!isSchedulerRole(ctx.callerRole)) {
       throw new ForbiddenException('ONLY_ACADEMIC_CAN_CREATE_SCHEDULE');
     }
     if (!ctx.academicCampusId) {

@@ -450,6 +450,30 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6 (Wave 11 academic 唯
         expect(b.status).toBe('active');
       });
 
+      // 2026-05-30 SSOT §5.3 line 426：教务主管 academic_admin 同校 → 通过（service 兜底放行）
+      it('academic_admin 路径 + teacher 同校 → 通过', () => {
+        const ctx: RecurringRbacContext = {
+          callerRole: 'academic_admin',
+          currentUserId: ULID32_U1,
+          academicCampusId: CAMPUS_X,
+          teacherCampusId: CAMPUS_X,
+        };
+        const b = service.createBinding(baseBindingInput, ctx);
+        expect(b.status).toBe('active');
+      });
+
+      it('academic_admin 路径 + teacher 跨校 → 403 TEACHER_NOT_IN_ACADEMIC_CAMPUS（教务主管同样单校受限）', () => {
+        const ctx: RecurringRbacContext = {
+          callerRole: 'academic_admin',
+          currentUserId: ULID32_U1,
+          academicCampusId: CAMPUS_X,
+          teacherCampusId: CAMPUS_Y,
+        };
+        expect(() => service.createBinding(baseBindingInput, ctx)).toThrow(
+          /TEACHER_NOT_IN_ACADEMIC_CAMPUS/,
+        );
+      });
+
       it('academic 路径 + teacher 跨校 → 403 TEACHER_NOT_IN_ACADEMIC_CAMPUS', () => {
         const ctx: RecurringRbacContext = {
           callerRole: 'academic',
@@ -543,6 +567,25 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6 (Wave 11 academic 唯
         const r = service.createRecurring(baseInput, 30, [], now, ctx);
         expect(r.status).toBe('active');
         expect(r.createdByRole).toBe('academic');
+      });
+
+      // 2026-05-30 SSOT §5.3 line 426：教务主管 academic_admin 同校 → 通过
+      it('academic_admin 路径 + teacher 同校 → 通过（createdByRole=academic_admin）', () => {
+        const ctx: RecurringRbacContext = {
+          callerRole: 'academic_admin',
+          currentUserId: ULID32_U1,
+          academicCampusId: CAMPUS_X,
+          teacherCampusId: CAMPUS_X,
+        };
+        const r = service.createRecurring(
+          { ...baseInput, createdByRole: 'academic_admin' },
+          30,
+          [],
+          now,
+          ctx,
+        );
+        expect(r.status).toBe('active');
+        expect(r.createdByRole).toBe('academic_admin');
       });
 
       it('academic 路径 + teacher 跨校 → 403 TEACHER_NOT_IN_ACADEMIC_CAMPUS', () => {
