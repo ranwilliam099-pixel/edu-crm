@@ -27,6 +27,13 @@ export interface RefundOrder {
   decidedAt: Date | null;
   decisionReason: string | null;
   campusId: string;
+  // Phase 3 (2026-05-30 item #1) — 退费列表可读性增强（仅 listPendingInDb JOIN 填充）
+  //   财务审批需可读学员/家长姓名 + 课程名；PII 自查：仅返回姓名，
+  //   不带手机号/身份证（SSOT §4.4 退费 = 财务专属，姓名属审批必要信息）。
+  //   其它路径（create/decide/findById/listInDb）不 JOIN → 字段为 undefined（向后兼容）。
+  studentName?: string;
+  parentName?: string;
+  courseName?: string;
 }
 
 @Injectable()
@@ -124,19 +131,32 @@ export class RefundRepository {
     const limit = options.limit ?? 50;
     const offset = options.offset ?? 0;
     const params: any[] = [limit, offset];
-    let where = "status = 'pending'";
+    let where = "ro.status = 'pending'";
     if (options.campusId) {
       params.push(options.campusId);
-      where += ` AND campus_id = $${params.length}`;
+      where += ` AND ro.campus_id = $${params.length}`;
     }
+    // Phase 3 (2026-05-30 item #1) — LEFT JOIN 补可读名（单 query 避免 N+1）：
+    //   student_id  → students.student_name      (V2 列名 = student_name, 非 name)
+    //   customer_id → customers.parent_name       (家长姓名)
+    //   contract_id → contracts.course_product_id → course_products.product_name (课程名)
+    //   LEFT JOIN 防孤儿行被过滤（理论上 FK NOT NULL，但软删/历史数据兜底）。
+    //   PII：仅 *_name，无手机号/身份证。
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, contract_id, student_id, customer_id, amount, reason,
-              applicant_user_id, applicant_role, applied_at, status,
-              approver_user_id, approver_role, decided_at, decision_reason, campus_id
-         FROM refund_orders
+      `SELECT ro.id, ro.contract_id, ro.student_id, ro.customer_id, ro.amount, ro.reason,
+              ro.applicant_user_id, ro.applicant_role, ro.applied_at, ro.status,
+              ro.approver_user_id, ro.approver_role, ro.decided_at, ro.decision_reason, ro.campus_id,
+              s.student_name   AS student_name,
+              c.parent_name    AS parent_name,
+              cp.product_name  AS course_name
+         FROM refund_orders ro
+         LEFT JOIN students         s  ON s.id  = ro.student_id
+         LEFT JOIN customers        c  ON c.id  = ro.customer_id
+         LEFT JOIN contracts        ct ON ct.id = ro.contract_id
+         LEFT JOIN course_products  cp ON cp.id = ct.course_product_id
         WHERE ${where}
-        ORDER BY applied_at ASC
+        ORDER BY ro.applied_at ASC
         LIMIT $1 OFFSET $2`,
       params,
     );
@@ -191,7 +211,7 @@ export class RefundRepository {
   }
 
   private mapRow(r: any): RefundOrder {
-    return {
+    const out: RefundOrder = {
       id: r.id,
       contractId: r.contract_id,
       studentId: r.student_id,
@@ -208,5 +228,10 @@ export class RefundRepository {
       decisionReason: r.decision_reason || null,
       campusId: r.campus_id,
     };
+    // Phase 3 item #1 — JOIN 列仅在 listPendingInDb 出现；其它路径不含 → 不挂字段（保持向后兼容）
+    if (r.student_name !== undefined) out.studentName = r.student_name ?? undefined;
+    if (r.parent_name !== undefined) out.parentName = r.parent_name ?? undefined;
+    if (r.course_name !== undefined) out.courseName = r.course_name ?? undefined;
+    return out;
   }
 }

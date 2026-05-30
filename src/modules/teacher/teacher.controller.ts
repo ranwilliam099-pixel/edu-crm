@@ -217,7 +217,9 @@ export class TeacherController {
   @HttpCode(HttpStatus.OK)
   async listWithStatsFromDb(
     @Body() body: { tenantSchema: string },
-  ): Promise<Array<Teacher & { rating: number; studentCount: number }>> {
+  ): Promise<
+    Array<Teacher & { rating: number; studentCount: number; referralCount: number }>
+  > {
     return this.service.listWithStatsFromDb(body.tenantSchema);
   }
 

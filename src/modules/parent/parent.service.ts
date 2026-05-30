@@ -53,6 +53,18 @@ export interface ParentStudentBinding {
   bindingStatus: BindingStatus;
   boundAt: Date;
   unboundAt?: Date;
+  // Phase 3 (2026-05-30 item #2) — C 端「我的孩子」可读性增强（仅 enriched 查询填充）
+  //   前端 c/binding/children 现 fallback「孩子」「—」「—」parentCount=1，本次补真值。
+  //   studentName  = students.student_name（tenant schema, V2 列名）
+  //   gradeOrAge   = students.grade_or_age（可空）
+  //   campusName   = campuses.name（经 students.customer_id→customers.campus_id→campuses；
+  //                  students 表无 campus_id 列，故走 customer 间接 JOIN）
+  //   parentCount  = COUNT(active public.parent_student_bindings WHERE student_id)
+  //   非 enriched 路径（findChildrenByParent / insertBinding 等）字段为 undefined（向后兼容）。
+  studentName?: string;
+  gradeOrAge?: string;
+  campusName?: string;
+  parentCount?: number;
 }
 
 @Injectable()
@@ -319,7 +331,9 @@ export class ParentService {
   ): Promise<ParentStudentBinding[]> {
     if (!this.repo) throw new BadRequestException('ParentRepository not available');
     this.assertOwnership(parentId, callerParentId);
-    return this.repo.findChildrenByParent(parentId);
+    // Phase 3 (2026-05-30 item #2) — 用 enriched 查询补 studentName/gradeOrAge/campusName/parentCount
+    //   旧 findChildrenByParent 仍保留（其它调用方 / ownership 反查用）；C 端列表走 enriched 版。
+    return this.repo.findChildrenByParentEnriched(parentId);
   }
 
   /**

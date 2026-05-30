@@ -263,6 +263,139 @@ describe('ParentRepository (V40 phone hash+encrypted 双列加密)', () => {
   });
 
   // ============================================================
+  // Phase 3 (2026-05-30 item #2) — findChildrenByParentEnriched
+  //   C 端「我的孩子」补 studentName / gradeOrAge / campusName / parentCount
+  //   跨 schema：public binding → 每租户 1 条 tenant query（students 无 campus_id → 经 customer 间接 JOIN）
+  // ============================================================
+  describe('findChildrenByParentEnriched (Phase3 item#2 跨 schema 可读字段)', () => {
+    const T1 = 'tnt0000000000000000000000000aaaa'; // 已小写
+    const S1 = 'stu00000000000000000000000000001';
+
+    const bindingRow = (overrides: Record<string, any> = {}) => ({
+      id: 'bnd00000000000000000000000000001',
+      parent_id: PARENT_ID,
+      student_id: S1,
+      tenant_id: T1,
+      is_primary: true,
+      relationship: 'mother',
+      binding_status: 'active',
+      bound_at: new Date('2026-05-30T00:00:00Z'),
+      unbound_at: null,
+      parent_count: '2',
+      ...overrides,
+    });
+
+    it('单租户：public bindings + 1 条 tenant query → 填充可读字段 + parentCount', async () => {
+      pg.query.mockResolvedValueOnce([bindingRow()]); // public bindings + parent_count
+      pg.tenantQuery.mockResolvedValueOnce([
+        { student_id: S1, student_name: '王小明', grade_or_age: '初三', campus_name: '海淀校区' },
+      ]);
+
+      const result = await repo.findChildrenByParentEnriched(PARENT_ID);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].studentName).toBe('王小明');
+      expect(result[0].gradeOrAge).toBe('初三');
+      expect(result[0].campusName).toBe('海淀校区');
+      expect(result[0].parentCount).toBe(2);
+      // schema 名 = tenant_<tenant_id 小写>
+      expect(pg.tenantQuery).toHaveBeenCalledTimes(1);
+      expect(pg.tenantQuery.mock.calls[0][0]).toBe(`tenant_${T1}`);
+    });
+
+    it('SQL: students 经 customers.campus_id 间接 JOIN campuses（students 无 campus_id 列）', async () => {
+      pg.query.mockResolvedValueOnce([bindingRow()]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+
+      await repo.findChildrenByParentEnriched(PARENT_ID);
+
+      const tSql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(tSql).toMatch(/s\.student_name/);
+      expect(tSql).toMatch(/s\.grade_or_age/);
+      // 间接路径：students → customers → campuses（不存在 students.campus_id）
+      expect(tSql).toMatch(/LEFT JOIN customers cu ON cu\.id = s\.customer_id/);
+      expect(tSql).toMatch(/LEFT JOIN campuses\s+cp ON cp\.id = cu\.campus_id/);
+      expect(tSql).toMatch(/cp\.name\s+AS campus_name/);
+      expect(tSql).not.toMatch(/s\.campus_id/); // 防幻想：students 无此列
+      expect(tSql).toMatch(/s\.deleted_at IS NULL/); // 排除软删学员
+      // ANY 批量（防 N+1）
+      expect(tSql).toMatch(/s\.id = ANY\(\$1\)/);
+    });
+
+    it('PII 自查: tenant query 不 SELECT 手机号 / 身份证', async () => {
+      pg.query.mockResolvedValueOnce([bindingRow()]);
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.findChildrenByParentEnriched(PARENT_ID);
+      const tSql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(tSql).not.toMatch(/phone|id_number|id_card|primary_mobile/i);
+    });
+
+    it('多租户：N 个 distinct tenant → N 条 tenant query（每租户批量，非每 binding 一条）', async () => {
+      const T2 = 'tnt0000000000000000000000000bbbb';
+      const S2 = 'stu00000000000000000000000000002';
+      const S3 = 'stu00000000000000000000000000003';
+      // T1 有 2 个孩子（S1,S3），T2 有 1 个（S2）→ 应只发 2 条 tenant query
+      pg.query.mockResolvedValueOnce([
+        bindingRow({ id: 'b1', student_id: S1, tenant_id: T1 }),
+        bindingRow({ id: 'b2', student_id: S3, tenant_id: T1 }),
+        bindingRow({ id: 'b3', student_id: S2, tenant_id: T2 }),
+      ]);
+      pg.tenantQuery
+        .mockResolvedValueOnce([
+          { student_id: S1, student_name: 'A', grade_or_age: '一年级', campus_name: '校区1' },
+          { student_id: S3, student_name: 'C', grade_or_age: '三年级', campus_name: '校区1' },
+        ])
+        .mockResolvedValueOnce([
+          { student_id: S2, student_name: 'B', grade_or_age: '二年级', campus_name: '校区2' },
+        ]);
+
+      const result = await repo.findChildrenByParentEnriched(PARENT_ID);
+
+      expect(result).toHaveLength(3);
+      expect(pg.tenantQuery).toHaveBeenCalledTimes(2); // 2 distinct tenants, 非 3 个 binding
+      const byId = Object.fromEntries(result.map((r) => [r.id, r]));
+      expect(byId['b1'].studentName).toBe('A');
+      expect(byId['b2'].studentName).toBe('C');
+      expect(byId['b3'].studentName).toBe('B');
+      expect(byId['b3'].campusName).toBe('校区2');
+    });
+
+    it('无绑定 → 返回空数组，不发 tenant query', async () => {
+      pg.query.mockResolvedValueOnce([]);
+      const result = await repo.findChildrenByParentEnriched(PARENT_ID);
+      expect(result).toEqual([]);
+      expect(pg.tenantQuery).not.toHaveBeenCalled();
+    });
+
+    it('fail-open: tenant enrich 抛错 → 基础 binding + parentCount 仍返回（不阻断 C 端）', async () => {
+      pg.query.mockResolvedValueOnce([bindingRow()]);
+      pg.tenantQuery.mockRejectedValueOnce(new Error('permission denied'));
+
+      const result = await repo.findChildrenByParentEnriched(PARENT_ID);
+
+      expect(result).toHaveLength(1);
+      // 增强字段缺失但不抛错
+      expect(result[0].studentName).toBeUndefined();
+      expect(result[0].campusName).toBeUndefined();
+      // parentCount 来自 public 聚合，不受 tenant query 失败影响
+      expect(result[0].parentCount).toBe(2);
+    });
+
+    it('student 行 NULL 字段（如 grade_or_age 未填）→ undefined 不报错', async () => {
+      pg.query.mockResolvedValueOnce([bindingRow()]);
+      pg.tenantQuery.mockResolvedValueOnce([
+        { student_id: S1, student_name: '王小明', grade_or_age: null, campus_name: null },
+      ]);
+
+      const result = await repo.findChildrenByParentEnriched(PARENT_ID);
+
+      expect(result[0].studentName).toBe('王小明');
+      expect(result[0].gradeOrAge).toBeUndefined();
+      expect(result[0].campusName).toBeUndefined();
+    });
+  });
+
+  // ============================================================
   // V44 软删除联动 — expireBindingsForDeletedStudents
   // 来源：2026-05-16 T12 spec §3.3 §4 / R1 audit P0-3
   // ============================================================

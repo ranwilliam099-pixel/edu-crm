@@ -224,6 +224,102 @@ export class ParentRepository {
     return rows.map((r) => this.mapBindingRow(r));
   }
 
+  /**
+   * Phase 3 (2026-05-30 item #2) — 我的孩子列表 + 可读字段
+   *
+   * 背景：C 端 c/binding/children 现 fallback「孩子」「—」「—」parentCount=1，需补真值。
+   *
+   * 跨 schema 难点：
+   *   - public.parent_student_bindings（家长可跨机构绑多孩，binding.tenant_id 标记各孩所属租户）
+   *   - students / campuses 在 **per-tenant** schema（tenant_<tenantId 小写>），不能与 public binding 同 query JOIN
+   *   - students 表 **无 campus_id 列**（V2/V28/V44/V55 核实）→ 校区经 customer 间接 JOIN：
+   *       students.customer_id → customers.campus_id → campuses.name
+   *
+   * 防 N+1 策略：
+   *   1. 单条 public query 取 active bindings + parentCount（同学员 active 家长数，public 内聚合）
+   *   2. 按 tenant_id 分组；**每个 distinct 租户仅 1 条 tenant query**（students = ANY(ids) 批量），
+   *      非每 binding 一条。典型家长 1-2 个租户 → 1-2 条额外 query。
+   *   3. 内存 merge 回 binding。
+   *
+   * PII 自查：仅返回 student_name / grade_or_age / campus.name；**不返手机号/身份证**（C 端孩子卡只需可读身份）。
+   *
+   * 失败隔离：单租户 enrich query 抛错 → logger.warn 跳过该租户增强字段（fail-open，
+   *   绑定基础信息仍返回，不阻断 C 端列表）。parentCount 来自 public 聚合，不受 tenant query 影响。
+   */
+  async findChildrenByParentEnriched(parentId: string): Promise<ParentStudentBinding[]> {
+    // 1. public：bindings + parentCount（关联子查询统计同学员 active 家长数）
+    const rows = await this.pg.query<any>(
+      `SELECT b.id, b.parent_id, b.student_id, b.tenant_id, b.is_primary, b.relationship,
+              b.binding_status, b.bound_at, b.unbound_at,
+              (SELECT COUNT(*) FROM public.parent_student_bindings pc
+                 WHERE pc.student_id = b.student_id
+                   AND pc.binding_status = 'active') AS parent_count
+       FROM public.parent_student_bindings b
+       WHERE b.parent_id = $1 AND b.binding_status = 'active'`,
+      [parentId],
+    );
+
+    const bindings: ParentStudentBinding[] = rows.map((r) => ({
+      ...this.mapBindingRow(r),
+      parentCount: r.parent_count != null ? Number(r.parent_count) : undefined,
+    }));
+
+    if (bindings.length === 0) return bindings;
+
+    // 2. 按 tenant_id 分组 student_id
+    const byTenant = new Map<string, string[]>();
+    for (const b of bindings) {
+      const arr = byTenant.get(b.tenantId) ?? [];
+      arr.push(b.studentId);
+      byTenant.set(b.tenantId, arr);
+    }
+
+    // 3. 每租户 1 条 tenant query 批量取 student 可读字段（students 无 campus_id → 经 customer 间接 JOIN）
+    for (const [tenantId, studentIds] of byTenant.entries()) {
+      const tenantSchema = `tenant_${tenantId.toLowerCase()}`;
+      // 防御：schema 名格式不合法（脏 tenant_id）→ 跳过该租户增强（fail-open）
+      if (!/^tenant_[a-z0-9_]+$/.test(tenantSchema)) {
+        this.logger.warn(
+          `[Phase3 item#2] skip enrich: invalid tenantSchema from tenant_id=${tenantId}`,
+        );
+        continue;
+      }
+      try {
+        const sRows = await this.pg.tenantQuery<any>(
+          tenantSchema,
+          `SELECT s.id            AS student_id,
+                  s.student_name  AS student_name,
+                  s.grade_or_age  AS grade_or_age,
+                  cp.name         AS campus_name
+             FROM students s
+             LEFT JOIN customers cu ON cu.id = s.customer_id
+             LEFT JOIN campuses  cp ON cp.id = cu.campus_id
+            WHERE s.id = ANY($1) AND s.deleted_at IS NULL`,
+          [studentIds],
+        );
+        const enrichMap = new Map<string, any>();
+        for (const sr of sRows) enrichMap.set(sr.student_id, sr);
+        for (const b of bindings) {
+          if (b.tenantId !== tenantId) continue;
+          const e = enrichMap.get(b.studentId);
+          if (!e) continue;
+          b.studentName = e.student_name ?? undefined;
+          b.gradeOrAge = e.grade_or_age ?? undefined;
+          b.campusName = e.campus_name ?? undefined;
+        }
+      } catch (err) {
+        // fail-open：增强失败不阻断 C 端列表，基础 binding + parentCount 仍返回
+        this.logger.warn(
+          `[Phase3 item#2] enrich tenant=${tenantSchema} failed, fallback to base binding: ${
+            (err as Error)?.message ?? err
+          }`,
+        );
+      }
+    }
+
+    return bindings;
+  }
+
   async unbind(bindingId: string): Promise<ParentStudentBinding> {
     const rows = await this.pg.query<any>(
       `UPDATE public.parent_student_bindings

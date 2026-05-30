@@ -113,12 +113,15 @@ export class TeacherService {
   }
 
   /**
-   * 2026-05-23 (task #32) teacher list + 真值 stats (rating + studentCount)
+   * 2026-05-23 (task #32) teacher list + 真值 stats (rating + studentCount + referralCount)
    *   schedule/new 排课页选老师 / teacher-showcase/list 销售拉新视角用
+   *   Phase 3 (2026-05-30 item #5): 增 referralCount（status='rated' 推荐成功数）
    */
   async listWithStatsFromDb(
     tenantSchema: string,
-  ): Promise<Array<Teacher & { rating: number; studentCount: number }>> {
+  ): Promise<
+    Array<Teacher & { rating: number; studentCount: number; referralCount: number }>
+  > {
     if (!this.repo) {
       throw new BadRequestException('TeacherRepository not available');
     }

@@ -428,4 +428,47 @@ describe('TeacherRepository (V28 archive + V34 字段加密双写双读)', () =>
       expect(candidatesSql).toMatch(/status = '在职' AND deleted_at IS NULL/);
     });
   });
+
+  // Phase 3 (2026-05-30 item #5) — teacher-showcase 推荐量 refCount
+  describe('listActiveWithStatsInTenant (rating + studentCount + referralCount)', () => {
+    it('映射 rating / student_count / referral_count 三个聚合值', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          ...teacherRow({ id: TEACHER_A }),
+          rating: '4.5',
+          student_count: '12',
+          referral_count: '3',
+        },
+      ]);
+
+      const result = await repo.listActiveWithStatsInTenant(TENANT);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].rating).toBe(4.5);
+      expect(result[0].studentCount).toBe(12);
+      expect(result[0].referralCount).toBe(3);
+    });
+
+    it('SQL: referral_count 子查询按 teacher_id + status=rated 计数（成功态口径）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+
+      await repo.listActiveWithStatsInTenant(TENANT);
+
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toMatch(/FROM parent_referrals pr/);
+      expect(sql).toMatch(/pr\.teacher_id = t\.id AND pr\.status = 'rated'/);
+      // 不计入 created / trialed / expired
+      expect(sql).not.toMatch(/status IN \('rated','trialed'/);
+    });
+
+    it('referral_count NULL/缺列 → 0（COALESCE 兜底 + Number || 0）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...teacherRow({ id: TEACHER_A }), rating: '0', student_count: '0', referral_count: null },
+      ]);
+
+      const result = await repo.listActiveWithStatsInTenant(TENANT);
+
+      expect(result[0].referralCount).toBe(0);
+    });
+  });
 });

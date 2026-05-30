@@ -330,6 +330,23 @@ describe('ParentService - V10 BE-V10-1 PD §5 + 用户拍板条目 31/32', () =>
             boundAt: new Date(),
           },
         ]),
+        // Phase 3 (2026-05-30 item #2) — listMyChildrenInDb 改走 enriched 版（带可读字段 + parentCount）
+        findChildrenByParentEnriched: jest.fn().mockResolvedValue([
+          {
+            id: ULID_BINDING_OWN,
+            parentId: ULID32_P1,
+            studentId: ULID32_S1,
+            tenantId: ULID32_T1,
+            isPrimary: true,
+            relationship: 'mother' as Relationship,
+            bindingStatus: 'active' as const,
+            boundAt: new Date(),
+            studentName: '王小明',
+            gradeOrAge: '初三',
+            campusName: '海淀校区',
+            parentCount: 2,
+          },
+        ]),
         unbind: jest.fn(async (id: string) => ({
           id,
           parentId: ULID32_P1,
@@ -414,11 +431,17 @@ describe('ParentService - V10 BE-V10-1 PD §5 + 用户拍板条目 31/32', () =>
       ).resolves.toBeDefined();
     });
 
-    it('listMyChildrenInDb: caller === parentId → 放行', async () => {
+    it('listMyChildrenInDb: caller === parentId → 放行（走 enriched 版 + 带可读字段）', async () => {
       const repo = makeRepoMock();
       const svc = buildWithRepo(repo);
-      await expect(svc.listMyChildrenInDb(ULID32_P1, ULID32_P1)).resolves.toBeDefined();
-      expect(repo.findChildrenByParent).toHaveBeenCalledWith(ULID32_P1);
+      const result = await svc.listMyChildrenInDb(ULID32_P1, ULID32_P1);
+      // Phase 3 item#2: 改调 findChildrenByParentEnriched（非 findChildrenByParent）
+      expect(repo.findChildrenByParentEnriched).toHaveBeenCalledWith(ULID32_P1);
+      expect(repo.findChildrenByParent).not.toHaveBeenCalled();
+      expect(result[0].studentName).toBe('王小明');
+      expect(result[0].gradeOrAge).toBe('初三');
+      expect(result[0].campusName).toBe('海淀校区');
+      expect(result[0].parentCount).toBe(2);
     });
 
     it('listMyChildrenInDb: caller !== parentId → ForbiddenException + 不查 DB', async () => {
@@ -428,7 +451,7 @@ describe('ParentService - V10 BE-V10-1 PD §5 + 用户拍板条目 31/32', () =>
       await expect(
         svc.listMyChildrenInDb(ULID32_P2, ULID32_P1),
       ).rejects.toThrow(ForbiddenException);
-      expect(repo.findChildrenByParent).not.toHaveBeenCalled();
+      expect(repo.findChildrenByParentEnriched).not.toHaveBeenCalled();
     });
 
     it('unbindBindingInDb: caller 拥有该 binding → 放行', async () => {

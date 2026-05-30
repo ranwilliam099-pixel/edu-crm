@@ -113,19 +113,27 @@ export class TeacherRepository {
    * 2026-05-23 (task #32) active 教师 + 真值 stats:
    *   - rating = teacher_ratings.avg_stars (V24, NULL → 0)
    *   - studentCount = COUNT(student_teacher_bindings WHERE status='active')
+   *   - referralCount = COUNT(parent_referrals WHERE teacher_id=t.id AND status='rated')
+   *       Phase 3 (2026-05-30 item #5): 老师推荐量 — teacher-showcase 现 refCount=0
+   *       「成功态」按 referral.repository.ts §16 口径 = status='rated'（B 评价后才计数 +1）
+   *       created（未试听）/ trialed（待评价）/ expired 均不计入
    *
-   * 单 SQL LEFT JOIN 避免 N+1
+   * 单 SQL 相关子查询避免 N+1（与 student_count 同模式）
    * 用例: schedule/new + teacher-showcase/list
    */
   async listActiveWithStatsInTenant(
     tenantSchema: string,
-  ): Promise<Array<Teacher & { rating: number; studentCount: number }>> {
+  ): Promise<
+    Array<Teacher & { rating: number; studentCount: number; referralCount: number }>
+  > {
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
       `SELECT t.id, t.campus_id, t.name, t.phone, t.phone_encrypted, t.user_id, t.subjects, t.status,
               COALESCE(tr.avg_stars, 0) AS rating,
               COALESCE((SELECT COUNT(*) FROM student_teacher_bindings b
-                          WHERE b.teacher_id = t.id AND b.status = 'active'), 0) AS student_count
+                          WHERE b.teacher_id = t.id AND b.status = 'active'), 0) AS student_count,
+              COALESCE((SELECT COUNT(*) FROM parent_referrals pr
+                          WHERE pr.teacher_id = t.id AND pr.status = 'rated'), 0) AS referral_count
          FROM teachers t
          LEFT JOIN teacher_ratings tr ON tr.teacher_id = t.id
         WHERE t.status = '在职' AND t.deleted_at IS NULL
@@ -135,6 +143,7 @@ export class TeacherRepository {
       ...this.mapRow(r),
       rating: Number(r.rating) || 0,
       studentCount: Number(r.student_count) || 0,
+      referralCount: Number(r.referral_count) || 0,
     }));
   }
 
