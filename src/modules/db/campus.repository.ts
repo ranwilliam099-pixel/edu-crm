@@ -41,6 +41,21 @@ export class CampusRepository {
     return rows.map((r) => this.mapRow(r));
   }
 
+  /**
+   * 单条查询（tenant_id + id 双条件隔离）。
+   * 用途：updateCampus 审计前态快照（before/after diff）；不存在返 null（调用方决定 404 时机）。
+   */
+  async findById(tenantId: string, id: string): Promise<Campus | null> {
+    const rows = await this.pg.query<any>(
+      `SELECT id, tenant_id, name, city, district, address,
+              student_count, teacher_count, status, is_hq, created_at
+       FROM public.campuses
+       WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId],
+    );
+    return rows.length ? this.mapRow(rows[0]) : null;
+  }
+
   async create(
     tenantId: string,
     dto: {

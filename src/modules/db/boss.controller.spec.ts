@@ -44,12 +44,15 @@ import { BossController } from './boss.controller';
 import { CampusRepository, Campus } from './campus.repository';
 import { SubscriptionRepository, Subscription, PlanTier } from './subscription.repository';
 import { PgPoolService } from './pg-pool.service';
+import { AuditLogRepository } from './audit-log.repository';
+import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 describe('BossController (5/20 stryker 0% coverage 修补)', () => {
   let controller: BossController;
   let campusRepo: {
     create: jest.Mock;
     update: jest.Mock;
+    findById: jest.Mock;
     list: jest.Mock;
     getStats30d: jest.Mock;
   };
@@ -58,10 +61,25 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
     getCurrent: jest.Mock;
   };
   let pg: { query: jest.Mock };
+  let auditLog: { log: jest.Mock };
 
   // 32-char ULID 固定值
   const TENANT_ID = 'tenantBoss0000000000000000000B01';
   const CAMPUS_ID = 'campusBoss0000000000000000000B01';
+  // 派生 schema（与 controller schemaOf / TenantScopeGuard expectedSchema 同源）
+  const TENANT_SCHEMA = `tenant_${TENANT_ID.toLowerCase()}`;
+
+  // @Req() fixture — @Roles('admin')，含溯源字段（ip / user-agent / x-request-id）
+  const ADMIN_REQ = {
+    user: {
+      sub: 'usrAdminBoss00000000000000000B01',
+      role: 'admin',
+      tenantId: TENANT_ID,
+      campusId: null,
+    },
+    ip: '10.0.0.9',
+    headers: { 'user-agent': 'jest', 'x-request-id': 'req-boss-001' },
+  } as unknown as AuthenticatedRequest;
 
   function campusFixture(overrides: Partial<Campus> = {}): Campus {
     return {
@@ -103,6 +121,7 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
     campusRepo = {
       create: jest.fn(),
       update: jest.fn(),
+      findById: jest.fn(),
       list: jest.fn(),
       getStats30d: jest.fn(),
     };
@@ -111,10 +130,12 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
       getCurrent: jest.fn(),
     };
     pg = { query: jest.fn() };
+    auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = new BossController(
       campusRepo as unknown as CampusRepository,
       subRepo as unknown as SubscriptionRepository,
       pg as unknown as PgPoolService,
+      auditLog as unknown as AuditLogRepository,
     );
   });
 
@@ -227,50 +248,51 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
 
     it('tenantId 缺 → BadRequest "tenantId must be 32-char ULID"', async () => {
       const body = { ...validBody(), tenantId: '' };
-      await expect(controller.createCampus(body)).rejects.toThrow(
+      await expect(controller.createCampus(body, ADMIN_REQ)).rejects.toThrow(
         'tenantId must be 32-char ULID',
       );
       expect(campusRepo.create).not.toHaveBeenCalled();
+      expect(auditLog.log).not.toHaveBeenCalled(); // 校验先于留痕
     });
 
     it('tenantId 长度 31 → BadRequest', async () => {
       const body = { ...validBody(), tenantId: 'a'.repeat(31) };
-      await expect(controller.createCampus(body)).rejects.toThrow(
+      await expect(controller.createCampus(body, ADMIN_REQ)).rejects.toThrow(
         'tenantId must be 32-char ULID',
       );
     });
 
     it('tenantId 长度 33 → BadRequest', async () => {
       const body = { ...validBody(), tenantId: 'a'.repeat(33) };
-      await expect(controller.createCampus(body)).rejects.toThrow(
+      await expect(controller.createCampus(body, ADMIN_REQ)).rejects.toThrow(
         'tenantId must be 32-char ULID',
       );
     });
 
     it('id 缺 → BadRequest "id must be 32-char ULID"', async () => {
       const body = { ...validBody(), id: '' };
-      await expect(controller.createCampus(body)).rejects.toThrow(
+      await expect(controller.createCampus(body, ADMIN_REQ)).rejects.toThrow(
         'id must be 32-char ULID',
       );
     });
 
     it('id 长度 ≠ 32 → BadRequest', async () => {
       const body = { ...validBody(), id: 'a'.repeat(16) };
-      await expect(controller.createCampus(body)).rejects.toThrow(
+      await expect(controller.createCampus(body, ADMIN_REQ)).rejects.toThrow(
         'id must be 32-char ULID',
       );
     });
 
     it('name 缺 → BadRequest "name required"', async () => {
       const body = { ...validBody(), name: '' };
-      await expect(controller.createCampus(body)).rejects.toThrow('name required');
+      await expect(controller.createCampus(body, ADMIN_REQ)).rejects.toThrow('name required');
     });
 
     it('happy path 转交 campusRepo.create(tenantId, dto)', async () => {
       const c = campusFixture();
       campusRepo.create.mockResolvedValueOnce(c);
 
-      const result = await controller.createCampus(validBody());
+      const result = await controller.createCampus(validBody(), ADMIN_REQ);
 
       expect(campusRepo.create).toHaveBeenCalledWith(TENANT_ID, {
         id: CAMPUS_ID,
@@ -281,16 +303,35 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
         isHq: true,
       });
       expect(result).toEqual(c);
+      // #25 audit_log：campus.created 落 tenant schema（actor + 溯源透传）
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({
+          actorUserId: 'usrAdminBoss00000000000000000B01',
+          actorRole: 'admin',
+          action: 'campus.create',
+          targetType: 'campus',
+          targetId: c.id,
+          before: null,
+          after: { name: '主校区', city: '北京', district: '朝阳', isHq: true },
+          ip: '10.0.0.9',
+          userAgent: 'jest',
+          requestId: 'req-boss-001',
+        }),
+      );
     });
 
     it('可选字段 undefined → 透传 undefined 给 repo（不强转 null）', async () => {
       campusRepo.create.mockResolvedValueOnce(campusFixture());
 
-      await controller.createCampus({
-        tenantId: TENANT_ID,
-        id: CAMPUS_ID,
-        name: 'X',
-      });
+      await controller.createCampus(
+        {
+          tenantId: TENANT_ID,
+          id: CAMPUS_ID,
+          name: 'X',
+        },
+        ADMIN_REQ,
+      );
 
       expect(campusRepo.create).toHaveBeenCalledWith(TENANT_ID, {
         id: CAMPUS_ID,
@@ -306,7 +347,7 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
       campusRepo.create.mockRejectedValueOnce(
         new NotFoundException(`tenant ${TENANT_ID} not found`),
       );
-      await expect(controller.createCampus(validBody())).rejects.toThrow(
+      await expect(controller.createCampus(validBody(), ADMIN_REQ)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -315,7 +356,7 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
       campusRepo.create.mockRejectedValueOnce(
         new BadRequestException('CAMPUS_LIMIT_REACHED: max 1, current 1'),
       );
-      await expect(controller.createCampus(validBody())).rejects.toThrow(
+      await expect(controller.createCampus(validBody(), ADMIN_REQ)).rejects.toThrow(
         'CAMPUS_LIMIT_REACHED',
       );
     });
@@ -337,21 +378,22 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
 
     it('tenantId 缺 → BadRequest "tenantId must be 32-char ULID"', async () => {
       const body = { ...validBody(), tenantId: '' };
-      await expect(controller.updateCampus(CAMPUS_ID, body)).rejects.toThrow(
+      await expect(controller.updateCampus(CAMPUS_ID, body, ADMIN_REQ)).rejects.toThrow(
         'tenantId must be 32-char ULID',
       );
       expect(campusRepo.update).not.toHaveBeenCalled();
+      expect(auditLog.log).not.toHaveBeenCalled(); // 校验先于留痕
     });
 
     it('tenantId 长度 ≠ 32 → BadRequest', async () => {
       const body = { ...validBody(), tenantId: 'a'.repeat(31) };
-      await expect(controller.updateCampus(CAMPUS_ID, body)).rejects.toThrow(
+      await expect(controller.updateCampus(CAMPUS_ID, body, ADMIN_REQ)).rejects.toThrow(
         'tenantId must be 32-char ULID',
       );
     });
 
     it('id 缺 → BadRequest "id must be 32-char ULID"', async () => {
-      await expect(controller.updateCampus('', validBody())).rejects.toThrow(
+      await expect(controller.updateCampus('', validBody(), ADMIN_REQ)).rejects.toThrow(
         'id must be 32-char ULID',
       );
       expect(campusRepo.update).not.toHaveBeenCalled();
@@ -359,16 +401,26 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
 
     it('id 长度 ≠ 32 → BadRequest', async () => {
       await expect(
-        controller.updateCampus('a'.repeat(16), validBody()),
+        controller.updateCampus('a'.repeat(16), validBody(), ADMIN_REQ),
       ).rejects.toThrow('id must be 32-char ULID');
     });
 
     it('happy path 转交 campusRepo.update(tenantId, id, patch)', async () => {
-      const c = campusFixture({ name: '改名校区' });
+      // 前态（findById 返回）：改名前的「主校区」默认快照
+      const beforeCampus = campusFixture();
+      campusRepo.findById.mockResolvedValueOnce(beforeCampus);
+      const c = campusFixture({
+        name: '改名校区',
+        city: '上海',
+        district: '浦东',
+        address: '世纪大道 1 号',
+      });
       campusRepo.update.mockResolvedValueOnce(c);
 
-      const result = await controller.updateCampus(CAMPUS_ID, validBody());
+      const result = await controller.updateCampus(CAMPUS_ID, validBody(), ADMIN_REQ);
 
+      // 前态查询用 tenant_id + id 双条件（隔离）
+      expect(campusRepo.findById).toHaveBeenCalledWith(TENANT_ID, CAMPUS_ID);
       expect(campusRepo.update).toHaveBeenCalledWith(TENANT_ID, CAMPUS_ID, {
         name: '改名校区',
         city: '上海',
@@ -376,12 +428,38 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
         address: '世纪大道 1 号',
       });
       expect(result).toEqual(c);
+      // #25 audit_log：campus.update 落 tenant schema，before=前态快照 / after=更新后状态
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({
+          actorUserId: 'usrAdminBoss00000000000000000B01',
+          actorRole: 'admin',
+          action: 'campus.update',
+          targetType: 'campus',
+          targetId: CAMPUS_ID,
+          before: {
+            name: '主校区',
+            city: '北京',
+            district: '朝阳',
+            address: '北京市朝阳区某路 100 号',
+          },
+          after: {
+            name: '改名校区',
+            city: '上海',
+            district: '浦东',
+            address: '世纪大道 1 号',
+          },
+          ip: '10.0.0.9',
+          userAgent: 'jest',
+          requestId: 'req-boss-001',
+        }),
+      );
     });
 
     it('可选字段 undefined → 透传 undefined 给 repo（仅 tenantId 必填）', async () => {
       campusRepo.update.mockResolvedValueOnce(campusFixture());
 
-      await controller.updateCampus(CAMPUS_ID, { tenantId: TENANT_ID });
+      await controller.updateCampus(CAMPUS_ID, { tenantId: TENANT_ID }, ADMIN_REQ);
 
       expect(campusRepo.update).toHaveBeenCalledWith(TENANT_ID, CAMPUS_ID, {
         name: undefined,
@@ -396,7 +474,7 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
         new NotFoundException(`campus ${CAMPUS_ID} not found for tenant ${TENANT_ID}`),
       );
       await expect(
-        controller.updateCampus(CAMPUS_ID, validBody()),
+        controller.updateCampus(CAMPUS_ID, validBody(), ADMIN_REQ),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -405,7 +483,7 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
         new BadRequestException('至少传一个 patch 字段 (name/city/district/address)'),
       );
       await expect(
-        controller.updateCampus(CAMPUS_ID, { tenantId: TENANT_ID }),
+        controller.updateCampus(CAMPUS_ID, { tenantId: TENANT_ID }, ADMIN_REQ),
       ).rejects.toThrow('至少传一个 patch 字段');
     });
   });
@@ -474,20 +552,27 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
   describe('upgradeSubscription()', () => {
     it('tenantId 缺 → BadRequest', async () => {
       await expect(
-        controller.upgradeSubscription({
-          tenantId: '',
-          targetPlan: 'growth',
-        }),
+        controller.upgradeSubscription(
+          {
+            tenantId: '',
+            targetPlan: 'growth',
+          },
+          ADMIN_REQ,
+        ),
       ).rejects.toThrow('tenantId required');
       expect(subRepo.upgrade).not.toHaveBeenCalled();
+      expect(auditLog.log).not.toHaveBeenCalled(); // 校验先于留痕
     });
 
     it('targetPlan 缺 → BadRequest', async () => {
       await expect(
-        controller.upgradeSubscription({
-          tenantId: TENANT_ID,
-          targetPlan: '' as PlanTier,
-        }),
+        controller.upgradeSubscription(
+          {
+            tenantId: TENANT_ID,
+            targetPlan: '' as PlanTier,
+          },
+          ADMIN_REQ,
+        ),
       ).rejects.toThrow('targetPlan required');
       expect(subRepo.upgrade).not.toHaveBeenCalled();
     });
@@ -503,13 +588,32 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
       };
       subRepo.upgrade.mockResolvedValueOnce(upgradeResult);
 
-      const result = await controller.upgradeSubscription({
-        tenantId: TENANT_ID,
-        targetPlan: 'growth',
-      });
+      const result = await controller.upgradeSubscription(
+        {
+          tenantId: TENANT_ID,
+          targetPlan: 'growth',
+        },
+        ADMIN_REQ,
+      );
 
       expect(subRepo.upgrade).toHaveBeenCalledWith(TENANT_ID, 'growth');
       expect(result).toEqual(upgradeResult);
+      // #25 audit_log：subscription.upgraded 落 tenant schema，before/after 记 plan 变更
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({
+          actorUserId: 'usrAdminBoss00000000000000000B01',
+          actorRole: 'admin',
+          action: 'subscription.upgrade',
+          targetType: 'subscription',
+          targetId: TENANT_ID,
+          before: { plan: 'single' },
+          after: { plan: 'growth', priceDiff: 3998 },
+          ip: '10.0.0.9',
+          userAgent: 'jest',
+          requestId: 'req-boss-001',
+        }),
+      );
     });
 
     it('service 抛 BadRequest invalid plan → 透传', async () => {
@@ -517,10 +621,13 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
         new BadRequestException('invalid targetPlan: bogus'),
       );
       await expect(
-        controller.upgradeSubscription({
-          tenantId: TENANT_ID,
-          targetPlan: 'bogus' as PlanTier,
-        }),
+        controller.upgradeSubscription(
+          {
+            tenantId: TENANT_ID,
+            targetPlan: 'bogus' as PlanTier,
+          },
+          ADMIN_REQ,
+        ),
       ).rejects.toThrow('invalid targetPlan');
     });
   });

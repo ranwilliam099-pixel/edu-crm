@@ -93,6 +93,25 @@ describe('CampusRepository', () => {
     });
   });
 
+  describe('findById (#25 audit 前态快照)', () => {
+    it('returns mapped Campus + WHERE id=$1 AND tenant_id=$2（隔离）', async () => {
+      pg.query.mockResolvedValueOnce([ROW]);
+      const r = await repo.findById(TENANT_ID, CAMPUS.id);
+      expect(r).not.toBeNull();
+      expect(r!.id).toBe(CAMPUS.id);
+      expect(r!.name).toBe('海淀校区');
+      const sql = pg.query.mock.calls[0][0] as string;
+      expect(sql).toContain('WHERE id = $1 AND tenant_id = $2');
+      expect(pg.query.mock.calls[0][1]).toEqual([CAMPUS.id, TENANT_ID]);
+    });
+
+    it('returns null when not found（不存在/跨租户）', async () => {
+      pg.query.mockResolvedValueOnce([]);
+      const r = await repo.findById(TENANT_ID, CAMPUS.id);
+      expect(r).toBeNull();
+    });
+  });
+
   describe('update (2026-05-30 #18 校区编辑)', () => {
     it('只更新非空字段 + tenant_id WHERE 隔离', async () => {
       pg.query.mockResolvedValueOnce([{ ...ROW, name: '新名字' }]);
