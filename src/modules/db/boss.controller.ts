@@ -18,6 +18,8 @@ import {
 } from './subscription.repository';
 import { PgPoolService } from './pg-pool.service';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
+import { RbacGuard } from '../../guards/rbac.guard';
+import { Roles } from '../../guards/rbac.decorator';
 
 /**
  * BossController — V19 Boss 视角校区 + 订阅管理 HTTP 暴露
@@ -43,6 +45,8 @@ export class BossController {
   // ===== tenant =====
 
   @Get('tenant/info')
+  @UseGuards(RbacGuard)
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async tenantInfo(@Query('tenantId') tenantId: string): Promise<{
     tenantId: string;
@@ -88,6 +92,8 @@ export class BossController {
   // ===== campuses =====
 
   @Post('campuses')
+  @UseGuards(RbacGuard)
+  @Roles('admin')
   @HttpCode(HttpStatus.CREATED)
   async createCampus(
     @Body()
@@ -121,6 +127,8 @@ export class BossController {
   }
 
   @Post('campuses/list')
+  @UseGuards(RbacGuard)
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async listCampuses(@Body() body: { tenantId: string }): Promise<Campus[]> {
     if (!body.tenantId) {
@@ -130,6 +138,8 @@ export class BossController {
   }
 
   @Post('campuses/stats')
+  @UseGuards(RbacGuard)
+  @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async campusStats(@Body() body: { tenantId: string }) {
     if (!body.tenantId) {
@@ -141,6 +151,8 @@ export class BossController {
   // ===== subscription =====
 
   @Post('subscription/upgrade')
+  @UseGuards(RbacGuard)
+  @Roles('admin')
   @HttpCode(HttpStatus.OK)
   async upgradeSubscription(
     @Body() body: { tenantId: string; targetPlan: PlanTier },
@@ -155,6 +167,8 @@ export class BossController {
   }
 
   @Get('subscription')
+  @UseGuards(RbacGuard)
+  @Roles('admin')
   @HttpCode(HttpStatus.OK)
   async getSubscription(
     @Query('tenantId') tenantId: string,
