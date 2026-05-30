@@ -389,7 +389,8 @@ describe('ParentBindingController.listParentsForStudent (Phase 3 item #3, 客户
       findParentsForStudent: jest.fn().mockResolvedValue([MASKED_ITEM]),
     };
     studentRepo = {
-      findBrief: jest.fn().mockResolvedValue({ id: ULID32_STUDENT, studentName: 'X' }),
+      // ownerSalesId = makeReq sub（ULID32_STAFF）→ sales owner check 默认放行 happy path
+      findBrief: jest.fn().mockResolvedValue({ id: ULID32_STUDENT, studentName: 'X', ownerSalesId: ULID32_STAFF }),
     };
     phoneLookup = { lookupByPhone: jest.fn() };
     auditLog = { log: jest.fn() };
@@ -463,11 +464,36 @@ describe('ParentBindingController.listParentsForStudent (Phase 3 item #3, 客户
     expect(parentRepo.findParentsForStudent).not.toHaveBeenCalled();
   });
 
-  it('不传 tenantSchema → 跳过 findBrief 校验，仍按 jwt.tenantId 查（repo tenant_id 兜底隔离）', async () => {
+  it('不传 tenantSchema → 由 jwt.tenantId 派生 schema 查 student（owner + 防探测）', async () => {
     const body = { tenantId: ULID32_T, studentId: ULID32_STUDENT };
     const res = await controller.listParentsForStudent(body, makeReq('sales'));
-    expect(studentRepo.findBrief).not.toHaveBeenCalled();
+    expect(studentRepo.findBrief).toHaveBeenCalledWith(
+      `tenant_${ULID32_T.toLowerCase()}`,
+      ULID32_STUDENT,
+    );
     expect(parentRepo.findParentsForStudent).toHaveBeenCalledWith(ULID32_STUDENT, ULID32_T);
+    expect(res.items).toEqual([MASKED_ITEM]);
+  });
+
+  it('sales 查非自己客户的家长 → 403（SSOT §4.1 仅自己客户）', async () => {
+    studentRepo.findBrief.mockResolvedValueOnce({
+      id: ULID32_STUDENT,
+      studentName: 'X',
+      ownerSalesId: ULID32_BINDING, // 别人名下（≠ makeReq sub ULID32_STAFF）
+    });
+    await expect(
+      controller.listParentsForStudent(validBody(), makeReq('sales')),
+    ).rejects.toThrow(ForbiddenException);
+    expect(parentRepo.findParentsForStudent).not.toHaveBeenCalled();
+  });
+
+  it('academic 查非自己 owner 的 student 家长 → 放行（本校不限 owner，SSOT §4.1）', async () => {
+    studentRepo.findBrief.mockResolvedValueOnce({
+      id: ULID32_STUDENT,
+      studentName: 'X',
+      ownerSalesId: ULID32_BINDING, // 非该 academic owner，但 academic 不限 owner
+    });
+    const res = await controller.listParentsForStudent(validBody(), makeReq('academic'));
     expect(res.items).toEqual([MASKED_ITEM]);
   });
 });

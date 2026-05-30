@@ -272,15 +272,19 @@ export class ParentBindingController {
       throw new ForbiddenException('tenant role requires non-null tenantId');
     }
 
-    // 若提供 tenantSchema，校验 studentId 确属本 tenant schema（友好 404 + 防探测）。
-    //   findBrief 内部 deleted_at IS NULL 过滤（V44 软删）。
-    if (body.tenantSchema) {
-      const student = await this.studentRepo.findBrief(body.tenantSchema, body.studentId);
-      if (!student) {
-        throw new NotFoundException(
-          `student ${body.studentId} not found in current tenant`,
-        );
-      }
+    // 校验 studentId 属本 tenant schema（友好 404 + 防探测）+ sales owner scope。
+    //   schema 优先用 body.tenantSchema，否则由 jwt.tenantId 派生；findBrief 内 deleted_at IS NULL（V44 软删）。
+    const tenantSchema = body.tenantSchema || `tenant_${jwtTenantId.toLowerCase()}`;
+    const student = await this.studentRepo.findBrief(tenantSchema, body.studentId);
+    if (!student) {
+      throw new NotFoundException(
+        `student ${body.studentId} not found in current tenant`,
+      );
+    }
+    // SSOT §4.1 家长联系人可见性：sales 仅「自己客户」(owner_sales_id=自己)；
+    //   academic/academic_admin/admin/boss 本校/全权不限 owner；sales_manager 暂不限（团队 scope 另议）。
+    if (req.user?.role === 'sales' && student.ownerSalesId !== req.user?.sub) {
+      throw new ForbiddenException('sales 仅可查看自己名下客户的家长联系人 (SSOT §4.1)');
     }
 
     const items = await this.parentRepo.findParentsForStudent(
