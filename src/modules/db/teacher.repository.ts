@@ -85,14 +85,26 @@ export class TeacherRepository {
    * 查询 tenant 内全部 active 教师（用于 V8 排课 schedulableTeachers）
    * V44: deleted_at IS NULL 排除已软删（status='在职' 已隐含未归档，但软删层独立）
    */
-  async listActiveInTenant(tenantSchema: string): Promise<Teacher[]> {
+  async listActiveInTenant(
+    tenantSchema: string,
+    // 2026-05-30 #18: 校区看师生 — 可选 campusId 过滤（teachers.campus_id NOT NULL）
+    //   传了就 WHERE campus_id = $1，不传保持全返（向后兼容旧无参调用方）
+    options: { campusId?: string } = {},
+  ): Promise<Teacher[]> {
     // V50 (2026-05-19 X1): hourly_price_yuan 列已物理删除
+    const where: string[] = [`status = '在职'`, 'deleted_at IS NULL'];
+    const params: any[] = [];
+    if (options.campusId) {
+      params.push(options.campusId);
+      where.push(`campus_id = $${params.length}`);
+    }
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
       `SELECT id, campus_id, name, phone, phone_encrypted, user_id, subjects, status
        FROM teachers
-       WHERE status = '在职' AND deleted_at IS NULL
+       WHERE ${where.join(' AND ')}
        ORDER BY created_at DESC`,
+      params,
     );
     return rows.map((r) => this.mapRow(r));
   }

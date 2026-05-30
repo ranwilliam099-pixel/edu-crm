@@ -93,6 +93,61 @@ describe('CampusRepository', () => {
     });
   });
 
+  describe('update (2026-05-30 #18 校区编辑)', () => {
+    it('只更新非空字段 + tenant_id WHERE 隔离', async () => {
+      pg.query.mockResolvedValueOnce([{ ...ROW, name: '新名字' }]);
+      const r = await repo.update(TENANT_ID, CAMPUS.id, { name: '新名字' });
+      const [sql, params] = pg.query.mock.calls[0];
+      expect(sql).toContain('UPDATE public.campuses');
+      expect(sql).toContain('name = $1');
+      // tenant_id 必须在 WHERE（跨租户隔离）
+      expect(sql).toContain('WHERE id = $2 AND tenant_id = $3');
+      expect(params).toEqual(['新名字', CAMPUS.id, TENANT_ID]);
+      expect(r.name).toBe('新名字');
+    });
+
+    it('多字段 patch — name/city/district/address 全更', async () => {
+      pg.query.mockResolvedValueOnce([ROW]);
+      await repo.update(TENANT_ID, CAMPUS.id, {
+        name: 'N',
+        city: 'C',
+        district: 'D',
+        address: 'A',
+      });
+      const [sql, params] = pg.query.mock.calls[0];
+      expect(sql).toContain('name = $1');
+      expect(sql).toContain('city = $2');
+      expect(sql).toContain('district = $3');
+      expect(sql).toContain('address = $4');
+      // id=$5, tenant_id=$6
+      expect(params).toEqual(['N', 'C', 'D', 'A', CAMPUS.id, TENANT_ID]);
+    });
+
+    it('未更字段不进 SET（仅 city patch → 只有 city = $1）', async () => {
+      pg.query.mockResolvedValueOnce([ROW]);
+      await repo.update(TENANT_ID, CAMPUS.id, { city: '上海' });
+      const sql = pg.query.mock.calls[0][0] as string;
+      expect(sql).toContain('city = $1');
+      expect(sql).not.toContain('name =');
+      expect(sql).not.toContain('district =');
+      expect(sql).not.toContain('address =');
+    });
+
+    it('空 patch（无任何字段）→ BadRequestException 且不查 DB', async () => {
+      await expect(repo.update(TENANT_ID, CAMPUS.id, {})).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(pg.query).not.toHaveBeenCalled();
+    });
+
+    it('目标不存在 / 不属于该 tenant（UPDATE 返 0 行）→ NotFoundException', async () => {
+      pg.query.mockResolvedValueOnce([]);
+      await expect(
+        repo.update(TENANT_ID, CAMPUS.id, { name: 'X' }),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('getStats30d', () => {
     it('aggregates total + per-campus', async () => {
       pg.query.mockResolvedValueOnce([

@@ -18,6 +18,7 @@ import {
   StudentTeacherBinding,
   RecurringRbacContext,
 } from './recurring-schedule.service';
+import { PgPoolService } from '../db/pg-pool.service';
 
 const ULID32_B1 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLBND1';
 const ULID32_R1 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLREC1';
@@ -596,5 +597,88 @@ describe('RecurringScheduleService - V8.1 BE-V8-2 PD §3.6 (Wave 11 academic 唯
         );
       });
     });
+  });
+});
+
+// ============================================================
+// 2026-05-30 #17: listBindingsByStudent 回填 teacherName（LEFT JOIN teachers）
+//   service 注入 mock PgPoolService（默认 describe 无 pg，DB 路径单独建）
+// ============================================================
+describe('RecurringScheduleService.listBindingsByStudent (#17 老师名)', () => {
+  let service: RecurringScheduleService;
+  let pg: { tenantQuery: jest.Mock };
+
+  const TENANT = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const STUDENT = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMST1';
+  const TEACHER = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMTC1';
+
+  beforeEach(async () => {
+    pg = { tenantQuery: jest.fn() };
+    const m = await Test.createTestingModule({
+      providers: [
+        RecurringScheduleService,
+        { provide: PgPoolService, useValue: pg },
+      ],
+    }).compile();
+    service = m.get<RecurringScheduleService>(RecurringScheduleService);
+  });
+
+  it('SQL LEFT JOIN teachers + deleted_at IS NULL + SELECT t.name AS teacher_name', async () => {
+    pg.tenantQuery.mockResolvedValueOnce([]);
+    await service.listBindingsByStudent(TENANT, STUDENT);
+    const [, sql, params] = pg.tenantQuery.mock.calls[0];
+    expect(sql).toContain('LEFT JOIN teachers t ON t.id = b.teacher_id');
+    expect(sql).toContain('t.deleted_at IS NULL');
+    expect(sql).toContain('t.name AS teacher_name');
+    // 仍只查 active 绑定 + 按 student 过滤
+    expect(sql).toContain(`b.status = 'active'`);
+    expect(sql).toContain('b.student_id = $1');
+    expect(params).toEqual([STUDENT]);
+  });
+
+  it('teacher_name 命中 → 返回 teacherName 真名', async () => {
+    pg.tenantQuery.mockResolvedValueOnce([
+      {
+        id: '01HX7Y6P5K9N3M2QABCDEFGHIJKLBND1',
+        student_id: STUDENT,
+        teacher_id: TEACHER,
+        subject: '数学',
+        status: 'active',
+        bound_at: '2026-05-30T00:00:00.000Z',
+        unbound_at: null,
+        bound_by_user_id: '01HX7Y6P5K9N3M2QABCDEFGHIJKLMUS1',
+        teacher_name: '王老师',
+      },
+    ]);
+    const rows = await service.listBindingsByStudent(TENANT, STUDENT);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].teacherName).toBe('王老师');
+    expect(rows[0].teacherId).toBe(TEACHER);
+  });
+
+  it('teacher 已软删 / 缺失（teacher_name null）→ teacherName undefined（前端 fallback id 前缀）', async () => {
+    pg.tenantQuery.mockResolvedValueOnce([
+      {
+        id: '01HX7Y6P5K9N3M2QABCDEFGHIJKLBND1',
+        student_id: STUDENT,
+        teacher_id: TEACHER,
+        subject: null,
+        status: 'active',
+        bound_at: '2026-05-30T00:00:00.000Z',
+        unbound_at: null,
+        bound_by_user_id: '01HX7Y6P5K9N3M2QABCDEFGHIJKLMUS1',
+        teacher_name: null,
+      },
+    ]);
+    const rows = await service.listBindingsByStudent(TENANT, STUDENT);
+    expect(rows[0].teacherName).toBeUndefined();
+    // teacherId 仍返回（前端可用 id 前缀兜底）
+    expect(rows[0].teacherId).toBe(TEACHER);
+  });
+
+  it('无 pg（未注入）→ 返 []（保持原 fail-safe）', async () => {
+    const noPgService = new RecurringScheduleService();
+    const rows = await noPgService.listBindingsByStudent(TENANT, STUDENT);
+    expect(rows).toEqual([]);
   });
 });

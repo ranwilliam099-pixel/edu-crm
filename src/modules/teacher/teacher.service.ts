@@ -102,12 +102,14 @@ export class TeacherService {
 
   /**
    * 真查 PG
+   *
+   * 2026-05-30 #18: 校区看师生 — 可选 campusId 过滤透传 repo（不传全返，向后兼容）
    */
-  async listFromDb(tenantSchema: string): Promise<Teacher[]> {
+  async listFromDb(tenantSchema: string, options: { campusId?: string } = {}): Promise<Teacher[]> {
     if (!this.repo) {
       throw new BadRequestException('TeacherRepository not available');
     }
-    return this.repo.listActiveInTenant(tenantSchema);
+    return this.repo.listActiveInTenant(tenantSchema, { campusId: options.campusId });
   }
 
   /**

@@ -33,6 +33,10 @@ export interface StudentBrief {
   intendedSubject: string | null;
   // V29 R14.4 学员最新 active 合同的班型（用于排课时一致性校验）
   contractClassType?: string | null;
+  // 2026-05-30 #18: 校区看师生 — listAll 一并返回校区归属（来自 customers.campus_id JOIN）
+  //   students 表无 campus_id 列，学员随家庭主档归校区；仅 listAll 路径 JOIN 后有值，
+  //   其他路径（listByTeacher / findBrief 等无 JOIN）为 null
+  campusId?: string | null;
 }
 
 /**
@@ -102,6 +106,8 @@ export class StudentRepository {
       intendedSubject: r.intended_subject || null,
       // V29 R14.4 contract_class_type 来自 join 子查询（仅 listByTeacher 用，其他 SELECT 没 join 时为 null）
       contractClassType: r.contract_class_type || null,
+      // 2026-05-30 #18: campus_id 仅 listAll 路径 SELECT，其余路径无该列 → undefined → null
+      campusId: r.campus_id ?? null,
     };
   }
 
@@ -197,7 +203,14 @@ export class StudentRepository {
 
   async listAll(
     tenantSchema: string,
-    options: { limit?: number; offset?: number; ownerSalesId?: string; assignedTeacherId?: string } = {},
+    options: {
+      limit?: number;
+      offset?: number;
+      ownerSalesId?: string;
+      assignedTeacherId?: string;
+      // 2026-05-30 #18: 校区看师生 — 可选 campusId 过滤（不传保持全返，不破坏现有调用方）
+      campusId?: string;
+    } = {},
   ): Promise<StudentBrief[]> {
     const limit = options.limit ?? 100;
     const offset = options.offset ?? 0;
@@ -212,13 +225,25 @@ export class StudentRepository {
       params.push(options.assignedTeacherId);
       where.push(`s.assigned_teacher_id = $${params.length}`);
     }
+    // 2026-05-30 #18: campusId 传了才加 WHERE，不传不加（向后兼容）
+    //   注意：students 表无 campus_id 列（V2 schema 确认）；学员校区归属源 = 其家庭主档
+    //   customers.campus_id（NOT NULL）。故按 customer 的 campus 过滤。
+    if (options.campusId) {
+      params.push(options.campusId);
+      where.push(`cu.campus_id = $${params.length}`);
+    }
     params.push(limit, offset);
     const limitIdx = params.length - 1;
     const offsetIdx = params.length;
+    // LEFT JOIN customers 拿校区归属（cu.campus_id）：
+    //   - campusId 过滤走 cu.campus_id（学员随家庭主档归校区）
+    //   - SELECT cu.campus_id 一并返回 StudentBrief.campusId（前端校区视角展示）
+    //   LEFT JOIN 保证即使 customer 异常缺失也不丢学员行（campusId → null）
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `SELECT s.id, s.student_name, s.customer_id, s.owner_sales_id, s.assigned_teacher_id,
               s.owner_changed_at, s.owner_change_reason, s.grade_or_age, s.intended_subject,
+              cu.campus_id,
               (SELECT c.class_type FROM contracts c
                  WHERE c.student_id = s.id
                    AND c.status IN ('pending', 'active')
@@ -226,6 +251,7 @@ export class StudentRepository {
                  ORDER BY COALESCE(c.signed_at, c.created_at) DESC
                  LIMIT 1) AS contract_class_type
          FROM students s
+         LEFT JOIN customers cu ON cu.id = s.customer_id
          WHERE ${where.join(' AND ')}
          ORDER BY s.created_at DESC
          LIMIT $${limitIdx} OFFSET $${offsetIdx}`,

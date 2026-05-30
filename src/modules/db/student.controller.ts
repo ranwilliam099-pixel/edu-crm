@@ -356,6 +356,8 @@ export class StudentController {
       offset?: number;
       ownerSalesId?: string;
       assignedTeacherId?: string;
+      // 2026-05-30 #18: 校区看师生 — 可选 campusId 过滤（按学员家庭主档 customers.campus_id）
+      campusId?: string;
     },
     @Req() req: AuthenticatedRequest,
   ): Promise<{ items: StudentBrief[] }> {
@@ -391,6 +393,8 @@ export class StudentController {
       offset: body.offset || 0,
       ownerSalesId,
       assignedTeacherId,
+      // 2026-05-30 #18: 透传 campusId（不传 → repo 不加 WHERE，全返）
+      campusId: body.campusId,
     });
     return { items };
   }

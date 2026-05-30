@@ -196,8 +196,11 @@ export class TeacherController {
   // 2026-05-22 加 academic/academic_admin: 教务排课页选老师场景 + sales: showcase 销售拉新视角
   @Roles('admin', 'boss', 'sales_manager', 'academic', 'academic_admin', 'sales')
   @HttpCode(HttpStatus.OK)
-  async listFromDb(@Body() body: { tenantSchema: string }): Promise<Teacher[]> {
-    return this.service.listFromDb(body.tenantSchema);
+  async listFromDb(
+    // 2026-05-30 #18: 校区看师生 — 可选 campusId 过滤（不传全返，向后兼容现有调用方）
+    @Body() body: { tenantSchema: string; campusId?: string },
+  ): Promise<Teacher[]> {
+    return this.service.listFromDb(body.tenantSchema, { campusId: body.campusId });
   }
 
   /**

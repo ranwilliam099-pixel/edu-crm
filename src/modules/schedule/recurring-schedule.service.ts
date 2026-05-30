@@ -35,6 +35,9 @@ export interface StudentTeacherBinding {
   id: string;
   studentId: string;
   teacherId: string;
+  // 2026-05-30 #17: 绑定列表老师名 — listBindingsByStudent JOIN teachers 后回填真名
+  //   仅 DB 路径（listBindingsByStudent）有值；in-memory createBinding/unbindBinding 不回填 → undefined
+  teacherName?: string;
   subject?: string;
   status: 'active' | 'unbound';
   boundAt: Date;
@@ -114,18 +117,26 @@ export class RecurringScheduleService {
     studentId: string,
   ): Promise<StudentTeacherBinding[]> {
     if (!this.pg) return [];
+    // 2026-05-30 #17: LEFT JOIN teachers 取 t.name AS teacher_name
+    //   - deleted_at IS NULL 避免软删老师名误回填（已删老师 → name=null，前端 fallback id 前缀）
+    //   - LEFT JOIN（非 INNER）保证 teacher 异常缺失/已删时仍返绑定行，不静默丢数据
+    //   - b. 前缀消歧：避免 join 后 id/status 等同名列歧义
     const rows = await this.pg.tenantQuery<any>(
       tenantSchema,
-      `SELECT id, student_id, teacher_id, subject, status, bound_at, unbound_at, bound_by_user_id
-         FROM student_teacher_bindings
-        WHERE student_id = $1 AND status = 'active'
-        ORDER BY bound_at DESC`,
+      `SELECT b.id, b.student_id, b.teacher_id, b.subject, b.status,
+              b.bound_at, b.unbound_at, b.bound_by_user_id,
+              t.name AS teacher_name
+         FROM student_teacher_bindings b
+         LEFT JOIN teachers t ON t.id = b.teacher_id AND t.deleted_at IS NULL
+        WHERE b.student_id = $1 AND b.status = 'active'
+        ORDER BY b.bound_at DESC`,
       [studentId],
     );
     return rows.map((r) => ({
       id: r.id,
       studentId: r.student_id,
       teacherId: r.teacher_id,
+      teacherName: r.teacher_name || undefined,
       subject: r.subject || undefined,
       status: r.status,
       boundAt: new Date(r.bound_at),

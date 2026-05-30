@@ -63,6 +63,56 @@ describe('PromotionRepository — tier CRUD', () => {
     });
   });
 
+  // §12C.5 自动匹配「前 N 位无码自动 N 折」选档逻辑
+  describe('findBestAutoPromotion（§12C.5 自动匹配）', () => {
+    const autoRow = {
+      id: 7,
+      code: 'first30_half',
+      name: '前30位5折',
+      discount_pct: '50.00',
+      quota_total: 30,
+      quota_used: 12,
+      active: true,
+      starts_at: null,
+      ends_at: null,
+      activation_rules: null,
+      applies_to_plans: ['single', 'growth', 'chain'],
+      applies_years: 1,
+      source_type: 'self_service',
+      invite_code: null,
+      version: 0,
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    it('名额可用 → 返回 tier（前 30 个能匹配到 5 折）', async () => {
+      pg.query.mockResolvedValueOnce([autoRow]);
+      const tier = await repo.findBestAutoPromotion('single');
+      expect(tier).not.toBeNull();
+      expect(tier!.code).toBe('first30_half');
+      expect(tier!.discountPct).toBe(50); // 5 折
+      expect(tier!.quotaTotal).toBe(30);
+    });
+
+    it('名额满 / 无匹配 → 返回 null（第 31 个匹配不到 → 走原价）', async () => {
+      pg.query.mockResolvedValueOnce([]); // DB 按 quota_used < quota_total 过滤后无行
+      const tier = await repo.findBestAutoPromotion('single');
+      expect(tier).toBeNull();
+    });
+
+    it('SQL 守门：排除 kol + 名额未满 + 适用本 plan + 折扣最狠优先', async () => {
+      pg.query.mockResolvedValueOnce([]);
+      await repo.findBestAutoPromotion('growth');
+      const sql = pg.query.mock.calls[0][0] as string;
+      const params = pg.query.mock.calls[0][1];
+      expect(sql).toContain("source_type <> 'kol'"); // kol 输码券不自动套
+      expect(sql).toContain('quota_used < quota_total'); // 名额满则查不出 → 第 31 个 null
+      expect(sql).toContain('= ANY(applies_to_plans)'); // 仅匹配适用本 plan
+      expect(sql).toContain('ORDER BY discount_pct ASC'); // 折扣最狠（实付最低）优先
+      expect(params).toEqual(['growth']);
+    });
+  });
+
   describe('upsertTier', () => {
     it('rejects discount > 100', async () => {
       await expect(

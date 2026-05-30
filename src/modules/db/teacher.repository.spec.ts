@@ -370,6 +370,28 @@ describe('TeacherRepository (V28 archive + V34 字段加密双写双读)', () =>
       expect(sql).toContain('deleted_at IS NULL');
     });
 
+    // 2026-05-30 #18: 校区看师生 — listActiveInTenant 可选 campusId 过滤
+    describe('campusId 过滤 (#18)', () => {
+      it('不传 campusId → 无 campus_id WHERE，无额外 params（向后兼容）', async () => {
+        pg.tenantQuery.mockResolvedValueOnce([]);
+        await repo.listActiveInTenant(TENANT);
+        const [, sql, params] = pg.tenantQuery.mock.calls[0];
+        expect(sql).not.toContain('campus_id = $');
+        // 旧无参调用方：params 为空数组（无占位符）
+        expect(params).toEqual([]);
+      });
+
+      it('传 campusId → 加 campus_id = $1 WHERE + 仍保留 status/deleted_at', async () => {
+        pg.tenantQuery.mockResolvedValueOnce([]);
+        await repo.listActiveInTenant(TENANT, { campusId: CAMPUS_A });
+        const [, sql, params] = pg.tenantQuery.mock.calls[0];
+        expect(sql).toContain('campus_id = $1');
+        expect(sql).toContain(`status = '在职'`);
+        expect(sql).toContain('deleted_at IS NULL');
+        expect(params).toEqual([CAMPUS_A]);
+      });
+    });
+
     it('list SQL 包含 WHERE deleted_at IS NULL（分页列表）', async () => {
       pg.tenantQuery.mockResolvedValueOnce([]);
       await repo.list(TENANT);

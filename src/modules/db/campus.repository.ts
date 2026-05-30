@@ -94,6 +94,60 @@ export class CampusRepository {
   }
 
   /**
+   * 更新校区基本信息（SSOT §5.3 校区写=老板）
+   *
+   * PATCH 语义：仅更新非空字段（undefined 跳过）；name/city/district/address 可改
+   *   - tenant_id WHERE 保持租户隔离（防跨租户改他人校区）
+   *   - 无任何 patch 字段 → BadRequestException
+   *   - 目标校区不存在 / 不属于该 tenant → NotFoundException
+   */
+  async update(
+    tenantId: string,
+    id: string,
+    patch: {
+      name?: string;
+      city?: string;
+      district?: string;
+      address?: string;
+    },
+  ): Promise<Campus> {
+    const sets: string[] = [];
+    const params: any[] = [];
+    const push = (col: string, val: unknown) => {
+      params.push(val);
+      sets.push(`${col} = $${params.length}`);
+    };
+    if (patch.name !== undefined) push('name', patch.name);
+    if (patch.city !== undefined) push('city', patch.city);
+    if (patch.district !== undefined) push('district', patch.district);
+    if (patch.address !== undefined) push('address', patch.address);
+
+    if (sets.length === 0) {
+      throw new BadRequestException('至少传一个 patch 字段 (name/city/district/address)');
+    }
+
+    // tenant_id + id 双条件 WHERE：跨租户隔离
+    params.push(id);
+    const idIdx = params.length;
+    params.push(tenantId);
+    const tenantIdx = params.length;
+    const rows = await this.pg.query<any>(
+      `UPDATE public.campuses
+          SET ${sets.join(', ')}
+        WHERE id = $${idIdx} AND tenant_id = $${tenantIdx}
+       RETURNING id, tenant_id, name, city, district, address,
+                 student_count, teacher_count, status, is_hq, created_at`,
+      params,
+    );
+    if (rows.length === 0) {
+      throw new NotFoundException(
+        `campus ${id} not found for tenant ${tenantId}`,
+      );
+    }
+    return this.mapRow(rows[0]);
+  }
+
+  /**
    * 30 天聚合统计（每个校区 student_count / teacher_count + 总计）
    */
   async getStats30d(tenantId: string): Promise<{

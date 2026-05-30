@@ -49,6 +49,7 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
   let controller: BossController;
   let campusRepo: {
     create: jest.Mock;
+    update: jest.Mock;
     list: jest.Mock;
     getStats30d: jest.Mock;
   };
@@ -101,6 +102,7 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
   beforeEach(() => {
     campusRepo = {
       create: jest.fn(),
+      update: jest.fn(),
       list: jest.fn(),
       getStats30d: jest.fn(),
     };
@@ -316,6 +318,95 @@ describe('BossController (5/20 stryker 0% coverage 修补)', () => {
       await expect(controller.createCampus(validBody())).rejects.toThrow(
         'CAMPUS_LIMIT_REACHED',
       );
+    });
+  });
+
+  // ============================================================
+  // updateCampus() — 2026-05-30 #18 校区编辑
+  // ============================================================
+  describe('updateCampus() (2026-05-30 #18)', () => {
+    function validBody() {
+      return {
+        tenantId: TENANT_ID,
+        name: '改名校区',
+        city: '上海',
+        district: '浦东',
+        address: '世纪大道 1 号',
+      };
+    }
+
+    it('tenantId 缺 → BadRequest "tenantId must be 32-char ULID"', async () => {
+      const body = { ...validBody(), tenantId: '' };
+      await expect(controller.updateCampus(CAMPUS_ID, body)).rejects.toThrow(
+        'tenantId must be 32-char ULID',
+      );
+      expect(campusRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('tenantId 长度 ≠ 32 → BadRequest', async () => {
+      const body = { ...validBody(), tenantId: 'a'.repeat(31) };
+      await expect(controller.updateCampus(CAMPUS_ID, body)).rejects.toThrow(
+        'tenantId must be 32-char ULID',
+      );
+    });
+
+    it('id 缺 → BadRequest "id must be 32-char ULID"', async () => {
+      await expect(controller.updateCampus('', validBody())).rejects.toThrow(
+        'id must be 32-char ULID',
+      );
+      expect(campusRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('id 长度 ≠ 32 → BadRequest', async () => {
+      await expect(
+        controller.updateCampus('a'.repeat(16), validBody()),
+      ).rejects.toThrow('id must be 32-char ULID');
+    });
+
+    it('happy path 转交 campusRepo.update(tenantId, id, patch)', async () => {
+      const c = campusFixture({ name: '改名校区' });
+      campusRepo.update.mockResolvedValueOnce(c);
+
+      const result = await controller.updateCampus(CAMPUS_ID, validBody());
+
+      expect(campusRepo.update).toHaveBeenCalledWith(TENANT_ID, CAMPUS_ID, {
+        name: '改名校区',
+        city: '上海',
+        district: '浦东',
+        address: '世纪大道 1 号',
+      });
+      expect(result).toEqual(c);
+    });
+
+    it('可选字段 undefined → 透传 undefined 给 repo（仅 tenantId 必填）', async () => {
+      campusRepo.update.mockResolvedValueOnce(campusFixture());
+
+      await controller.updateCampus(CAMPUS_ID, { tenantId: TENANT_ID });
+
+      expect(campusRepo.update).toHaveBeenCalledWith(TENANT_ID, CAMPUS_ID, {
+        name: undefined,
+        city: undefined,
+        district: undefined,
+        address: undefined,
+      });
+    });
+
+    it('service 抛 NotFound（跨租户/不存在）→ 透传', async () => {
+      campusRepo.update.mockRejectedValueOnce(
+        new NotFoundException(`campus ${CAMPUS_ID} not found for tenant ${TENANT_ID}`),
+      );
+      await expect(
+        controller.updateCampus(CAMPUS_ID, validBody()),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('service 抛 BadRequest（空 patch）→ 透传', async () => {
+      campusRepo.update.mockRejectedValueOnce(
+        new BadRequestException('至少传一个 patch 字段 (name/city/district/address)'),
+      );
+      await expect(
+        controller.updateCampus(CAMPUS_ID, { tenantId: TENANT_ID }),
+      ).rejects.toThrow('至少传一个 patch 字段');
     });
   });
 

@@ -279,6 +279,62 @@ describe('StudentRepository (V28 + V44 软删除)', () => {
       expect(sql).toContain('s.owner_sales_id = $1');
       expect(sql).toContain('s.assigned_teacher_id = $2');
     });
+
+    // 2026-05-30 #18: 校区看师生 — campusId 过滤（按学员家庭主档 customers.campus_id）
+    describe('campusId 过滤 (#18)', () => {
+      const CAMPUS_A = 'campusA00000000000000000000000A1';
+
+      it('不传 campusId → 不加 campus WHERE，仍 LEFT JOIN customers 取 campus_id', async () => {
+        pg.tenantQuery.mockResolvedValueOnce([]);
+        await repo.listAll(TENANT);
+        const [, sql, params] = pg.tenantQuery.mock.calls[0];
+        // 不传 → 无 cu.campus_id WHERE 过滤
+        expect(sql).not.toContain('cu.campus_id =');
+        // 但 SELECT 与 JOIN 始终存在（campusId 一并返回）
+        expect(sql).toContain('LEFT JOIN customers cu ON cu.id = s.customer_id');
+        expect(sql).toContain('cu.campus_id');
+        // params 仅 limit/offset（无 campus 参数）
+        expect(params).toEqual([100, 0]);
+      });
+
+      it('传 campusId → 加 cu.campus_id WHERE（学员随家庭主档归校区，非 s.campus_id）', async () => {
+        pg.tenantQuery.mockResolvedValueOnce([]);
+        await repo.listAll(TENANT, { campusId: CAMPUS_A });
+        const [, sql, params] = pg.tenantQuery.mock.calls[0];
+        expect(sql).toContain('cu.campus_id = $1');
+        // students 表无 campus_id 列 — 必须走 customers JOIN，不能引用 s.campus_id
+        expect(sql).not.toContain('s.campus_id');
+        expect(params[0]).toBe(CAMPUS_A);
+      });
+
+      it('campusId 与 owner/teacher 联合 — 占位符顺序正确', async () => {
+        pg.tenantQuery.mockResolvedValueOnce([]);
+        await repo.listAll(TENANT, {
+          ownerSalesId: SALES_A,
+          assignedTeacherId: TEACHER_A,
+          campusId: CAMPUS_A,
+        });
+        const [, sql, params] = pg.tenantQuery.mock.calls[0];
+        expect(sql).toContain('s.owner_sales_id = $1');
+        expect(sql).toContain('s.assigned_teacher_id = $2');
+        expect(sql).toContain('cu.campus_id = $3');
+        expect(params.slice(0, 3)).toEqual([SALES_A, TEACHER_A, CAMPUS_A]);
+      });
+
+      it('mapBrief 回填 campusId（来自 cu.campus_id）', async () => {
+        pg.tenantQuery.mockResolvedValueOnce([
+          { ...studentRow(), campus_id: CAMPUS_A },
+        ]);
+        const rows = await repo.listAll(TENANT, { campusId: CAMPUS_A });
+        expect(rows[0].campusId).toBe(CAMPUS_A);
+      });
+
+      it('campus_id 缺失（LEFT JOIN 无匹配）→ campusId null', async () => {
+        pg.tenantQuery.mockResolvedValueOnce([{ ...studentRow() }]); // 无 campus_id 字段
+        const rows = await repo.listAll(TENANT);
+        expect(rows[0].campusId).toBeNull();
+      });
+    });
   });
 
   // ============================================================

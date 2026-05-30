@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   UseGuards,
   Query,
@@ -123,6 +124,44 @@ export class BossController {
       district: body.district,
       address: body.address,
       isHq: body.isHq,
+    });
+  }
+
+  /**
+   * 编辑校区（SSOT §5.3 校区写=老板）
+   *
+   * PATCH /api/db/boss/campuses/:id
+   * Body: { tenantId, name?, city?, district?, address? }
+   *   - RBAC @Roles('admin')（同 createCampus）
+   *   - tenantId WHERE 保持租户隔离（防跨租户改他人校区）
+   *   - 只更非空字段；目标校区不存在/不属本 tenant → NotFound（repo 层）
+   */
+  @Patch('campuses/:id')
+  @UseGuards(RbacGuard)
+  @Roles('admin')
+  @HttpCode(HttpStatus.OK)
+  async updateCampus(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      tenantId: string;
+      name?: string;
+      city?: string;
+      district?: string;
+      address?: string;
+    },
+  ): Promise<Campus> {
+    if (!body.tenantId || body.tenantId.length !== 32) {
+      throw new BadRequestException('tenantId must be 32-char ULID');
+    }
+    if (!id || id.length !== 32) {
+      throw new BadRequestException('id must be 32-char ULID');
+    }
+    return this.campusRepo.update(body.tenantId, id, {
+      name: body.name,
+      city: body.city,
+      district: body.district,
+      address: body.address,
     });
   }
 
