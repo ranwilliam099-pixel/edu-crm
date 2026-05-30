@@ -16,9 +16,12 @@ import {
   SalesFunnel,
   TeacherLeaderboard,
   LeaderboardSortKey,
+  HomeAlertStats,
 } from './dashboard.repository';
 import { PromotionEligibilityService } from './promotion-eligibility.service';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
+import { RbacGuard } from '../../guards/rbac.guard';
+import { Roles } from '../../guards/rbac.decorator';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 /**
@@ -63,6 +66,33 @@ export class DashboardController {
     }
 
     return kpi;
+  }
+
+  /**
+   * GET /api/db/dashboards/alerts — 首页预警聚合（b/home attentionStats）
+   *
+   * 来源：Phase 3 (2026-05-30 item #4) — 前端 b/home attentionStats
+   *   { lowBalance, refundPending, handover } 现全 0，需补真值。
+   *
+   * 返回 HomeAlertStats { lowBalance, refundPending, handover }（口径见 repository）。
+   *
+   * RBAC: @Roles('admin','boss') — 仅经营管理者看全机构预警
+   *   （lowBalance/refundPending/handover 是机构级运营预警，非单校区/单销售视角）。
+   *
+   * 鉴权：TenantScopeGuard 校验 x-tenant-schema === jwt（与 admin KPI 一致）。
+   * 全只读 → @SkipThrottle（class 级已加）+ 不写 audit。
+   */
+  @Get('alerts')
+  @UseGuards(RbacGuard)
+  @Roles('admin', 'boss')
+  @HttpCode(HttpStatus.OK)
+  async homeAlerts(
+    @Headers('x-tenant-schema') tenantSchema: string,
+  ): Promise<HomeAlertStats> {
+    if (!tenantSchema) {
+      throw new BadRequestException('x-tenant-schema header required');
+    }
+    return this.dashRepo.getHomeAlerts(tenantSchema);
   }
 
   @Get('sales-funnel')

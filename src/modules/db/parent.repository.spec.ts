@@ -447,4 +447,110 @@ describe('ParentRepository (V40 phone hash+encrypted 双列加密)', () => {
       expect(sql).toContain(`binding_status = 'active'`);
     });
   });
+
+  // ===================== Phase 3 item #3 — findParentsForStudent =====================
+  describe('findParentsForStudent (B 端按学员查家长 — 客户详情 _loadParents)', () => {
+    const STUDENT_ID = 'studentP000000000000000000000P01'; // 32 char
+    const TENANT_ID = 'tenantP0000000000000000000000P01'; // 32 char
+
+    const joinRow = (
+      overrides: Partial<{
+        binding_id: string;
+        is_primary: boolean;
+        relationship: string;
+        parent_id: string;
+        parent_name: string | null;
+        phone: string | null;
+        phone_encrypted: Buffer | null;
+      }> = {},
+    ) => ({
+      binding_id: overrides.binding_id ?? 'bindP00000000000000000000000P01',
+      is_primary: overrides.is_primary ?? true,
+      relationship: overrides.relationship ?? 'mother',
+      parent_id: overrides.parent_id ?? PARENT_ID,
+      parent_name: overrides.parent_name !== undefined ? overrides.parent_name : '张妈妈',
+      phone: overrides.phone !== undefined ? overrides.phone : MOCK_PHONE,
+      phone_encrypted:
+        overrides.phone_encrypted !== undefined ? overrides.phone_encrypted : MOCK_CIPHER,
+    });
+
+    it('JOIN public.parents + 按 student_id / tenant_id / active 过滤', async () => {
+      pg.query.mockResolvedValueOnce([joinRow()]);
+      await repo.findParentsForStudent(STUDENT_ID, TENANT_ID);
+      const sql = pg.query.mock.calls[0][0] as string;
+      const params = pg.query.mock.calls[0][1] as any[];
+      expect(sql).toContain('public.parent_student_bindings');
+      expect(sql).toContain('JOIN public.parents');
+      expect(sql).toContain('b.student_id = $1');
+      expect(sql).toContain('b.tenant_id  = $2');
+      expect(sql).toContain(`b.binding_status = 'active'`);
+      expect(params).toEqual([STUDENT_ID, TENANT_ID]);
+    });
+
+    it('phone 强制脱敏（138****8000），不返明文', async () => {
+      pg.query.mockResolvedValueOnce([joinRow()]);
+      const items = await repo.findParentsForStudent(STUDENT_ID, TENANT_ID);
+      expect(items).toHaveLength(1);
+      expect(items[0].phoneMasked).toBe('138****8000');
+      // 明文不出现在任何字段
+      expect(JSON.stringify(items[0])).not.toContain(MOCK_PHONE);
+      expect(items[0]).toEqual({
+        id: PARENT_ID,
+        name: '张妈妈',
+        phoneMasked: '138****8000',
+        relationship: 'mother',
+        isPrimary: true,
+        bindingId: 'bindP00000000000000000000000P01',
+      });
+    });
+
+    it('解密走 phone_encrypted（FieldEncryptor.decrypt 被调用）', async () => {
+      pg.query.mockResolvedValueOnce([joinRow()]);
+      await repo.findParentsForStudent(STUDENT_ID, TENANT_ID);
+      expect(encryptor.decrypt).toHaveBeenCalledWith(MOCK_CIPHER);
+    });
+
+    it('解密失败 → fail-open 走明文 fallback 后仍脱敏（不泄露完整明文）', async () => {
+      encryptor.decrypt.mockImplementationOnce(() => {
+        throw new Error('bad key');
+      });
+      pg.query.mockResolvedValueOnce([joinRow({ phone: MOCK_PHONE })]);
+      const items = await repo.findParentsForStudent(STUDENT_ID, TENANT_ID);
+      // 明文 fallback 后仍脱敏
+      expect(items[0].phoneMasked).toBe('138****8000');
+      expect(JSON.stringify(items[0])).not.toContain(MOCK_PHONE);
+    });
+
+    it('家长姓名为 null → name: null（不抛错）', async () => {
+      pg.query.mockResolvedValueOnce([joinRow({ parent_name: null })]);
+      const items = await repo.findParentsForStudent(STUDENT_ID, TENANT_ID);
+      expect(items[0].name).toBeNull();
+    });
+
+    it('空 phone（脏数据）→ phoneMasked 空串，不抛错', async () => {
+      pg.query.mockResolvedValueOnce([
+        joinRow({ phone: '', phone_encrypted: null }),
+      ]);
+      const items = await repo.findParentsForStudent(STUDENT_ID, TENANT_ID);
+      expect(items[0].phoneMasked).toBe('');
+    });
+
+    it('无绑定 → 空数组', async () => {
+      pg.query.mockResolvedValueOnce([]);
+      const items = await repo.findParentsForStudent(STUDENT_ID, TENANT_ID);
+      expect(items).toEqual([]);
+    });
+
+    it('多家长按 is_primary DESC 排序（主家长在前）', async () => {
+      pg.query.mockResolvedValueOnce([
+        joinRow({ binding_id: 'bindAAA000000000000000000000P01', is_primary: true, relationship: 'mother' }),
+        joinRow({ binding_id: 'bindBBB000000000000000000000P01', is_primary: false, relationship: 'father', parent_id: 'parentB00000000000000000000B0002' }),
+      ]);
+      const items = await repo.findParentsForStudent(STUDENT_ID, TENANT_ID);
+      expect(items).toHaveLength(2);
+      expect(items[0].isPrimary).toBe(true);
+      const sql = pg.query.mock.calls[0][0] as string;
+      expect(sql).toContain('ORDER BY b.is_primary DESC');
+    });
+  });
 });

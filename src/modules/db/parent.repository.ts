@@ -6,6 +6,22 @@ import { FieldEncryptor } from '../../common/crypto/field-encryptor';
 import { HmacHasher } from '../../common/crypto/hmac-hasher';
 
 /**
+ * Phase 3 (2026-05-30 item #3) — B 端「按学员查家长」返回投影
+ *
+ * 客户详情页 b/sales-customers/detail._loadParents 消费。
+ * 仅 sales/sales_manager/academic/academic_admin/admin/boss（@Roles 排除 teacher）。
+ * phone 强制脱敏（138****8000），不返明文 / openid / wechat（一级 PII）。
+ */
+export interface ParentForCustomerDetail {
+  id: string;
+  name: string | null;
+  phoneMasked: string;
+  relationship: Relationship;
+  isPrimary: boolean;
+  bindingId: string;
+}
+
+/**
  * ParentRepository — V10 家长 + 学员绑定持久化层（public schema 跨租户）
  *
  * V40 双列加密改造（A02-3，2026-05-13）：
@@ -193,6 +209,66 @@ export class ParentRepository {
       [studentId],
     );
     return rows.map((r) => this.mapBindingRow(r));
+  }
+
+  /**
+   * Phase 3 (2026-05-30 item #3) — B 端「按学员查家长」(客户详情页 _loadParents)
+   *
+   * 背景：前端 b/sales-customers/detail._loadParents 现 mock 空数组 + TODO，需补真值。
+   *
+   * 数据来源（全在 public schema，单 query JOIN 无跨 schema 问题）：
+   *   public.parent_student_bindings (V10)  WHERE student_id=$1 AND binding_status='active'
+   *     AND tenant_id=$2  ← 跨租户硬隔离（防 sales 传他 tenant 的 studentId 套出绑定关系）
+   *   JOIN public.parents ON parents.id = bindings.parent_id
+   *
+   * 返回（ParentForCustomerDetail）：
+   *   - id          家长 id（C 端身份）
+   *   - name        家长姓名（SSOT §4.1 联系人信息：sales 自己客户 / academic 本校 / admin/boss ✅；
+   *                          controller @Roles 已排除 teacher，故此处返回姓名合法）
+   *   - phoneMasked 手机**强制脱敏** 138****8000（V40 phone_encrypted 解密后脱敏；
+   *                          一级 PII，任何 B 端角色都不返明文，前端 maskPhone 客户端可绕过）
+   *   - relationship / isPrimary / bindingId
+   *
+   * PII 自查：**不返明文 phone**、不返 openid / wechat。仅姓名 + 脱敏手机 + 关系。
+   *
+   * 失败隔离：单条家长 phone 解密失败 → decryptPhone fail-open 走明文 fallback 后再脱敏
+   *   （脱敏保证即使 fallback 也不泄露完整明文给前端）。
+   *
+   * @param studentId 学员 id（32-char ULID）
+   * @param tenantId  jwt.tenantId（public.parent_student_bindings.tenant_id 字段，跨租户隔离）
+   */
+  async findParentsForStudent(
+    studentId: string,
+    tenantId: string,
+  ): Promise<ParentForCustomerDetail[]> {
+    const rows = await this.pg.query<any>(
+      `SELECT b.id            AS binding_id,
+              b.is_primary    AS is_primary,
+              b.relationship  AS relationship,
+              p.id            AS parent_id,
+              p.name          AS parent_name,
+              p.phone         AS phone,
+              p.phone_encrypted AS phone_encrypted
+         FROM public.parent_student_bindings b
+         JOIN public.parents p ON p.id = b.parent_id
+        WHERE b.student_id = $1
+          AND b.tenant_id  = $2
+          AND b.binding_status = 'active'
+        ORDER BY b.is_primary DESC, b.bound_at ASC`,
+      [studentId, tenantId],
+    );
+    return rows.map((r) => {
+      const plainPhone: string = r.phone || '';
+      const decrypted = this.decryptPhone(r.parent_id, r.phone_encrypted, plainPhone);
+      return {
+        id: r.parent_id,
+        name: r.parent_name || null,
+        phoneMasked: this.maskPhone(decrypted),
+        relationship: r.relationship as Relationship,
+        isPrimary: !!r.is_primary,
+        bindingId: r.binding_id,
+      };
+    });
   }
 
   /**
@@ -423,6 +499,20 @@ export class ParentRepository {
       }
     }
     return fallbackPlain;
+  }
+
+  /**
+   * Phase 3 item #3 — 手机脱敏 138****8000（与 customer.repository.maskPhoneForDisplay 同算法）
+   *
+   * 一级 PII：B 端任何角色都只看脱敏手机。
+   *   - 11 位标准手机号 → 前 3 + **** + 后 4
+   *   - 非标准长度（脏数据 / 空）→ 退化为「****+末 4」或全 **（不泄露完整串）
+   *   - 空字符串 / null → '' （前端展示「—」）
+   */
+  private maskPhone(phone: string | null | undefined): string {
+    if (!phone) return '';
+    if (phone.length < 7) return '****';
+    return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
   }
 
   private mapParentRow(row: PgRow): Parent {

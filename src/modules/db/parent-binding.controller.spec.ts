@@ -366,3 +366,108 @@ describe('ParentBindingController.unbindBinding (Sprint X.2 SSOT §12.5)', () =>
     ).rejects.toThrow(BadRequestException);
   });
 });
+
+// ===================== Phase 3 item #3 — listParentsForStudent =====================
+describe('ParentBindingController.listParentsForStudent (Phase 3 item #3, 客户详情 _loadParents)', () => {
+  let controller: ParentBindingController;
+  let parentRepo: { findParentsForStudent: jest.Mock };
+  let studentRepo: { findBrief: jest.Mock };
+  let phoneLookup: { lookupByPhone: jest.Mock };
+  let auditLog: { log: jest.Mock };
+
+  const MASKED_ITEM = {
+    id: ULID32_PARENT,
+    name: '张妈妈',
+    phoneMasked: '138****8000',
+    relationship: 'mother' as const,
+    isPrimary: true,
+    bindingId: ULID32_BINDING,
+  };
+
+  beforeEach(() => {
+    parentRepo = {
+      findParentsForStudent: jest.fn().mockResolvedValue([MASKED_ITEM]),
+    };
+    studentRepo = {
+      findBrief: jest.fn().mockResolvedValue({ id: ULID32_STUDENT, studentName: 'X' }),
+    };
+    phoneLookup = { lookupByPhone: jest.fn() };
+    auditLog = { log: jest.fn() };
+    controller = new ParentBindingController(
+      parentRepo as unknown as ParentRepository,
+      studentRepo as unknown as StudentRepository,
+      phoneLookup as unknown as PhoneLookupService,
+      auditLog as unknown as AuditLogRepository,
+    );
+  });
+
+  const validBody = () => ({
+    tenantId: ULID32_T,
+    tenantSchema: `tenant_${ULID32_T.toLowerCase()}`,
+    studentId: ULID32_STUDENT,
+  });
+
+  it('happy path → 返回脱敏家长列表，repo 用 jwt.tenantId（非 body 信任）', async () => {
+    const res = await controller.listParentsForStudent(validBody(), makeReq('sales'));
+    expect(res.items).toEqual([MASKED_ITEM]);
+    // 用 jwt.tenantId（makeReq tenantId = ULID32_T）调 repo，不信 body
+    expect(parentRepo.findParentsForStudent).toHaveBeenCalledWith(ULID32_STUDENT, ULID32_T);
+  });
+
+  it('phone 脱敏不返明文（返回项 phoneMasked 形态）', async () => {
+    const res = await controller.listParentsForStudent(validBody(), makeReq('academic'));
+    expect(res.items[0].phoneMasked).toBe('138****8000');
+    expect(JSON.stringify(res.items)).not.toContain('13800138000');
+  });
+
+  it('tenantId 缺 → 400', async () => {
+    await expect(
+      controller.listParentsForStudent(
+        { ...validBody(), tenantId: '' },
+        makeReq('sales'),
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('tenantId 长度非 32 → 400', async () => {
+    await expect(
+      controller.listParentsForStudent(
+        { ...validBody(), tenantId: 'short' },
+        makeReq('sales'),
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('studentId 长度非 32 → 400', async () => {
+    await expect(
+      controller.listParentsForStudent(
+        { ...validBody(), studentId: 'short' },
+        makeReq('sales'),
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('jwt.tenantId 为 null（异常 token）→ 403', async () => {
+    const req = makeReq('sales');
+    (req.user as { tenantId: string | null }).tenantId = null;
+    await expect(
+      controller.listParentsForStudent(validBody(), req),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('传 tenantSchema 且 student 不在本 tenant → 404（防探测）', async () => {
+    studentRepo.findBrief.mockResolvedValueOnce(null);
+    await expect(
+      controller.listParentsForStudent(validBody(), makeReq('sales')),
+    ).rejects.toThrow(NotFoundException);
+    expect(parentRepo.findParentsForStudent).not.toHaveBeenCalled();
+  });
+
+  it('不传 tenantSchema → 跳过 findBrief 校验，仍按 jwt.tenantId 查（repo tenant_id 兜底隔离）', async () => {
+    const body = { tenantId: ULID32_T, studentId: ULID32_STUDENT };
+    const res = await controller.listParentsForStudent(body, makeReq('sales'));
+    expect(studentRepo.findBrief).not.toHaveBeenCalled();
+    expect(parentRepo.findParentsForStudent).toHaveBeenCalledWith(ULID32_STUDENT, ULID32_T);
+    expect(res.items).toEqual([MASKED_ITEM]);
+  });
+});

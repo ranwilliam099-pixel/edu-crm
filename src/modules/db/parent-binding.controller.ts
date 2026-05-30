@@ -21,7 +21,7 @@ import { Roles } from '../../guards/rbac.decorator';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
-import { ParentRepository } from './parent.repository';
+import { ParentRepository, ParentForCustomerDetail } from './parent.repository';
 import { StudentRepository } from './student.repository';
 import { PhoneLookupService } from '../auth/phone-lookup.service';
 import { AuditLogRepository, normalizeActorRole } from './audit-log.repository';
@@ -219,6 +219,75 @@ export class ParentBindingController {
     });
 
     return { parent, binding };
+  }
+
+  /**
+   * POST /api/db/parents/by-student — 按学员查家长列表（客户详情页 _loadParents）
+   *
+   * 来源：Phase 3 (2026-05-30 item #3) — 前端 b/sales-customers/detail._loadParents
+   *   现 mock 空数组 + TODO，需补真值。
+   *
+   * Body: { tenantId, tenantSchema?, studentId }
+   *   - tenantId（必填，TenantScopeGuard 校验 === jwt.tenantId）
+   *   - tenantSchema（可选；若传 TenantScopeGuard 也校验；用于校验 studentId 确在本 tenant schema）
+   *   - studentId（必填，32-char ULID）
+   *
+   * 跨租户硬隔离（双层）：
+   *   1. TenantScopeGuard 校验 body.tenantId / tenantSchema === jwt（防伪造 tenant 标识）
+   *   2. repo.findParentsForStudent 查询 WHERE bindings.tenant_id = jwt.tenantId
+   *      （binding 在 public 跨租户表，必须按 tenant_id 过滤，防 sales 传他 tenant 的 studentId
+   *       套出绑定关系 / 家长姓名）
+   *   3. 若传 tenantSchema，额外 findBrief 校验 studentId 确属本 tenant（友好 404，且防探测）
+   *
+   * RBAC（SSOT §4.1 联系人信息 = 家长姓名/手机/微信）:
+   *   sales / sales_manager / academic / academic_admin / admin / boss —
+   *   **不含 teacher**（teacher ❌ 联系人信息，SSOT §4.1 / §2 一级 PII；
+   *   teacher 看学员走 /db/students/:id 已硬脱敏家长字段）。
+   *
+   * PII：phone 强制脱敏（138****8000），不返明文 / openid / wechat。
+   *   家长姓名对 sales/academic/admin/boss 合法可见（SSOT §4.1 自己客户/本校/全权）。
+   *
+   * 只读 → 不写 audit_log（无敏感变更），不加 Idempotency（无副作用）。
+   */
+  @Post('db/parents/by-student')
+  @UseGuards(RbacGuard)
+  @Roles('sales', 'sales_manager', 'academic', 'academic_admin', 'admin', 'boss')
+  @HttpCode(HttpStatus.OK)
+  async listParentsForStudent(
+    @Body()
+    body: { tenantId: string; tenantSchema?: string; studentId: string },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ items: ParentForCustomerDetail[] }> {
+    if (!body.tenantId || body.tenantId.length !== 32) {
+      throw new BadRequestException('tenantId must be 32-char ULID');
+    }
+    if (!body.studentId || body.studentId.length !== 32) {
+      throw new BadRequestException('studentId must be 32-char ULID');
+    }
+
+    // 跨租户兜底：TenantScopeGuard 已校验 body.tenantId===jwt，但 repo 查询仍以 jwt.tenantId
+    //   为准（不信 body），双保险。jwt.tenantId 在 TenantScopeGuard 已确保非 null（tenant role）。
+    const jwtTenantId = req.user?.tenantId;
+    if (!jwtTenantId) {
+      throw new ForbiddenException('tenant role requires non-null tenantId');
+    }
+
+    // 若提供 tenantSchema，校验 studentId 确属本 tenant schema（友好 404 + 防探测）。
+    //   findBrief 内部 deleted_at IS NULL 过滤（V44 软删）。
+    if (body.tenantSchema) {
+      const student = await this.studentRepo.findBrief(body.tenantSchema, body.studentId);
+      if (!student) {
+        throw new NotFoundException(
+          `student ${body.studentId} not found in current tenant`,
+        );
+      }
+    }
+
+    const items = await this.parentRepo.findParentsForStudent(
+      body.studentId,
+      jwtTenantId,
+    );
+    return { items };
   }
 
   /**

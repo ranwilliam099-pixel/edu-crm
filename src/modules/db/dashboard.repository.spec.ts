@@ -1,17 +1,25 @@
 import { Test } from '@nestjs/testing';
 import { DashboardRepository } from './dashboard.repository';
 import { PgPoolService } from './pg-pool.service';
+import { UserRepository } from './user.repository';
 
 describe('DashboardRepository', () => {
   let repo: DashboardRepository;
   let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock };
+  // Phase 3 item #4 — handover 复用 UserRepository.listInactiveWithPending
+  let userRepo: { listInactiveWithPending: jest.Mock };
 
   const TENANT = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
 
   beforeEach(async () => {
     pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn() };
+    userRepo = { listInactiveWithPending: jest.fn() };
     const m = await Test.createTestingModule({
-      providers: [DashboardRepository, { provide: PgPoolService, useValue: pg }],
+      providers: [
+        DashboardRepository,
+        { provide: PgPoolService, useValue: pg },
+        { provide: UserRepository, useValue: userRepo },
+      ],
     }).compile();
     repo = m.get(DashboardRepository);
   });
@@ -49,6 +57,75 @@ describe('DashboardRepository', () => {
         .mockResolvedValueOnce([{ count: '0' }]);
       const k = await repo.getAdminKpi(TENANT);
       expect(k.thisMonth.conversionRate).toBe(0);
+    });
+  });
+
+  // ===================== Phase 3 item #4 — getHomeAlerts =====================
+  describe('getHomeAlerts', () => {
+    it('aggregates refundPending + lowBalance + handover (happy path)', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ count: '4' }]) // refundPending
+        .mockResolvedValueOnce([{ count: '9' }]); // lowBalance (< 5)
+      userRepo.listInactiveWithPending.mockResolvedValueOnce([
+        { user: { id: 'u1' }, pendingOpportunities: 2, pendingContracts: 0, pendingStudents: 1 },
+        { user: { id: 'u2' }, pendingOpportunities: 0, pendingContracts: 3, pendingStudents: 0 },
+      ]);
+      const a = await repo.getHomeAlerts(TENANT);
+      expect(a.refundPending).toBe(4);
+      expect(a.lowBalance).toBe(9);
+      expect(a.handover).toBe(2);
+    });
+
+    it('lowBalance query uses remaining_lessons < 5 threshold + DISTINCT student_id', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ count: '0' }])
+        .mockResolvedValueOnce([{ count: '0' }]);
+      userRepo.listInactiveWithPending.mockResolvedValueOnce([]);
+      await repo.getHomeAlerts(TENANT);
+      const lowBalanceSql = pg.tenantQuery.mock.calls[1][1] as string;
+      expect(lowBalanceSql).toContain('remaining_lessons < 5');
+      expect(lowBalanceSql).toContain('COUNT(DISTINCT student_id)');
+      expect(lowBalanceSql).toContain("status = 'active'");
+    });
+
+    it('refundPending query counts status=pending refund_orders', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ count: '0' }])
+        .mockResolvedValueOnce([{ count: '0' }]);
+      userRepo.listInactiveWithPending.mockResolvedValueOnce([]);
+      await repo.getHomeAlerts(TENANT);
+      const refundSql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(refundSql).toContain('refund_orders');
+      expect(refundSql).toContain("status = 'pending'");
+    });
+
+    it('fail-open: refund_orders table missing → refundPending 0, others still computed', async () => {
+      pg.tenantQuery
+        .mockRejectedValueOnce(new Error('relation "refund_orders" does not exist'))
+        .mockResolvedValueOnce([{ count: '6' }]); // lowBalance still works
+      userRepo.listInactiveWithPending.mockResolvedValueOnce([{ user: { id: 'u1' } }]);
+      const a = await repo.getHomeAlerts(TENANT);
+      expect(a.refundPending).toBe(0);
+      expect(a.lowBalance).toBe(6);
+      expect(a.handover).toBe(1);
+    });
+
+    it('fail-open: handover (listInactiveWithPending) throws → handover 0, others intact', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ count: '3' }])
+        .mockResolvedValueOnce([{ count: '2' }]);
+      userRepo.listInactiveWithPending.mockRejectedValueOnce(new Error('boom'));
+      const a = await repo.getHomeAlerts(TENANT);
+      expect(a.refundPending).toBe(3);
+      expect(a.lowBalance).toBe(2);
+      expect(a.handover).toBe(0);
+    });
+
+    it('returns all 0 when every source fails (graceful)', async () => {
+      pg.tenantQuery.mockRejectedValue(new Error('no table'));
+      userRepo.listInactiveWithPending.mockRejectedValue(new Error('no table'));
+      const a = await repo.getHomeAlerts(TENANT);
+      expect(a).toEqual({ lowBalance: 0, refundPending: 0, handover: 0 });
     });
   });
 

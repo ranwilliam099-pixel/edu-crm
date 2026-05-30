@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PgPoolService } from './pg-pool.service';
+import { UserRepository } from './user.repository';
 
 /**
  * DashboardRepository — V19 KPI 聚合查询（tenant schema）
@@ -59,10 +60,25 @@ export interface TeacherLeaderboard {
 // V37 删 'payroll' sortKey（薪资下线）
 export type LeaderboardSortKey = 'lessons' | 'rating' | 'feedbackRate';
 
+/**
+ * Phase 3 (2026-05-30 item #4) — 首页预警聚合（b/home attentionStats）
+ *
+ * 前端 b/home attentionStats { lowBalance, refundPending, handover } 现全 0。
+ * @Roles('admin','boss') — 仅经营管理者看全机构预警。
+ */
+export interface HomeAlertStats {
+  lowBalance: number;     // 剩余课时 < 5 的在管学员数（DISTINCT student_id, status='active'）
+  refundPending: number;  // 待审批退费工单数（refund_orders.status='pending'）
+  handover: number;       // 待交接数：离职(status='停用')且名下仍有 opp/contract/student 的员工数
+}
+
 @Injectable()
 export class DashboardRepository {
   private readonly logger = new Logger(DashboardRepository.name);
-  constructor(private readonly pg: PgPoolService) {}
+  constructor(
+    private readonly pg: PgPoolService,
+    private readonly userRepo: UserRepository,
+  ) {}
 
   // ===================== Admin KPI =====================
   async getAdminKpi(tenantSchema: string): Promise<AdminKpi> {
@@ -152,6 +168,72 @@ export class DashboardRepository {
       lowBalanceCount,
       studentsTotal,
     };
+  }
+
+  // ===================== Home Alerts (Phase 3 item #4) =====================
+  /**
+   * 首页预警聚合 — b/home attentionStats { lowBalance, refundPending, handover }
+   *
+   * 三项口径（每项独立 try-catch fail-open，单项查询失败返 0 不影响其它项）：
+   *
+   *   1. refundPending = COUNT(refund_orders WHERE status='pending')
+   *      - V59 refund_orders 在 tenant schema；待审批退费工单数。
+   *      - 不按 campus 过滤（admin/boss 看全机构）。
+   *
+   *   2. lowBalance = COUNT(DISTINCT student_id) FROM student_course_packages
+   *                   WHERE status='active' AND remaining_lessons < 5
+   *      - V12 student_course_packages.remaining_lessons（GENERATED 列，干净的剩余课时数据）。
+   *      - 阈值 < 5（与 getAdminKpi 的 <= 5 略不同 — 本 item 拍板明确「< 5」）。
+   *      - DISTINCT student_id 去重（一个学员可能多个 active 课包）。
+   *
+   *   3. handover = listInactiveWithPending 返回的员工数（复用 UserRepository 同口径）
+   *      - 口径：users.status='停用'（离职）且 (pending_opps + pending_contracts + pending_students) > 0
+   *        - pending_opps      = COUNT(opportunities WHERE owner_user_id = u.id)
+   *        - pending_contracts = COUNT(contracts WHERE owner_user_id = u.id
+   *                                AND status IN ('pending','active') AND deleted_at IS NULL)
+   *        - pending_students  = COUNT(students WHERE owner_sales_id = u.id)
+   *      - 即「离职但名下仍有数据待转交」的员工数（与 b/home「待交接」待办语义一致）。
+   *      - 复用 userRepo.listInactiveWithPending().length（同一 SQL，不另造聚合）。
+   */
+  async getHomeAlerts(tenantSchema: string): Promise<HomeAlertStats> {
+    let lowBalance = 0;
+    let refundPending = 0;
+    let handover = 0;
+
+    // 1. refundPending — V59 refund_orders.status='pending'
+    try {
+      const rows = await this.pg.tenantQuery<{ count: string }>(
+        tenantSchema,
+        `SELECT COUNT(*) AS count FROM refund_orders WHERE status = 'pending'`,
+      );
+      refundPending = parseInt(rows[0]?.count || '0', 10);
+    } catch (e) {
+      // refund_orders 表不存在（旧租户未 apply V59）→ 0
+      this.logger.debug(`[ALERTS-refundPending] ${tenantSchema}: ${(e as Error).message}`);
+    }
+
+    // 2. lowBalance — V12 student_course_packages 剩余课时 < 5（拍板阈值）
+    try {
+      const rows = await this.pg.tenantQuery<{ count: string }>(
+        tenantSchema,
+        `SELECT COUNT(DISTINCT student_id) AS count
+           FROM student_course_packages
+          WHERE status = 'active' AND remaining_lessons < 5`,
+      );
+      lowBalance = parseInt(rows[0]?.count || '0', 10);
+    } catch (e) {
+      this.logger.debug(`[ALERTS-lowBalance] ${tenantSchema}: ${(e as Error).message}`);
+    }
+
+    // 3. handover — 复用 UserRepository.listInactiveWithPending 同口径（离职 + 名下有数据待转交）
+    try {
+      const inactive = await this.userRepo.listInactiveWithPending(tenantSchema);
+      handover = inactive.length;
+    } catch (e) {
+      this.logger.debug(`[ALERTS-handover] ${tenantSchema}: ${(e as Error).message}`);
+    }
+
+    return { lowBalance, refundPending, handover };
   }
 
   // ===================== Sales Funnel =====================
