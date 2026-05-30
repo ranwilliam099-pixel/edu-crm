@@ -40,6 +40,7 @@ import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.int
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 import { ActorRole, AuditLogRepository, normalizeActorRole } from '../db/audit-log.repository';
 import { TeacherRepository } from '../db/teacher.repository';
+import { ContentModerationService } from '../security/content-moderation.service';
 
 /**
  * FeedbackController — V9 教学反馈 + 课消 + 月报 HTTP 暴露 BE-V9-1/2/3
@@ -67,6 +68,8 @@ export class FeedbackController {
     //   - teacher role JWT 的 sub = 用户表 users.id（V32 teachers.user_id 引用此字段）
     //   - 用此 repo 反查老师档案，判定该 user 是否是 report.teacher_id 的真实所有者
     private readonly teacherRepo: TeacherRepository,
+    // #24: B 端自由文本内容安全统一收口（@Global SecurityModule 注入，生产必有）
+    private readonly contentModeration: ContentModerationService,
     // Sprint B (2026-05-11 复审): self-check 失败时写 audit_log
     //   - @Optional：unit spec 直接 new 时可传 undefined（不破坏现有 spec test）
     //   - fail-open：audit_log 写失败不阻塞主 ForbiddenException
@@ -336,6 +339,27 @@ export class FeedbackController {
     //   (前端不必再调 GET /api/teachers/me 多 1 个 roundtrip 拿自己 teacher.id)
     const finalTeacherId = await this.assertTeacherIdSelfOrPrivileged(req, tenantSchema, body.teacherId);
 
+    // #24: B 端自由文本过微信内容安全（risky → 400 拒存；写库前拦截，违规内容不落库）
+    //   含嵌套自由文本：knowledgePoints[].name / knowledgeMatrix[].name（老师自定义知识点名，
+    //   security-auditor 标的覆盖缺口）。homeworkAttachments[].filename 多为 OSS key 非自由输入，不纳入。
+    await this.contentModeration.enforceStaffText(
+      tenantSchema,
+      [
+        body.homework,
+        body.teacherNote,
+        body.teacherInternalNote,
+        body.nextPreview,
+        ...(body.knowledgePoints ?? []).map((p) => p.name),
+        ...(body.knowledgeMatrix ?? []).map((p) => p.name),
+      ],
+      {
+        action: 'lesson-feedback',
+        targetType: 'lesson_feedback',
+        targetId: body.id,
+        req,
+      },
+    );
+
     const result = await this.feedback.submitInDb(
       {
         ...rest,
@@ -452,8 +476,29 @@ export class FeedbackController {
       tenantSchema: string;
       nowMs?: number;
     },
+    @Req() req: AuthenticatedRequest,
   ): Promise<LessonFeedback> {
     const { homeworkDeadlineMs, ...patchRest } = body.patch;
+
+    // #24: 改反馈同样过内容安全（patch 里的自由文本字段；含 knowledgePoints/knowledgeMatrix 嵌套 name）
+    await this.contentModeration.enforceStaffText(
+      body.tenantSchema,
+      [
+        body.patch.homework,
+        body.patch.teacherNote,
+        body.patch.teacherInternalNote,
+        body.patch.nextPreview,
+        ...(body.patch.knowledgePoints ?? []).map((p) => p.name),
+        ...(body.patch.knowledgeMatrix ?? []).map((p) => p.name),
+      ],
+      {
+        action: 'lesson-feedback',
+        targetType: 'lesson_feedback',
+        targetId: feedbackId,
+        req,
+      },
+    );
+
     return this.feedback.updateInDb(
       feedbackId,
       {

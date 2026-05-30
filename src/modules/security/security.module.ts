@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { SecurityController } from './security.controller';
 import { SecurityService } from './security.service';
+import { ContentModerationService } from './content-moderation.service';
 import { WxAccessTokenService } from './wx-access-token.service';
 import { RedisModule } from '../redis/redis.module';
 
@@ -29,9 +30,10 @@ import { RedisModule } from '../redis/redis.module';
 @Module({
   imports: [RedisModule],
   controllers: [SecurityController],
-  providers: [SecurityService, WxAccessTokenService],
+  providers: [SecurityService, ContentModerationService, WxAccessTokenService],
   // 2026-05-25 统一登录: AuthModule 的 WxPhoneService 注入 WxAccessTokenService
   //   @Global 也必须 export 才能跨模块注入（否则 502 DI resolve 失败）
-  exports: [SecurityService, WxAccessTokenService],
+  // #24: ContentModerationService 导出供 14 个 B 端自由文本 endpoint 跨模块注入
+  exports: [SecurityService, ContentModerationService, WxAccessTokenService],
 })
 export class SecurityModule {}

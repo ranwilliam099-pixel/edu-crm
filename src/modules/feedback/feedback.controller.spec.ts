@@ -9,18 +9,19 @@
  * 直接 new — 跳过 NestJS DI（避免 @UseInterceptors(IdempotencyInterceptor) 拉起 RedisService）
  * RbacGuard / TenantScopeGuard / IdempotencyInterceptor 已有独立 spec 覆盖
  */
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { FeedbackController } from './feedback.controller';
 import { LessonFeedbackService } from './lesson-feedback.service';
 import { CourseConsumptionService } from './course-consumption.service';
 import { MonthlyReportService } from './monthly-report.service';
 import { TeacherRepository } from '../db/teacher.repository';
 import { AuditLogRepository } from '../db/audit-log.repository';
+import { ContentModerationService } from '../security/content-moderation.service';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 describe('FeedbackController — Sprint B self-check', () => {
   let controller: FeedbackController;
-  let feedbackSvc: { findInDb: jest.Mock; submitInDb: jest.Mock };
+  let feedbackSvc: { findInDb: jest.Mock; submitInDb: jest.Mock; updateInDb: jest.Mock };
   let consumptionSvc: Record<string, jest.Mock>;
   let reportSvc: {
     findInDb: jest.Mock;
@@ -30,6 +31,7 @@ describe('FeedbackController — Sprint B self-check', () => {
   };
   let teacherRepo: { findById: jest.Mock; findByUserId: jest.Mock };
   let auditLog: { log: jest.Mock };
+  let contentModeration: { enforceStaffText: jest.Mock };
 
   const TENANT = 'tenant_teacher_self_check_xxxxxxxx';
   const REPORT_ID = 'rep00000000000000000000000000R001';
@@ -72,7 +74,7 @@ describe('FeedbackController — Sprint B self-check', () => {
   };
 
   beforeEach(() => {
-    feedbackSvc = { findInDb: jest.fn(), submitInDb: jest.fn() };
+    feedbackSvc = { findInDb: jest.fn(), submitInDb: jest.fn(), updateInDb: jest.fn() };
     consumptionSvc = {};
     reportSvc = {
       findInDb: jest.fn(),
@@ -82,12 +84,14 @@ describe('FeedbackController — Sprint B self-check', () => {
     };
     teacherRepo = { findById: jest.fn(), findByUserId: jest.fn() };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
+    contentModeration = { enforceStaffText: jest.fn().mockResolvedValue(undefined) };
 
     controller = new FeedbackController(
       feedbackSvc as unknown as LessonFeedbackService,
       consumptionSvc as unknown as CourseConsumptionService,
       reportSvc as unknown as MonthlyReportService,
       teacherRepo as unknown as TeacherRepository,
+      contentModeration as unknown as ContentModerationService,
       auditLog as unknown as AuditLogRepository,
     );
   });
@@ -430,6 +434,119 @@ describe('FeedbackController — Sprint B self-check', () => {
 
       const r = await controller.submitFeedbackInDb(baseBody, mkReq());
       expect(r.id).toBe(FEEDBACK_ID);
+    });
+  });
+
+  // ============================================================
+  // #24: B 端自由文本内容安全（submit / update 写库前 enforceStaffText）
+  // ============================================================
+  describe('#24 content moderation — lesson-feedback', () => {
+    const FB_ID = 'fbk00000000000000000000000000F24';
+    const SCH_ID = 'sch00000000000000000000000000S24';
+    const STU_ID = 'stu00000000000000000000000000S24';
+
+    const textBody = {
+      id: FB_ID,
+      scheduleId: SCH_ID,
+      studentId: STU_ID,
+      teacherId: TEACHER_T1,
+      attendanceStatus: '出勤' as const,
+      classroomPerformance: '良好' as const,
+      homework: '完成 P32 习题',
+      teacherNote: '今天表现积极',
+      teacherInternalNote: '家长沟通需跟进',
+      nextPreview: '下节预习三角函数',
+      tenantSchema: TENANT,
+    };
+
+    it('submitFeedbackInDb → enforceStaffText 收 4 个自由文本字段 + ctx，写库前调', async () => {
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      feedbackSvc.submitInDb.mockResolvedValueOnce({ id: FB_ID });
+
+      await controller.submitFeedbackInDb(textBody, mkReq());
+
+      expect(contentModeration.enforceStaffText).toHaveBeenCalledWith(
+        TENANT,
+        ['完成 P32 习题', '今天表现积极', '家长沟通需跟进', '下节预习三角函数'],
+        expect.objectContaining({
+          action: 'lesson-feedback',
+          targetType: 'lesson_feedback',
+          targetId: FB_ID,
+        }),
+      );
+      // 校验在写库前（enforceStaffText 先于 submitInDb）
+      const modOrder = contentModeration.enforceStaffText.mock.invocationCallOrder[0];
+      const writeOrder = feedbackSvc.submitInDb.mock.invocationCallOrder[0];
+      expect(modOrder).toBeLessThan(writeOrder);
+    });
+
+    it('submitFeedbackInDb → 嵌套 knowledgePoints/knowledgeMatrix 的 name 也纳入校验（覆盖缺口修复）', async () => {
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      feedbackSvc.submitInDb.mockResolvedValueOnce({ id: FB_ID });
+
+      await controller.submitFeedbackInDb(
+        {
+          ...textBody,
+          knowledgePoints: [{ name: '一元二次方程', mastery: '良好' as const }],
+          knowledgeMatrix: [{ name: '函数图像', mastery: 'good' }],
+        },
+        mkReq(),
+      );
+
+      const texts = contentModeration.enforceStaffText.mock.calls[0][1] as string[];
+      expect(texts).toContain('一元二次方程');
+      expect(texts).toContain('函数图像');
+    });
+
+    it('submitFeedbackInDb risky → enforceStaffText 抛 400，不落库', async () => {
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+
+      await expect(controller.submitFeedbackInDb(textBody, mkReq())).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(feedbackSvc.submitInDb).not.toHaveBeenCalled();
+    });
+
+    it('updateFeedbackInDb → enforceStaffText 收 patch 自由文本 + req，写库前调', async () => {
+      feedbackSvc.updateInDb.mockResolvedValueOnce({ id: FB_ID });
+
+      await controller.updateFeedbackInDb(
+        FB_ID,
+        {
+          patch: { homework: '改后作业', teacherNote: '改后评语' },
+          tenantSchema: TENANT,
+        },
+        mkReq(),
+      );
+
+      expect(contentModeration.enforceStaffText).toHaveBeenCalledWith(
+        TENANT,
+        ['改后作业', '改后评语', undefined, undefined],
+        expect.objectContaining({
+          action: 'lesson-feedback',
+          targetType: 'lesson_feedback',
+          targetId: FB_ID,
+        }),
+      );
+      expect(feedbackSvc.updateInDb).toHaveBeenCalledTimes(1);
+    });
+
+    it('updateFeedbackInDb risky → 抛 400，不落库', async () => {
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+
+      await expect(
+        controller.updateFeedbackInDb(
+          FB_ID,
+          { patch: { teacherNote: '违规评语' }, tenantSchema: TENANT },
+          mkReq(),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(feedbackSvc.updateInDb).not.toHaveBeenCalled();
     });
   });
 });
