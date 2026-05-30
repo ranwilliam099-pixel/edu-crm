@@ -551,7 +551,11 @@ export class InvoiceRepository {
    *   - limit / offset 分页（默认 50 / 0）
    *
    * 排序：created_at DESC（最新优先）
-   * 软删 deleted_at IS NULL 自动过滤
+   *
+   * ⚠️ invoices 无软删列（V42 建表用 status 状态机 pending/issued/cancelled + cancelled_at，
+   *    无 deleted_at；deleted_at 是 contracts 的列）。原实现误抄 contracts 的
+   *    `deleted_at IS NULL` 过滤 → SELECT 报「列不存在」→ /db/invoices 全 500（生产事故）。
+   *    撤销发票用 status='cancelled' 表达，不软删；故此处不再过滤 deleted_at。
    */
   async listInvoices(
     tenantSchema: string,
@@ -560,17 +564,18 @@ export class InvoiceRepository {
     const limit = options.limit ?? 50;
     const offset = options.offset ?? 0;
     const params: unknown[] = [];
-    const where: string[] = ['deleted_at IS NULL'];
+    const where: string[] = [];
     if (options.status) {
       params.push(options.status);
       where.push(`status = $${params.length}`);
     }
     params.push(limit);
     params.push(offset);
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `SELECT * FROM invoices
-        WHERE ${where.join(' AND ')}
+        ${whereClause}
         ORDER BY created_at DESC
         LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,

@@ -1250,4 +1250,46 @@ describe('InvoiceRepository (Wave 4A.2-T3)', () => {
       expect(inv2.paymentMethod).toBe('微信支付');
     });
   });
+
+  // ============================================================
+  // listInvoices — 生产 500 回归（invoices 无 deleted_at 列）
+  // ============================================================
+  describe('listInvoices() — 不再误用 deleted_at（生产 500 回归）', () => {
+    it('SQL 绝不含 deleted_at（invoices 无此列，曾致 /db/invoices 全 500）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([invoiceRow()]);
+      await repo.listInvoices(TENANT, {});
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).not.toMatch(/deleted_at/);
+      expect(sql).toMatch(/FROM invoices/);
+    });
+
+    it('无 status → 不输出空 WHERE（无条件时无 WHERE 子句）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([invoiceRow()]);
+      const result = await repo.listInvoices(TENANT, {});
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      // 无条件 → 不应出现裸 WHERE
+      expect(sql).not.toMatch(/WHERE\s+ORDER BY/);
+      expect(sql).not.toMatch(/WHERE\s*$/m);
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(INVOICE_ID);
+    });
+
+    it("status='issued' → WHERE status = $1，参数透传", async () => {
+      pg.tenantQuery.mockResolvedValueOnce([invoiceRow({ status: 'issued' })]);
+      await repo.listInvoices(TENANT, { status: 'issued' });
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      const params = pg.tenantQuery.mock.calls[0][2] as unknown[];
+      expect(sql).toMatch(/WHERE status = \$1/);
+      expect(params[0]).toBe('issued');
+      // tenantSchema 透传
+      expect(pg.tenantQuery.mock.calls[0][0]).toBe(TENANT);
+    });
+
+    it('limit/offset 默认 50/0，分页参数在末位', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listInvoices(TENANT, {});
+      const params = pg.tenantQuery.mock.calls[0][2] as unknown[];
+      expect(params).toEqual([50, 0]);
+    });
+  });
 });
