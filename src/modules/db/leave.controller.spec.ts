@@ -643,4 +643,35 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
       expect(leaveRepo.reject).not.toHaveBeenCalled();
     });
   });
+
+  // ============================================================
+  // RBAC 元数据（@Roles）— 2026-05-30 approve/reject 越权修复
+  //   原无 @Roles（任意认证角色可审批）→ 加 [academic, academic_admin, admin, boss]
+  //   （请假/调课=教务域 SSOT §6.4；排除 sales/finance/teacher/parent 等越权方）
+  // ============================================================
+  describe('RBAC 元数据（@Roles 装饰器）', () => {
+    const ROLES_KEY = 'rbac_roles'; // guards/rbac.decorator.ts ROLES_METADATA_KEY
+
+    it('approveLeave @Roles 严格 = [academic, academic_admin, admin, boss]', () => {
+      const roles = Reflect.getMetadata(ROLES_KEY, LeaveController.prototype.approveLeave);
+      expect(roles).toEqual(['academic', 'academic_admin', 'admin', 'boss']);
+    });
+
+    it('rejectLeave @Roles 严格 = [academic, academic_admin, admin, boss]', () => {
+      const roles = Reflect.getMetadata(ROLES_KEY, LeaveController.prototype.rejectLeave);
+      expect(roles).toEqual(['academic', 'academic_admin', 'admin', 'boss']);
+    });
+
+    it('越权角色不在白名单（sales/finance/teacher/parent/hr/sales_manager/marketing）', () => {
+      const approve = Reflect.getMetadata(ROLES_KEY, LeaveController.prototype.approveLeave) as string[];
+      for (const r of ['sales', 'finance', 'teacher', 'parent', 'hr', 'sales_manager', 'marketing']) {
+        expect(approve).not.toContain(r);
+      }
+    });
+
+    it('createLeave / listByStudent 维持无 @Roles（§6.4 广开放：家长 C 端主入口 + 教务代发）', () => {
+      expect(Reflect.getMetadata(ROLES_KEY, LeaveController.prototype.createLeave)).toBeUndefined();
+      expect(Reflect.getMetadata(ROLES_KEY, LeaveController.prototype.listByStudent)).toBeUndefined();
+    });
+  });
 });

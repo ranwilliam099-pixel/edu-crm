@@ -12,6 +12,8 @@ import {
 } from '@nestjs/common';
 import { LeaveRepository, Leave, LeaveType } from './leave.repository';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
+import { RbacGuard } from '../../guards/rbac.guard';
+import { Roles } from '../../guards/rbac.decorator';
 import { ContentModerationService } from '../security/content-moderation.service';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
@@ -21,10 +23,13 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
  * 路由前缀：/api/db/...
  *   POST /api/db/leaves                        - 学员/家长提交请假/调课
  *   POST /api/db/students/:studentId/leaves/list - 列出学员请假记录
- *   POST /api/db/leaves/:id/approve            - 老师/管理员批准
- *   POST /api/db/leaves/:id/reject             - 老师/管理员驳回
+ *   POST /api/db/leaves/:id/approve            - 教务/教务主管/老板/校长批准（RBAC）
+ *   POST /api/db/leaves/:id/reject             - 教务/教务主管/老板/校长驳回（RBAC）
  *
  * 鉴权：x-tenant-schema header（与其他 /db 路由一致）
+ *   2026-05-30 越权修复：approve/reject 原无 @Roles（任意认证角色可审批）→ 加
+ *   @UseGuards(RbacGuard) + @Roles([academic, academic_admin, admin, boss])。请假/调课
+ *   是教务域（SSOT §6.4）；create/list 维持广开放（§6.4 主入口家长 C 端 + 教务代发）。
  *
  * 业务规则：距上课 < 24h 提交时仍接受，但 response 加 warning='可能被驳回'
  */
@@ -122,6 +127,11 @@ export class LeaveController {
   }
 
   @Post('leaves/:leaveId/approve')
+  // RBAC（2026-05-30 越权修复）：请假/调课审批 = 教务域（SSOT §6.4 老师请假教务取消换老师 /
+  //   留痕不审核但审批/驳回是教务调课职能）。教务双层 + 老板校长；排除 sales/finance/teacher/parent。
+  //   class 级只有 TenantScopeGuard → 必加方法级 @UseGuards(RbacGuard) 才激活 @Roles。
+  @UseGuards(RbacGuard)
+  @Roles('academic', 'academic_admin', 'admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async approveLeave(
     @Param('leaveId') leaveId: string,
@@ -138,6 +148,9 @@ export class LeaveController {
   }
 
   @Post('leaves/:leaveId/reject')
+  // RBAC（2026-05-30 越权修复）：同 approve — 教务双层 + 老板校长可驳回
+  @UseGuards(RbacGuard)
+  @Roles('academic', 'academic_admin', 'admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async rejectLeave(
     @Param('leaveId') leaveId: string,
@@ -152,7 +165,7 @@ export class LeaveController {
       throw new BadRequestException('reason required');
     }
 
-    // #24: 驳回理由（老师/管理员自填文本）过微信内容安全（risky → 400 拒存）
+    // #24: 驳回理由（审批角色自填文本）过微信内容安全（risky → 400 拒存）
     await this.contentModeration.enforceStaffText(
       tenantSchema,
       [body.reason],
