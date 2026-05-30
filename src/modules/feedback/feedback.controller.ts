@@ -722,6 +722,26 @@ export class FeedbackController {
     //   - admin / boss 跳过 self-check（拍板：boss 是校长，admin 是老板，都能改全 campus 数据）
     await this.assertTeacherSelfOrPrivileged(req, body.tenantSchema, reportId);
 
+    // #24: 月报自由文本过内容安全（teacher 版 + parent 合并版字段一并送检，含
+    //   parentHighlights[].point / parentImprovements[].point+.suggestion 嵌套家长可见文本）
+    await this.contentModeration.enforceStaffText(
+      body.tenantSchema,
+      [
+        body.teacherBlessing,
+        body.renewalSuggestion,
+        body.parentBlessing,
+        body.parentNextPlan,
+        ...(body.parentHighlights ?? []).map((h) => h.point),
+        ...(body.parentImprovements ?? []).flatMap((i) => [i.point, i.suggestion]),
+      ],
+      {
+        action: 'monthly-report',
+        targetType: 'monthly_report',
+        targetId: reportId,
+        req,
+      },
+    );
+
     // V36 audience='parent' 合并路径 → 转走 finalize-parent
     if (body.audience === 'parent') {
       if (!body.parentBlessing) {
@@ -790,6 +810,23 @@ export class FeedbackController {
   ): Promise<MonthlyReport> {
     // Sprint B self-check: teacher role 只能补写自己学生的家长版评语
     await this.assertTeacherSelfOrPrivileged(req, body.tenantSchema, reportId);
+
+    // #24: 家长版自由文本过内容安全（家长直接可见；含 highlights/improvements 嵌套文本）
+    await this.contentModeration.enforceStaffText(
+      body.tenantSchema,
+      [
+        body.parentBlessing,
+        body.parentNextPlan,
+        ...(body.parentHighlights ?? []).map((h) => h.point),
+        ...(body.parentImprovements ?? []).flatMap((i) => [i.point, i.suggestion]),
+      ],
+      {
+        action: 'monthly-report',
+        targetType: 'monthly_report',
+        targetId: reportId,
+        req,
+      },
+    );
 
     const auditCtx = this.buildFinalizeAuditCtx(req);
     const payload: FinalizeParentPayload = {

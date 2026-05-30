@@ -43,6 +43,8 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { LeaveController } from './leave.controller';
 import { LeaveRepository, Leave, LeaveType } from './leave.repository';
+import { ContentModerationService } from '../security/content-moderation.service';
+import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
   let controller: LeaveController;
@@ -52,6 +54,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
     approve: jest.Mock;
     reject: jest.Mock;
   };
+  let contentModeration: { enforceStaffText: jest.Mock };
 
   // 32-char ULID 固定值
   const TENANT_SCHEMA = 'tenant_leave000000000000000000ab01';
@@ -87,8 +90,12 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
       approve: jest.fn(),
       reject: jest.fn(),
     };
+    contentModeration = {
+      enforceStaffText: jest.fn().mockResolvedValue(undefined),
+    };
     controller = new LeaveController(
       leaveRepo as unknown as LeaveRepository,
+      contentModeration as unknown as ContentModerationService,
     );
 
     jest.spyOn(Date, 'now').mockReturnValue(NOW_MS);
@@ -97,6 +104,17 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
+
+  // #24: 内容安全 enforceStaffText ctx 取 req.ip / user-agent / x-request-id / actor
+  const mkReq = (
+    overrides: Partial<AuthenticatedRequest> = {},
+  ): AuthenticatedRequest =>
+    ({
+      user: { sub: 'usrLeave00000000000000000000A001', role: 'parent', tenantId: 't', campusId: 'c' },
+      ip: '1.2.3.4',
+      headers: { 'user-agent': 'WeChatMP/8.0', 'x-request-id': 'req-leave' },
+      ...overrides,
+    }) as AuthenticatedRequest;
 
   // ============================================================
   // Case 1-13: createLeave()
@@ -114,63 +132,63 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
 
     it('x-tenant-schema 缺 → BadRequest instanceof', async () => {
       await expect(
-        controller.createLeave('', validBody()),
+        controller.createLeave('', validBody(), mkReq()),
       ).rejects.toThrow(BadRequestException);
       expect(leaveRepo.create).not.toHaveBeenCalled();
     });
 
     it('x-tenant-schema 缺 → message "x-tenant-schema header required"', async () => {
       await expect(
-        controller.createLeave('', validBody()),
+        controller.createLeave('', validBody(), mkReq()),
       ).rejects.toThrow('x-tenant-schema header required');
     });
 
     it('id 缺 → BadRequest "id must be 32-char ULID"', async () => {
       const body = { ...validBody(), id: '' };
       await expect(
-        controller.createLeave(TENANT_SCHEMA, body),
+        controller.createLeave(TENANT_SCHEMA, body, mkReq()),
       ).rejects.toThrow('id must be 32-char ULID');
     });
 
     it('id 长度 ≠ 32 → BadRequest', async () => {
       const body = { ...validBody(), id: 'a'.repeat(31) };
       await expect(
-        controller.createLeave(TENANT_SCHEMA, body),
+        controller.createLeave(TENANT_SCHEMA, body, mkReq()),
       ).rejects.toThrow('id must be 32-char ULID');
     });
 
     it('id 长度 33 → BadRequest', async () => {
       const body = { ...validBody(), id: 'a'.repeat(33) };
       await expect(
-        controller.createLeave(TENANT_SCHEMA, body),
+        controller.createLeave(TENANT_SCHEMA, body, mkReq()),
       ).rejects.toThrow('id must be 32-char ULID');
     });
 
     it('studentId 缺 → BadRequest', async () => {
       const body = { ...validBody(), studentId: '' };
       await expect(
-        controller.createLeave(TENANT_SCHEMA, body),
+        controller.createLeave(TENANT_SCHEMA, body, mkReq()),
       ).rejects.toThrow('studentId must be 32-char ULID');
     });
 
     it('studentId 长度 ≠ 32 → BadRequest', async () => {
       const body = { ...validBody(), studentId: 's'.repeat(20) };
       await expect(
-        controller.createLeave(TENANT_SCHEMA, body),
+        controller.createLeave(TENANT_SCHEMA, body, mkReq()),
       ).rejects.toThrow('studentId must be 32-char ULID');
     });
 
     it('type 非 leave/reschedule → BadRequest 含传入值', async () => {
       const body = { ...validBody(), type: 'cancel' as any };
       await expect(
-        controller.createLeave(TENANT_SCHEMA, body),
+        controller.createLeave(TENANT_SCHEMA, body, mkReq()),
       ).rejects.toThrow('type must be leave|reschedule, got: cancel');
     });
 
     it('type=undefined → BadRequest', async () => {
       const body = { ...validBody(), type: undefined as any };
       await expect(
-        controller.createLeave(TENANT_SCHEMA, body),
+        controller.createLeave(TENANT_SCHEMA, body, mkReq()),
       ).rejects.toThrow('type must be leave|reschedule');
     });
 
@@ -178,7 +196,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
       const saved = leaveFixture();
       leaveRepo.create.mockResolvedValueOnce(saved);
 
-      const result = await controller.createLeave(TENANT_SCHEMA, validBody());
+      const result = await controller.createLeave(TENANT_SCHEMA, validBody(), mkReq());
 
       expect(leaveRepo.create).toHaveBeenCalledWith(
         TENANT_SCHEMA,
@@ -212,7 +230,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
         newDateMs,
         newStartAtMs,
       };
-      await controller.createLeave(TENANT_SCHEMA, body);
+      await controller.createLeave(TENANT_SCHEMA, body, mkReq());
 
       const callArg = leaveRepo.create.mock.calls[0][1] as Leave;
       expect(callArg.type).toBe('reschedule');
@@ -223,7 +241,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
     it('不传 newDateMs/newStartAtMs → 透传 undefined（不转 Date(undefined)）', async () => {
       leaveRepo.create.mockResolvedValueOnce(leaveFixture());
 
-      await controller.createLeave(TENANT_SCHEMA, validBody());
+      await controller.createLeave(TENANT_SCHEMA, validBody(), mkReq());
 
       const callArg = leaveRepo.create.mock.calls[0][1] as Leave;
       expect(callArg.newDate).toBeUndefined();
@@ -234,7 +252,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
       leaveRepo.create.mockResolvedValueOnce(leaveFixture());
 
       const body = { ...validBody(), newDateMs: 0, newStartAtMs: 0 };
-      await controller.createLeave(TENANT_SCHEMA, body);
+      await controller.createLeave(TENANT_SCHEMA, body, mkReq());
 
       const callArg = leaveRepo.create.mock.calls[0][1] as Leave;
       expect(callArg.newDate).toBeUndefined();
@@ -248,7 +266,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
         ...validBody(),
         lessonStartAtMs: NOW_MS + 48 * 60 * 60 * 1000, // 2 天后
       };
-      const result = await controller.createLeave(TENANT_SCHEMA, body);
+      const result = await controller.createLeave(TENANT_SCHEMA, body, mkReq());
 
       expect(result.warning).toBeUndefined();
       expect(result).toEqual({ leave: expect.any(Object) });
@@ -262,7 +280,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
         ...validBody(),
         lessonStartAtMs: NOW_MS + 12 * 60 * 60 * 1000, // 12h 后
       };
-      const result = await controller.createLeave(TENANT_SCHEMA, body);
+      const result = await controller.createLeave(TENANT_SCHEMA, body, mkReq());
 
       expect(result).toEqual({
         leave: saved,
@@ -277,7 +295,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
         ...validBody(),
         lessonStartAtMs: NOW_MS - 60 * 60 * 1000, // 1h 前
       };
-      const result = await controller.createLeave(TENANT_SCHEMA, body);
+      const result = await controller.createLeave(TENANT_SCHEMA, body, mkReq());
 
       expect(result.warning).toBe('距上课不足 24 小时，申请可能被驳回');
     });
@@ -289,7 +307,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
         ...validBody(),
         lessonStartAtMs: NOW_MS + 24 * 60 * 60 * 1000,
       };
-      const result = await controller.createLeave(TENANT_SCHEMA, body);
+      const result = await controller.createLeave(TENANT_SCHEMA, body, mkReq());
 
       // controller 用 `< ELAPSED_24H`，正好相等 → 不触发
       expect(result.warning).toBeUndefined();
@@ -299,7 +317,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
       leaveRepo.create.mockResolvedValueOnce(leaveFixture());
 
       const body = { ...validBody(), lessonStartAtMs: 0 };
-      const result = await controller.createLeave(TENANT_SCHEMA, body);
+      const result = await controller.createLeave(TENANT_SCHEMA, body, mkReq());
 
       expect(result.warning).toBeUndefined();
     });
@@ -307,7 +325,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
     it('lessonStartAtMs undefined → 跳过 warning 判定', async () => {
       leaveRepo.create.mockResolvedValueOnce(leaveFixture());
 
-      const result = await controller.createLeave(TENANT_SCHEMA, validBody());
+      const result = await controller.createLeave(TENANT_SCHEMA, validBody(), mkReq());
 
       expect(result.warning).toBeUndefined();
     });
@@ -320,7 +338,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
         studentId: STUDENT_ID,
         type: 'leave' as LeaveType,
       };
-      await controller.createLeave(TENANT_SCHEMA, body);
+      await controller.createLeave(TENANT_SCHEMA, body, mkReq());
 
       const callArg = leaveRepo.create.mock.calls[0][1] as Leave;
       expect(callArg.reason).toBeUndefined();
@@ -332,8 +350,49 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
       leaveRepo.create.mockRejectedValueOnce(new Error('db down'));
 
       await expect(
-        controller.createLeave(TENANT_SCHEMA, validBody()),
+        controller.createLeave(TENANT_SCHEMA, validBody(), mkReq()),
       ).rejects.toThrow('db down');
+    });
+
+    // ----- #24 内容安全（reason / reasonNote） -----
+
+    it('#24 happy → enforceStaffText 收 [reason, reasonNote] + ctx，写库前调', async () => {
+      const saved = leaveFixture();
+      leaveRepo.create.mockResolvedValueOnce(saved);
+
+      const body = {
+        ...validBody(),
+        reason: '孩子发烧请假',
+        reasonNote: '已就医，需休息两天',
+      };
+      await controller.createLeave(TENANT_SCHEMA, body, mkReq());
+
+      expect(contentModeration.enforceStaffText).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        ['孩子发烧请假', '已就医，需休息两天'],
+        expect.objectContaining({
+          action: 'leave',
+          targetType: 'leave',
+          targetId: LEAVE_ID,
+        }),
+      );
+      // 校验在写库前（enforceStaffText 先于 leaveRepo.create）
+      const modOrder =
+        contentModeration.enforceStaffText.mock.invocationCallOrder[0];
+      const writeOrder = leaveRepo.create.mock.invocationCallOrder[0];
+      expect(modOrder).toBeLessThan(writeOrder);
+    });
+
+    it('#24 risky → enforceStaffText 抛 400，不落库', async () => {
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+
+      const body = { ...validBody(), reason: '违规请假理由' };
+      await expect(
+        controller.createLeave(TENANT_SCHEMA, body, mkReq()),
+      ).rejects.toThrow(BadRequestException);
+      expect(leaveRepo.create).not.toHaveBeenCalled();
     });
   });
 
@@ -484,23 +543,26 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
   describe('rejectLeave()', () => {
     it('x-tenant-schema 缺 → BadRequest', async () => {
       await expect(
-        controller.rejectLeave(LEAVE_ID, '', { reason: 'X' }),
+        controller.rejectLeave(LEAVE_ID, '', { reason: 'X' }, mkReq()),
       ).rejects.toThrow('x-tenant-schema header required');
       expect(leaveRepo.reject).not.toHaveBeenCalled();
     });
 
     it('reason 缺（空串）→ BadRequest "reason required"', async () => {
       await expect(
-        controller.rejectLeave(LEAVE_ID, TENANT_SCHEMA, { reason: '' }),
+        controller.rejectLeave(LEAVE_ID, TENANT_SCHEMA, { reason: '' }, mkReq()),
       ).rejects.toThrow('reason required');
       expect(leaveRepo.reject).not.toHaveBeenCalled();
     });
 
     it('reason undefined → BadRequest', async () => {
       await expect(
-        controller.rejectLeave(LEAVE_ID, TENANT_SCHEMA, {
-          reason: undefined as any,
-        }),
+        controller.rejectLeave(
+          LEAVE_ID,
+          TENANT_SCHEMA,
+          { reason: undefined as any },
+          mkReq(),
+        ),
       ).rejects.toThrow('reason required');
     });
 
@@ -512,9 +574,12 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
       });
       leaveRepo.reject.mockResolvedValueOnce(rejected);
 
-      const result = await controller.rejectLeave(LEAVE_ID, TENANT_SCHEMA, {
-        reason: '距上课 < 1h',
-      });
+      const result = await controller.rejectLeave(
+        LEAVE_ID,
+        TENANT_SCHEMA,
+        { reason: '距上课 < 1h' },
+        mkReq(),
+      );
 
       expect(leaveRepo.reject).toHaveBeenCalledWith(
         TENANT_SCHEMA,
@@ -530,8 +595,52 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
       );
 
       await expect(
-        controller.rejectLeave(LEAVE_ID, TENANT_SCHEMA, { reason: 'X' }),
+        controller.rejectLeave(LEAVE_ID, TENANT_SCHEMA, { reason: 'X' }, mkReq()),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    // ----- #24 内容安全（reason） -----
+
+    it('#24 happy → enforceStaffText 收 [reason] + ctx(targetId=leaveId)，写库前调', async () => {
+      const rejected = leaveFixture({ status: 'rejected', rejectReason: '距上课 < 1h' });
+      leaveRepo.reject.mockResolvedValueOnce(rejected);
+
+      await controller.rejectLeave(
+        LEAVE_ID,
+        TENANT_SCHEMA,
+        { reason: '距上课 < 1h，无法安排调课' },
+        mkReq(),
+      );
+
+      expect(contentModeration.enforceStaffText).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        ['距上课 < 1h，无法安排调课'],
+        expect.objectContaining({
+          action: 'leave',
+          targetType: 'leave',
+          targetId: LEAVE_ID,
+        }),
+      );
+      const modOrder =
+        contentModeration.enforceStaffText.mock.invocationCallOrder[0];
+      const writeOrder = leaveRepo.reject.mock.invocationCallOrder[0];
+      expect(modOrder).toBeLessThan(writeOrder);
+    });
+
+    it('#24 risky → enforceStaffText 抛 400，不落库', async () => {
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+
+      await expect(
+        controller.rejectLeave(
+          LEAVE_ID,
+          TENANT_SCHEMA,
+          { reason: '违规驳回理由' },
+          mkReq(),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(leaveRepo.reject).not.toHaveBeenCalled();
     });
   });
 });

@@ -7,10 +7,13 @@ import {
   HttpStatus,
   Param,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { LeaveRepository, Leave, LeaveType } from './leave.repository';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
+import { ContentModerationService } from '../security/content-moderation.service';
+import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 /**
  * LeaveController — V16 请假/调课申请 HTTP 暴露
@@ -28,7 +31,11 @@ import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 @UseGuards(TenantScopeGuard)
 @Controller('db')
 export class LeaveController {
-  constructor(private readonly leaveRepo: LeaveRepository) {}
+  constructor(
+    private readonly leaveRepo: LeaveRepository,
+    // #24: B 端自由文本内容安全统一收口（@Global SecurityModule 注入，生产必有）
+    private readonly contentModeration: ContentModerationService,
+  ) {}
 
   @Post('leaves')
   @HttpCode(HttpStatus.CREATED)
@@ -47,6 +54,7 @@ export class LeaveController {
       newDateMs?: number;
       newStartAtMs?: number;
     },
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ leave: Leave; warning?: string }> {
     if (!tenantSchema) {
       throw new BadRequestException('x-tenant-schema header required');
@@ -60,6 +68,19 @@ export class LeaveController {
     if (!['leave', 'reschedule'].includes(body.type)) {
       throw new BadRequestException(`type must be leave|reschedule, got: ${body.type}`);
     }
+
+    // #24: 自由文本过微信内容安全（risky → 400 拒存；写库前拦截，违规内容不落库）
+    //   reason / reasonNote 为家长/学员请假理由自填文本（B 端 endpoint，沿用 reject 策略）
+    await this.contentModeration.enforceStaffText(
+      tenantSchema,
+      [body.reason, body.reasonNote],
+      {
+        action: 'leave',
+        targetType: 'leave',
+        targetId: body.id,
+        req,
+      },
+    );
 
     const leave: Leave = {
       id: body.id,
@@ -122,6 +143,7 @@ export class LeaveController {
     @Param('leaveId') leaveId: string,
     @Headers('x-tenant-schema') tenantSchema: string,
     @Body() body: { reason: string },
+    @Req() req: AuthenticatedRequest,
   ): Promise<Leave> {
     if (!tenantSchema) {
       throw new BadRequestException('x-tenant-schema header required');
@@ -129,6 +151,19 @@ export class LeaveController {
     if (!body.reason) {
       throw new BadRequestException('reason required');
     }
+
+    // #24: 驳回理由（老师/管理员自填文本）过微信内容安全（risky → 400 拒存）
+    await this.contentModeration.enforceStaffText(
+      tenantSchema,
+      [body.reason],
+      {
+        action: 'leave',
+        targetType: 'leave',
+        targetId: leaveId,
+        req,
+      },
+    );
+
     return this.leaveRepo.reject(tenantSchema, leaveId, body.reason);
   }
 }

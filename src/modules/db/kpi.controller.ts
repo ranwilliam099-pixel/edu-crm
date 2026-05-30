@@ -40,6 +40,8 @@ import {
 } from './audit-log.repository';
 // 2026-05-22 SSOT §6.9 KPI 5min Redis cache (fail-open)
 import { RedisService } from '../redis/redis.service';
+// #24: B 端自由文本内容安全统一收口（@Global SecurityModule 注入）
+import { ContentModerationService } from '../security/content-moderation.service';
 
 /**
  * KpiController — 4 KPI dashboard endpoint（2026-05-20 P4-X 拍板）
@@ -76,6 +78,9 @@ export class KpiController {
 
   constructor(
     private readonly kpi: KpiService,
+    // #24: B 端自由文本内容安全统一收口（@Global SecurityModule 注入，生产必有）
+    //   set-target note 字段写库前过微信 msgSecCheck（默认 reject 策略）
+    private readonly contentModeration: ContentModerationService,
     // 2026-05-22 Sprint Y: 老师/教务/财务 home audit_log read 写入
     // @Optional unit spec 兼容；fail-open log() 内部已 catch
     @Optional() private readonly auditLog?: AuditLogRepository,
@@ -510,6 +515,19 @@ export class KpiController {
     if (!finalCampusId || finalCampusId.length !== 32) {
       throw new BadRequestException('campusId required (32-char ULID)');
     }
+
+    // #24: B 端自由文本过微信内容安全（risky → 400 拒存；写库前拦截，违规内容不落库）
+    //   set-target 唯一自由文本 = note（目标设定备注，可选）。默认 reject 策略对齐 §12C。
+    await this.contentModeration.enforceStaffText(
+      body.tenantSchema,
+      [body.note],
+      {
+        action: 'kpi',
+        targetType: 'kpi_target',
+        targetId: body.targetUserId,
+        req,
+      },
+    );
 
     const result = await this.kpi.setMonthlyTarget(body.tenantSchema, {
       campusId: finalCampusId,

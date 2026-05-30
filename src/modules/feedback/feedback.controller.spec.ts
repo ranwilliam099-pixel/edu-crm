@@ -549,4 +549,96 @@ describe('FeedbackController — Sprint B self-check', () => {
       expect(feedbackSvc.updateInDb).not.toHaveBeenCalled();
     });
   });
+
+  // ============================================================
+  // #24: 月报 finalize / finalize-parent 内容安全
+  // ============================================================
+  describe('#24 content moderation — monthly-report', () => {
+    it('finalizeReportInDb → enforceStaffText 收 blessing/suggestion + 嵌套 highlights/improvements 文本', async () => {
+      reportSvc.findInDb.mockResolvedValueOnce(baseReport);
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      reportSvc.finalizeInDb.mockResolvedValueOnce({ ...baseReport, status: 'teacher_finalized' });
+
+      await controller.finalizeReportInDb(
+        REPORT_ID,
+        {
+          teacherBlessing: '继续加油',
+          renewalSuggestion: '建议续报',
+          parentHighlights: [{ point: '审题认真', lessonCount: 3 }],
+          parentImprovements: [{ point: '计算粗心', suggestion: '多练口算' }],
+          tenantSchema: TENANT,
+        },
+        mkReq(),
+      );
+
+      const texts = contentModeration.enforceStaffText.mock.calls[0][1] as Array<string | undefined>;
+      expect(texts).toEqual(
+        expect.arrayContaining(['继续加油', '建议续报', '审题认真', '计算粗心', '多练口算']),
+      );
+      expect(contentModeration.enforceStaffText.mock.calls[0][2]).toMatchObject({
+        action: 'monthly-report',
+        targetType: 'monthly_report',
+        targetId: REPORT_ID,
+      });
+    });
+
+    it('finalizeReportInDb risky → 抛 400，不写库', async () => {
+      reportSvc.findInDb.mockResolvedValueOnce(baseReport);
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+
+      await expect(
+        controller.finalizeReportInDb(
+          REPORT_ID,
+          { teacherBlessing: '违规', renewalSuggestion: '', tenantSchema: TENANT },
+          mkReq(),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(reportSvc.finalizeInDb).not.toHaveBeenCalled();
+    });
+
+    it('finalizeReportParentInDb → enforceStaffText 收 parent 字段 + 嵌套文本，写库前调', async () => {
+      reportSvc.findInDb.mockResolvedValueOnce(baseReport);
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      reportSvc.finalizeParentInDb.mockResolvedValueOnce({ ...baseReport, parentBlessing: 'p' });
+
+      await controller.finalizeReportParentInDb(
+        REPORT_ID,
+        {
+          parentBlessing: '家长版寄语',
+          parentNextPlan: '下阶段计划',
+          parentImprovements: [{ point: '专注度', suggestion: '番茄钟' }],
+          tenantSchema: TENANT,
+        },
+        mkReq(),
+      );
+
+      const texts = contentModeration.enforceStaffText.mock.calls[0][1] as Array<string | undefined>;
+      expect(texts).toEqual(
+        expect.arrayContaining(['家长版寄语', '下阶段计划', '专注度', '番茄钟']),
+      );
+      const modOrder = contentModeration.enforceStaffText.mock.invocationCallOrder[0];
+      const writeOrder = reportSvc.finalizeParentInDb.mock.invocationCallOrder[0];
+      expect(modOrder).toBeLessThan(writeOrder);
+    });
+
+    it('finalizeReportParentInDb risky → 抛 400，不写库', async () => {
+      reportSvc.findInDb.mockResolvedValueOnce(baseReport);
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+
+      await expect(
+        controller.finalizeReportParentInDb(
+          REPORT_ID,
+          { parentBlessing: '违规寄语', tenantSchema: TENANT },
+          mkReq(),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(reportSvc.finalizeParentInDb).not.toHaveBeenCalled();
+    });
+  });
 });

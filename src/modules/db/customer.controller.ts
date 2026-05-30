@@ -33,6 +33,8 @@ import { maskCustomer, canAccessCustomer, actorGroupOf } from '../../common/role
 //   - canAccessCustomer 失败前写 'customer.access-denied' 留证据
 //   - 复用 C.2 / V36 / B.3 修复 (cross-tenant-denied, teacher.self-check-failed) 模式
 import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.repository';
+// #24 (2026-05-30): B 端自由文本内容安全统一收口（@Global SecurityModule 注入，生产必有）
+import { ContentModerationService } from '../security/content-moderation.service';
 
 /**
  * CustomerController — V25 销售客户管理 HTTP 暴露
@@ -66,6 +68,10 @@ import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.r
 export class CustomerController {
   constructor(
     private readonly repo: CustomerRepository,
+    // #24 (2026-05-30): B 端自由文本内容安全统一收口（@Global SecurityModule 注入，生产必有）
+    //   - 必填依赖：放在任何 @Optional 参数之前（DI 位置纪律）
+    //   - 写库前调 enforceStaffText：risky → 抛 400 拒存（mode 默认 'reject'）
+    private readonly contentModeration: ContentModerationService,
     // Sprint B.5 (2026-05-11): audit_log 业务写 + 拒绝路径
     //   - @Optional：unit spec 直接 new 不传也能跑（兼容现有 spec 测试）
     //   - fail-open：log() 写失败仅 logger.warn 不抛主业务（AuditLogRepository.log 内部 catch）
@@ -202,6 +208,21 @@ export class CustomerController {
     if (!/^1[3-9]\d{9}$/.test(body.primaryMobile)) {
       throw new BadRequestException('primaryMobile must be 11-digit Chinese mobile');
     }
+
+    // #24: 销售自由文本过微信内容安全（risky → 400 拒存；写库前拦截，违规内容不落库）
+    //   note（内部跟进备注）/ source（来源，可自填渠道）。parentName/studentName 为实名非自由
+    //   营销文本，不纳入（实名误报代价高，且后续有 RBAC mask 兜底）。
+    await this.contentModeration.enforceStaffText(
+      body.tenantSchema,
+      [body.note, body.source],
+      {
+        action: 'customer',
+        targetType: 'customer',
+        targetId: body.customerId,
+        req,
+      },
+    );
+
     const result = await this.repo.createWithOpportunity(body.tenantSchema, {
       customerId: body.customerId,
       opportunityId: body.opportunityId,
@@ -701,6 +722,18 @@ export class CustomerController {
     const userId = req.user?.sub;
     if (!userId) throw new BadRequestException('user sub required');
 
+    // #24: 退池原因自由文本过微信内容安全（risky → 400 拒存；写库前拦截）
+    await this.contentModeration.enforceStaffText(
+      body.tenantSchema,
+      [body.reason],
+      {
+        action: 'customer',
+        targetType: 'customer',
+        targetId: customerId,
+        req,
+      },
+    );
+
     // Sprint B.5: before snapshot（owner=me → release 后 null）
     const before = await this.repo.findById(body.tenantSchema, customerId);
     const result = await this.repo.release(
@@ -818,6 +851,18 @@ export class CustomerController {
     const userId = req.user?.sub;
     if (!userId) throw new BadRequestException('user sub required');
 
+    // #24: 失单原因自由文本过微信内容安全（risky → 400 拒存；写库前拦截）
+    await this.contentModeration.enforceStaffText(
+      body.tenantSchema,
+      [body.lostReason],
+      {
+        action: 'customer',
+        targetType: 'customer',
+        targetId: customerId,
+        req,
+      },
+    );
+
     // Sprint B.5: before snapshot（stage → '已失单'）
     const before = await this.repo.findById(body.tenantSchema, customerId);
     const result = await this.repo.markLost(
@@ -862,6 +907,19 @@ export class CustomerController {
     if (!body.label) throw new BadRequestException('label required');
     const userId = req.user?.sub;
     if (!userId) throw new BadRequestException('user sub required');
+
+    // #24: 跟进记录自由文本过微信内容安全（risky → 400 拒存；写库前拦截）
+    await this.contentModeration.enforceStaffText(
+      body.tenantSchema,
+      [body.label],
+      {
+        action: 'customer.follow',
+        targetType: 'customer',
+        targetId: customerId,
+        req,
+      },
+    );
+
     return this.repo.addFollow(body.tenantSchema, customerId, {
       followType: body.followType || 'remark',
       label: body.label,

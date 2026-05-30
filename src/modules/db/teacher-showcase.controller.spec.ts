@@ -3,6 +3,7 @@ import { TeacherShowcaseController } from './teacher-showcase.controller';
 import { TeacherShowcaseRepository } from './teacher-showcase.repository';
 import { TeacherRepository } from './teacher.repository';
 import { TeacherShowcaseMetaRepository } from './teacher-showcase-meta.repository';
+import { ContentModerationService } from '../security/content-moderation.service';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 /**
@@ -22,6 +23,7 @@ describe('TeacherShowcaseController (C.2)', () => {
   let showcaseRepo: { getSummary: jest.Mock };
   let teacherRepo: { findById: jest.Mock };
   let metaRepo: { getMeta: jest.Mock; upsertMeta: jest.Mock };
+  let contentModeration: { enforceStaffText: jest.Mock };
 
   const TENANT = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const TEACHER_A = 'teacher_A000000000000000000000A001';
@@ -69,6 +71,8 @@ describe('TeacherShowcaseController (C.2)', () => {
     showcaseRepo = { getSummary: jest.fn() };
     teacherRepo = { findById: jest.fn() };
     metaRepo = { getMeta: jest.fn(), upsertMeta: jest.fn() };
+    // #24: 内容安全默认放行（resolve undefined）；risky 用例各自 mockRejectedValueOnce
+    contentModeration = { enforceStaffText: jest.fn().mockResolvedValue(undefined) };
     // 直接 new — 跳过 NestJS DI（避免 @UseInterceptors(IdempotencyInterceptor) 拉起 RedisService）
     // 单元测试范围：controller 方法的业务逻辑，不验证 guard/interceptor 装配
     // （TenantScopeGuard / RbacGuard / IdempotencyInterceptor 已有独立 spec 覆盖）
@@ -76,6 +80,7 @@ describe('TeacherShowcaseController (C.2)', () => {
       showcaseRepo as unknown as TeacherShowcaseRepository,
       teacherRepo as unknown as TeacherRepository,
       metaRepo as unknown as TeacherShowcaseMetaRepository,
+      contentModeration as unknown as ContentModerationService,
     );
   });
 
@@ -436,6 +441,105 @@ describe('TeacherShowcaseController (C.2)', () => {
         mkReq(),
       );
       expect(r.meta.updatedAt).toBe('2026-05-12T03:00:00.000Z');
+    });
+
+    // ----------------------------------------------------------
+    // #24: B 端自由文本内容安全（写库前 enforceStaffText）
+    // ----------------------------------------------------------
+    it('#24: enforceStaffText 收 bio + testimonials 的 content/anon_name + ctx，写库前调', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
+      metaRepo.upsertMeta.mockResolvedValueOnce(baseMeta);
+
+      await controller.updateShowcaseMeta(
+        TEACHER_A,
+        TENANT,
+        {
+          bio: '资深数学老师，十年教龄',
+          testimonials: [
+            { anon_name: '李同学', content: '老师讲得很清晰', stars: 5 },
+            { anon_name: '王同学', content: '提分明显', stars: 4 },
+          ],
+        },
+        mkReq(),
+      );
+
+      expect(contentModeration.enforceStaffText).toHaveBeenCalledWith(
+        TENANT,
+        [
+          '资深数学老师，十年教龄',
+          '老师讲得很清晰',
+          '提分明显',
+          '李同学',
+          '王同学',
+        ],
+        expect.objectContaining({
+          action: 'teacher.showcase-meta',
+          targetType: 'teacher',
+          targetId: TEACHER_A,
+        }),
+      );
+      // 校验在写库前（enforceStaffText 先于 upsertMeta）
+      const modOrder = contentModeration.enforceStaffText.mock.invocationCallOrder[0];
+      const writeOrder = metaRepo.upsertMeta.mock.invocationCallOrder[0];
+      expect(modOrder).toBeLessThan(writeOrder);
+    });
+
+    it('#24: 仅 bio（无 testimonials）→ texts 只含 bio', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
+      metaRepo.upsertMeta.mockResolvedValueOnce(baseMeta);
+
+      await controller.updateShowcaseMeta(TEACHER_A, TENANT, { bio: '只有简介' }, mkReq());
+
+      const texts = contentModeration.enforceStaffText.mock.calls[0][1] as Array<
+        string | null | undefined
+      >;
+      expect(texts).toEqual(['只有简介']);
+    });
+
+    it('#24: ctx 透传 req（含 ip / user-agent / x-request-id）', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
+      metaRepo.upsertMeta.mockResolvedValueOnce(baseMeta);
+
+      const req = mkReq();
+      await controller.updateShowcaseMeta(TEACHER_A, TENANT, { bio: 'x' }, req);
+
+      const ctx = contentModeration.enforceStaffText.mock.calls[0][2] as { req?: unknown };
+      expect(ctx.req).toBe(req);
+    });
+
+    it('#24: risky → enforceStaffText 抛 400，不落库', async () => {
+      teacherRepo.findById.mockResolvedValueOnce(baseTeacher);
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+
+      await expect(
+        controller.updateShowcaseMeta(
+          TEACHER_A,
+          TENANT,
+          {
+            bio: '违规简介',
+            testimonials: [{ anon_name: '违规昵称', content: '违规正文', stars: 5 }],
+          },
+          mkReq(),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(metaRepo.upsertMeta).not.toHaveBeenCalled();
+    });
+
+    it('#24: teacher self-check 失败 → 不触达 enforceStaffText（self-check 先于内容安全）', async () => {
+      const TEACHER_USER = 'usr_teacher_00000000000000000T01';
+      const OTHER_USER = 'usr_teacher_00000000000000000T02';
+      teacherRepo.findById.mockResolvedValueOnce({ ...baseTeacher, userId: TEACHER_USER });
+      const req = mkReq({
+        user: { sub: OTHER_USER, role: 'teacher', tenantId: 'tenantA', campusId: 'campusA' },
+      } as Partial<AuthenticatedRequest>);
+
+      await expect(
+        controller.updateShowcaseMeta(TEACHER_A, TENANT, { bio: '攻击者改我' }, req),
+      ).rejects.toThrow(/self-check/);
+      expect(contentModeration.enforceStaffText).not.toHaveBeenCalled();
+      expect(metaRepo.upsertMeta).not.toHaveBeenCalled();
     });
   });
 

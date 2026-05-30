@@ -19,6 +19,7 @@ import { CustomerController } from './customer.controller';
 import { CustomerRepository, Customer, CreateCustomerResult } from './customer.repository';
 import { AuthenticatedRequest, JwtPayload, TenantRole } from '../auth/jwt-payload.interface';
 import { AuditLogRepository } from './audit-log.repository';
+import { ContentModerationService } from '../security/content-moderation.service';
 
 describe('CustomerController (Sprint B.3 字段级权限)', () => {
   let controller: CustomerController;
@@ -29,6 +30,7 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
     listPool: jest.Mock;
     listFollowLog: jest.Mock;
   };
+  let contentModeration: { enforceStaffText: jest.Mock };
 
   const TENANT_A = 'TENANTA00000000000000000000000A1';
   const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
@@ -79,7 +81,11 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
       listPool: jest.fn(),
       listFollowLog: jest.fn(),
     } as any;
-    controller = new CustomerController(repo as unknown as CustomerRepository);
+    contentModeration = { enforceStaffText: jest.fn().mockResolvedValue(undefined) };
+    controller = new CustomerController(
+      repo as unknown as CustomerRepository,
+      contentModeration as unknown as ContentModerationService,
+    );
   });
 
   // ============================================================
@@ -523,8 +529,10 @@ describe('CustomerController (Sprint B.5 audit_log)', () => {
     release: jest.Mock;
     markLost: jest.Mock;
     promoteToStudent: jest.Mock;
+    addFollow: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
+  let contentModeration: { enforceStaffText: jest.Mock };
 
   const TENANT_A = 'TENANTA00000000000000000000000A1';
   const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
@@ -588,10 +596,13 @@ describe('CustomerController (Sprint B.5 audit_log)', () => {
       release: jest.fn(),
       markLost: jest.fn(),
       promoteToStudent: jest.fn(),
+      addFollow: jest.fn(),
     } as any;
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
+    contentModeration = { enforceStaffText: jest.fn().mockResolvedValue(undefined) };
     controller = new CustomerController(
       repo as unknown as CustomerRepository,
+      contentModeration as unknown as ContentModerationService,
       auditLog as unknown as AuditLogRepository,
     );
   });
@@ -892,6 +903,191 @@ describe('CustomerController (Sprint B.5 audit_log)', () => {
         ),
       ).rejects.toThrow(BadRequestException);
       expect(repo.promoteToStudent).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // #24 (2026-05-30): B 端自由文本内容安全（ContentModerationService.enforceStaffText）
+  //   - happy path：断言以正确 texts/action/targetId 调用
+  //   - risky path：mock rejects BadRequestException → 端点抛 400 且不写库
+  // ============================================================
+  describe('#24 内容安全 — createSelfBuilt() POST db/customers (note/source)', () => {
+    const baseBody = {
+      tenantId: TENANT_A,
+      tenantSchema: TENANT_SCHEMA,
+      customerId: CUSTOMER_ID,
+      opportunityId: OPPORTUNITY_ID,
+      parentName: '小明妈妈',
+      primaryMobile: '13800138000',
+      campusId: CAMPUS_A,
+      source: '抖音',
+      note: '客户很有意向',
+    };
+
+    it('happy: enforceStaffText 以 [note, source] / action=customer / targetId=customerId 调用', async () => {
+      repo.createWithOpportunity.mockResolvedValueOnce({
+        customerId: CUSTOMER_ID,
+        opportunityId: OPPORTUNITY_ID,
+        studentId: null,
+      });
+
+      await controller.createSelfBuilt({ ...baseBody }, req(jwt('sales', SALES_A)));
+
+      expect(contentModeration.enforceStaffText).toHaveBeenCalledTimes(1);
+      const [schema, texts, ctx] = contentModeration.enforceStaffText.mock.calls[0];
+      expect(schema).toBe(TENANT_SCHEMA);
+      expect(texts).toEqual(['客户很有意向', '抖音']);
+      expect(ctx.action).toBe('customer');
+      expect(ctx.targetType).toBe('customer');
+      expect(ctx.targetId).toBe(CUSTOMER_ID);
+      // mode 用默认 reject（不传第 4 参）
+      expect(contentModeration.enforceStaffText.mock.calls[0][3]).toBeUndefined();
+      // 写库发生在内容安全之后
+      expect(repo.createWithOpportunity).toHaveBeenCalledTimes(1);
+    });
+
+    it('risky: enforceStaffText rejects 400 → 端点抛 400 且不写库（createWithOpportunity not called）', async () => {
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+
+      await expect(
+        controller.createSelfBuilt({ ...baseBody }, req(jwt('sales', SALES_A))),
+      ).rejects.toThrow(BadRequestException);
+      expect(repo.createWithOpportunity).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('#24 内容安全 — markLost() POST db/customers/:id/mark-lost (lostReason)', () => {
+    it('happy: enforceStaffText 以 [lostReason] / action=customer / targetId=customerId 调用', async () => {
+      repo.findById.mockResolvedValueOnce(
+        customerFixture({ ownerUserId: SALES_A, stage: '谈单中' }),
+      );
+      repo.markLost.mockResolvedValueOnce(
+        customerFixture({ ownerUserId: SALES_A, stage: '已失单', lostReason: '价格高' }),
+      );
+
+      await controller.markLost(
+        CUSTOMER_ID,
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA, lostReason: '价格高' },
+        req(jwt('sales', SALES_A)),
+      );
+
+      expect(contentModeration.enforceStaffText).toHaveBeenCalledTimes(1);
+      const [schema, texts, ctx] = contentModeration.enforceStaffText.mock.calls[0];
+      expect(schema).toBe(TENANT_SCHEMA);
+      expect(texts).toEqual(['价格高']);
+      expect(ctx.action).toBe('customer');
+      expect(ctx.targetType).toBe('customer');
+      expect(ctx.targetId).toBe(CUSTOMER_ID);
+      expect(repo.markLost).toHaveBeenCalledTimes(1);
+    });
+
+    it('risky: enforceStaffText rejects 400 → 端点抛 400 且不写库（findById/markLost not called）', async () => {
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+
+      await expect(
+        controller.markLost(
+          CUSTOMER_ID,
+          { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA, lostReason: '违规失单原因' },
+          req(jwt('sales', SALES_A)),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(repo.findById).not.toHaveBeenCalled();
+      expect(repo.markLost).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('#24 内容安全 — release() POST db/customers/:id/release (reason)', () => {
+    it('happy: enforceStaffText 以 [reason] / action=customer / targetId=customerId 调用', async () => {
+      repo.findById.mockResolvedValueOnce(customerFixture({ ownerUserId: SALES_A }));
+      repo.release.mockResolvedValueOnce(customerFixture({ ownerUserId: null }));
+
+      await controller.release(
+        CUSTOMER_ID,
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA, reason: '长期未跟进' },
+        req(jwt('sales', SALES_A)),
+      );
+
+      expect(contentModeration.enforceStaffText).toHaveBeenCalledTimes(1);
+      const [schema, texts, ctx] = contentModeration.enforceStaffText.mock.calls[0];
+      expect(schema).toBe(TENANT_SCHEMA);
+      expect(texts).toEqual(['长期未跟进']);
+      expect(ctx.action).toBe('customer');
+      expect(ctx.targetType).toBe('customer');
+      expect(ctx.targetId).toBe(CUSTOMER_ID);
+      expect(repo.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('risky: enforceStaffText rejects 400 → 端点抛 400 且不写库（findById/release not called）', async () => {
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+
+      await expect(
+        controller.release(
+          CUSTOMER_ID,
+          { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA, reason: '违规退池原因' },
+          req(jwt('sales', SALES_A)),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(repo.findById).not.toHaveBeenCalled();
+      expect(repo.release).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('#24 内容安全 — addFollow() POST db/customers/:id/follow (label)', () => {
+    it('happy: enforceStaffText 以 [label] / action=customer.follow / targetId=customerId 调用', async () => {
+      repo.addFollow.mockResolvedValueOnce({
+        id: 'follow0000000000000000000000000A1',
+        followType: 'remark',
+        label: '电话沟通',
+        byUserId: SALES_A,
+        byLabel: '销售 A',
+        createdAt: '2026-05-30T10:00:00.000Z',
+      });
+
+      await controller.addFollow(
+        CUSTOMER_ID,
+        {
+          tenantId: TENANT_A,
+          tenantSchema: TENANT_SCHEMA,
+          followType: 'remark',
+          label: '电话沟通已加微信',
+        },
+        req(jwt('sales', SALES_A)),
+      );
+
+      expect(contentModeration.enforceStaffText).toHaveBeenCalledTimes(1);
+      const [schema, texts, ctx] = contentModeration.enforceStaffText.mock.calls[0];
+      expect(schema).toBe(TENANT_SCHEMA);
+      expect(texts).toEqual(['电话沟通已加微信']);
+      expect(ctx.action).toBe('customer.follow');
+      expect(ctx.targetType).toBe('customer');
+      expect(ctx.targetId).toBe(CUSTOMER_ID);
+      expect(repo.addFollow).toHaveBeenCalledTimes(1);
+    });
+
+    it('risky: enforceStaffText rejects 400 → 端点抛 400 且不写库（addFollow not called）', async () => {
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+
+      await expect(
+        controller.addFollow(
+          CUSTOMER_ID,
+          {
+            tenantId: TENANT_A,
+            tenantSchema: TENANT_SCHEMA,
+            followType: 'remark',
+            label: '违规跟进内容',
+          },
+          req(jwt('sales', SALES_A)),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(repo.addFollow).not.toHaveBeenCalled();
     });
   });
 });

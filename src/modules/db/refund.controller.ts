@@ -17,6 +17,7 @@ import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
+import { ContentModerationService } from '../security/content-moderation.service';
 
 /**
  * RefundController — V59 退费工单 tenant-scope (task #36)
@@ -50,7 +51,11 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 @Controller('db/refunds')
 @UseGuards(TenantScopeGuard)
 export class RefundController {
-  constructor(private readonly refundRepo: RefundRepository) {}
+  constructor(
+    private readonly refundRepo: RefundRepository,
+    // #24: B 端自由文本内容安全统一收口（@Global SecurityModule 注入，生产必有）
+    private readonly contentModeration: ContentModerationService,
+  ) {}
 
   /**
    * POST /api/db/refunds/apply — 提退费申请
@@ -78,6 +83,20 @@ export class RefundController {
     const userId = req.user?.sub;
     const role = req.user?.role;
     if (!userId || !role) throw new ForbiddenException('JWT sub/role required');
+
+    // #24: 退费申请自由文本（reason）过微信内容安全（risky → 400 拒存；写库前拦截）
+    //   退费碰钱审批流，此处仅校验文本，不触金额/状态逻辑（在 createInDb 之前）。
+    await this.contentModeration.enforceStaffText(
+      body.tenantSchema,
+      [body.reason],
+      {
+        action: 'refund',
+        targetType: 'refund_order',
+        targetId: body.id,
+        req,
+      },
+    );
+
     return this.refundRepo.createInDb(body.tenantSchema, {
       id: body.id,
       contractId: body.contractId,
@@ -117,6 +136,20 @@ export class RefundController {
     const userId = req.user?.sub;
     const role = req.user?.role;
     if (!userId || !role) throw new ForbiddenException('JWT sub/role required');
+
+    // #24: 退费审批意见自由文本（decisionReason）过微信内容安全（risky → 400 拒存）
+    //   放在金额/状态校验之后、最终写库前；不影响审批金额/状态逻辑。
+    await this.contentModeration.enforceStaffText(
+      body.tenantSchema,
+      [body.decisionReason],
+      {
+        action: 'refund',
+        targetType: 'refund_order',
+        targetId: refundId,
+        req,
+      },
+    );
+
     const result = await this.refundRepo.decideInDb(body.tenantSchema, {
       id: refundId,
       decision: body.decision,

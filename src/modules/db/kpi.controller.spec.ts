@@ -10,6 +10,7 @@ import {
   AcademicHomeKpiResult,
 } from './kpi.service';
 import { AuditLogRepository } from './audit-log.repository';
+import { ContentModerationService } from '../security/content-moderation.service';
 import {
   AuthenticatedRequest,
   JwtPayload,
@@ -41,6 +42,7 @@ describe('KpiController (P4-X 2026-05-20)', () => {
     listStudentActivity: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
+  let contentModeration: { enforceStaffText: jest.Mock };
 
   const TENANT_A = 'TENANTA00000000000000000000000A1';
   const TENANT_SCHEMA = 'tenant_tenanta00000000000000000000000a1';
@@ -175,8 +177,12 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       listStudentActivity: jest.fn().mockResolvedValue({ items: [], total: 0 }),
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
+    contentModeration = {
+      enforceStaffText: jest.fn().mockResolvedValue(undefined),
+    };
     controller = new KpiController(
       kpi as unknown as KpiService,
+      contentModeration as unknown as ContentModerationService,
       auditLog as unknown as AuditLogRepository,
     );
   });
@@ -611,7 +617,10 @@ describe('KpiController (P4-X 2026-05-20)', () => {
     });
 
     it('controller 无 auditLog (Optional)：spec 不传 → 仍跑通', async () => {
-      const ctrlNoAudit = new KpiController(kpi as unknown as KpiService);
+      const ctrlNoAudit = new KpiController(
+        kpi as unknown as KpiService,
+        contentModeration as unknown as ContentModerationService,
+      );
       kpi.getTeacherHomeKpi.mockResolvedValueOnce(teacherHomeFixture());
       const r = await ctrlNoAudit.teacherHomeKpi(
         TENANT_SCHEMA,
@@ -685,6 +694,111 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       await expect(
         controller.listTargets(TENANT_SCHEMA, CAMPUS_A, '', req(jwt('boss', BOSS_SUB, CAMPUS_A))),
       ).rejects.toThrow(/'YYYY-MM'/);
+    });
+  });
+
+  // ============================================================
+  // POST /db/kpi/set-target (#24 内容安全收口 — note 自由文本)
+  // ============================================================
+  describe('setMonthlyTarget POST /db/kpi/set-target — #24 content moderation', () => {
+    const MONTH = '2026-05';
+    // targetUserId 必须 32-char ULID（handler 校验 length === 32）
+    const TARGET_USER = 'tgtuser0000000000000000000000U01';
+
+    function setTargetBody(overrides: Record<string, unknown> = {}) {
+      return {
+        tenantSchema: TENANT_SCHEMA,
+        campusId: CAMPUS_A,
+        targetRole: 'academic' as const,
+        targetUserId: TARGET_USER,
+        month: MONTH,
+        targetLessons: 80,
+        note: '本月冲刺续约',
+        ...overrides,
+      };
+    }
+
+    beforeEach(() => {
+      kpi.setMonthlyTarget.mockResolvedValue({ id: 'kpitgt00000000000000000000000T01', updated: false });
+    });
+
+    it('happy: boss 下发 → enforceStaffText 以 [note] / action=kpi / targetType=kpi_target / targetId=targetUserId 调用 + 写库', async () => {
+      const r = await controller.setMonthlyTarget(
+        setTargetBody(),
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+      );
+      expect(r.updated).toBe(false);
+      // 内容安全在写库前以 [note] 调用
+      expect(contentModeration.enforceStaffText).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        ['本月冲刺续约'],
+        expect.objectContaining({
+          action: 'kpi',
+          targetType: 'kpi_target',
+          targetId: TARGET_USER,
+        }),
+      );
+      // 内容安全通过后才写库
+      expect(kpi.setMonthlyTarget).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({
+          campusId: CAMPUS_A,
+          targetRole: 'academic',
+          targetUserId: TARGET_USER,
+          month: MONTH,
+          targetLessons: 80,
+          note: '本月冲刺续约',
+        }),
+      );
+    });
+
+    it('happy: admin 下发 + note 省略 → enforceStaffText 以 [undefined] 调用（service 内部跳过微信）', async () => {
+      await controller.setMonthlyTarget(
+        setTargetBody({ note: undefined, campusId: CAMPUS_B }),
+        req(jwt('admin', ADMIN_SUB, null)),
+      );
+      expect(contentModeration.enforceStaffText).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        [undefined],
+        expect.objectContaining({ action: 'kpi', targetType: 'kpi_target' }),
+      );
+      expect(kpi.setMonthlyTarget).toHaveBeenCalled();
+    });
+
+    it('risky note → enforceStaffText 抛 400 → 不写库', async () => {
+      contentModeration.enforceStaffText.mockRejectedValueOnce(
+        new BadRequestException('content violates content policy'),
+      );
+      await expect(
+        controller.setMonthlyTarget(
+          setTargetBody({ note: '违规内容' }),
+          req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      // 写库必须未发生（违规内容不落库）
+      expect(kpi.setMonthlyTarget).not.toHaveBeenCalled();
+    });
+
+    it('内容安全在 RBAC/campus 校验之后：boss 传他校 campusId → 403 且不调 enforceStaffText', async () => {
+      await expect(
+        controller.setMonthlyTarget(
+          setTargetBody({ campusId: CAMPUS_B }),
+          req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(contentModeration.enforceStaffText).not.toHaveBeenCalled();
+      expect(kpi.setMonthlyTarget).not.toHaveBeenCalled();
+    });
+
+    it('参数校验先行：targetUserId 非 32-char → BadRequest 且不调 enforceStaffText', async () => {
+      await expect(
+        controller.setMonthlyTarget(
+          setTargetBody({ targetUserId: 'short' }),
+          req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+        ),
+      ).rejects.toThrow(/targetUserId/);
+      expect(contentModeration.enforceStaffText).not.toHaveBeenCalled();
+      expect(kpi.setMonthlyTarget).not.toHaveBeenCalled();
     });
   });
 

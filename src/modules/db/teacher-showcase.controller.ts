@@ -30,6 +30,7 @@ import { Roles } from '../../guards/rbac.decorator';
 import { ActorRole, AuditLogRepository } from './audit-log.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
+import { ContentModerationService } from '../security/content-moderation.service';
 // Sprint B.3 (2026-05-11): showcase 双轨硬红线
 //   - summary（系统真实 KPI）→ 仅 admin/boss/academic/teacher 自己可看
 //   - meta（美化展示）→ 全角色可看（包括 sales / parent，因为是宣传卡）
@@ -79,6 +80,10 @@ export class TeacherShowcaseController {
     private readonly showcaseRepo: TeacherShowcaseRepository,
     private readonly teacherRepo: TeacherRepository,
     private readonly metaRepo: TeacherShowcaseMetaRepository,
+    // #24: B 端自由文本内容安全统一收口（@Global SecurityModule 导出，生产必有注入）
+    //   - showcase-meta 写入的 bio / testimonials[].content / testimonials[].anon_name 过微信
+    //   - 必填依赖（放 @Optional 前）：生产 DI 必给；unit spec 直接 new 时显式传 mock
+    private readonly contentModeration: ContentModerationService,
     // Sprint B (2026-05-11 复审): self-check 失败时写 audit_log
     //   - @Optional：unit spec 直接 new 时可传 undefined（不破坏现有 spec test）
     //   - fail-open：audit_log 写失败不阻塞主 ForbiddenException
@@ -315,6 +320,25 @@ export class TeacherShowcaseController {
         );
       }
     }
+
+    // #24: B 端自由文本过微信内容安全（risky → 400 拒存；写库前拦截，违规内容不落库）
+    //   纳入：bio（老师简介）+ 嵌套 testimonials[].content（家长评价正文）/ testimonials[].anon_name（昵称）
+    //   不纳入：videoUrls[].url（是 URL，非自由叙述文本，由长度/格式校验把关）
+    //   审计内部已做（绝不写明文）；默认 mode='reject'
+    await this.contentModeration.enforceStaffText(
+      tenantSchema,
+      [
+        body.bio,
+        ...(body.testimonials ?? []).map((t) => t.content),
+        ...(body.testimonials ?? []).map((t) => t.anon_name),
+      ],
+      {
+        action: 'teacher.showcase-meta',
+        targetType: 'teacher',
+        targetId: teacherId,
+        req,
+      },
+    );
 
     // 字段级业务校验（class-validator 暂未引入 controller 层；走显式 BadRequest）
     const payload = this.validateAndNormalize(body);
