@@ -37,9 +37,52 @@ export interface LessonFeedback {
   updatedAt: Date;
 }
 
+/**
+ * 2026-05-31 字段级安全补充（SSOT §5.1）：
+ *   lesson_feedback.teacher_internal_note（老师内部备注）= 老师线内部字段，
+ *   仅 teacher / academic / academic_admin / boss / admin 可见；
+ *   sales / sales_manager / parent 不可见。
+ *
+ *   销售对反馈是「读家长可见内容」只读不下载，不含老师内部备注；
+ *   家长走 C 端外部报（parent JWT → role='parent'，不在白名单 → 剥离）。
+ *
+ *   实现策略（仿 common/role-field-filter maskContract）：repo 仍返全字段（单源），
+ *   service 按 caller role mask（findInDb / listByStudentInDb），不改 SELECT。
+ *   红线：不删 key，只 set null（前端依旧拿到结构化对象，类型不变）。
+ */
+const TEACHER_INTERNAL_NOTE_VISIBLE_ROLES: ReadonlySet<string> = new Set([
+  'teacher',
+  'academic',
+  'academic_admin',
+  'boss',
+  'admin',
+]);
+
 @Injectable()
 export class LessonFeedbackService {
   private readonly logger = new Logger(LessonFeedbackService.name);
+
+  /**
+   * 2026-05-31 SSOT §5.1：按 caller role 剥离 teacherInternalNote。
+   *
+   * - role ∈ 白名单（teacher/academic/academic_admin/boss/admin）→ 原样返（含明文备注）
+   * - role ∉ 白名单（sales/sales_manager/parent/marketing/finance/hr/unknown/undefined）→ teacherInternalNote=null
+   *
+   * 其余字段一律不动（teacherNote 家长可见备注等照常返）。
+   * undefined role（理论上不该发生 — 端点都有 RbacGuard/parent middleware 注入）→ 保守剥离。
+   *
+   * @param fb 反馈对象（可含 findInDb 扩展的 studentName/teacherName/subject meta）
+   * @param role caller 的 req.user?.role
+   */
+  private maskFeedbackForRole<
+    T extends { teacherInternalNote?: string | null | undefined },
+  >(fb: T, role: string | undefined | null): T {
+    if (role && TEACHER_INTERNAL_NOTE_VISIBLE_ROLES.has(role)) {
+      return fb;
+    }
+    // 非白名单（含 sales / sales_manager / parent）→ 剥离老师内部备注
+    return { ...fb, teacherInternalNote: null };
+  }
 
   constructor(
     @Optional() private readonly repo?: LessonFeedbackRepository,
@@ -227,9 +270,15 @@ export class LessonFeedbackService {
     return persisted;
   }
 
+  /**
+   * @param callerRole 2026-05-31 SSOT §5.1：caller 的 req.user?.role，
+   *   非白名单（含 sales/sales_manager/parent）→ 剥离 teacherInternalNote。
+   *   省略时（如 cron / 内部调用）保守剥离（最小可见集）。
+   */
   async findInDb(
     id: string,
     tenantSchema: string,
+    callerRole?: string,
   ): Promise<LessonFeedback & {
     studentName?: string | null;
     teacherName?: string | null;
@@ -240,16 +289,23 @@ export class LessonFeedbackService {
     //   JOIN students + teachers + course_products, 不增加额外 HTTP roundtrip
     const r = await this.repo.findByIdWithMeta(tenantSchema, id);
     if (!r) throw new NotFoundException(`feedback ${id} not found`);
-    return r;
+    // 2026-05-31 SSOT §5.1: 按 caller role 剥离 teacherInternalNote（销售/家长不可见明文）
+    return this.maskFeedbackForRole(r, callerRole);
   }
 
+  /**
+   * @param callerRole 2026-05-31 SSOT §5.1：同 findInDb，list 对每条结果应用 mask。
+   */
   async listByStudentInDb(
     studentId: string,
     tenantSchema: string,
     options: { limit?: number; offset?: number } = {},
+    callerRole?: string,
   ): Promise<LessonFeedback[]> {
     if (!this.repo) throw new BadRequestException('LessonFeedbackRepository not available');
-    return this.repo.listByStudent(tenantSchema, studentId, options);
+    const rows = await this.repo.listByStudent(tenantSchema, studentId, options);
+    // 2026-05-31 SSOT §5.1: 逐条剥离 teacherInternalNote
+    return rows.map((fb) => this.maskFeedbackForRole(fb, callerRole));
   }
 
   async updateInDb(
@@ -281,8 +337,12 @@ export class LessonFeedbackService {
   async markParentReadInDb(
     id: string,
     tenantSchema: string,
+    callerRole?: string,
   ): Promise<LessonFeedback> {
     if (!this.repo) throw new BadRequestException('LessonFeedbackRepository not available');
-    return this.repo.markParentRead(tenantSchema, id);
+    const fb = await this.repo.markParentRead(tenantSchema, id);
+    // 2026-05-31 安全审残留路径修复：parent-read 返回的反馈也按 caller role 剥离
+    //   teacherInternalNote（parent / sales / sales_manager 不可见，SSOT §5.1）。
+    return this.maskFeedbackForRole(fb, callerRole);
   }
 }

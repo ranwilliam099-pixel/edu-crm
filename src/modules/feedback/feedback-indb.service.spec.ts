@@ -347,6 +347,118 @@ describe('Feedback Services InDb (V9)', () => {
       expect((r as any).subject).toBe('一对一辅导');
     });
 
+    // ============================================================
+    // 2026-05-31 SSOT §5.1: teacherInternalNote 按 caller role 剥离
+    //   仅 teacher/academic/academic_admin/boss/admin 可见明文；
+    //   sales/sales_manager/parent → null（销售只读家长可见内容，家长走 C 端外部报）
+    // ============================================================
+    describe('teacherInternalNote role-based mask (SSOT §5.1)', () => {
+      const FB_WITH_NOTE = {
+        ...FEEDBACK,
+        teacherNote: '家长可见：本次进步明显',
+        teacherInternalNote: '内部：家长沟通需跟进，孩子家庭情况特殊',
+        studentName: '学员A',
+        teacherName: '老师·王',
+        subject: '一对一辅导',
+      };
+
+      // ----- findInDb -----
+      it('findInDb role=sales → teacherInternalNote=null（teacherNote 等其它字段保留）', async () => {
+        repo.findByIdWithMeta.mockResolvedValueOnce({ ...FB_WITH_NOTE });
+        const r = await service.findInDb(FEEDBACK.id, TENANT, 'sales');
+        expect(r.teacherInternalNote).toBeNull();
+        // 其它字段不动
+        expect(r.teacherNote).toBe('家长可见：本次进步明显');
+        expect((r as any).studentName).toBe('学员A');
+      });
+
+      it('findInDb role=sales_manager → teacherInternalNote=null', async () => {
+        repo.findByIdWithMeta.mockResolvedValueOnce({ ...FB_WITH_NOTE });
+        const r = await service.findInDb(FEEDBACK.id, TENANT, 'sales_manager');
+        expect(r.teacherInternalNote).toBeNull();
+        expect(r.teacherNote).toBe('家长可见：本次进步明显');
+      });
+
+      it('findInDb role=parent → teacherInternalNote=null（C 端家长不可见）', async () => {
+        repo.findByIdWithMeta.mockResolvedValueOnce({ ...FB_WITH_NOTE });
+        const r = await service.findInDb(FEEDBACK.id, TENANT, 'parent');
+        expect(r.teacherInternalNote).toBeNull();
+        expect(r.teacherNote).toBe('家长可见：本次进步明显');
+      });
+
+      it('findInDb role=teacher → teacherInternalNote 明文保留', async () => {
+        repo.findByIdWithMeta.mockResolvedValueOnce({ ...FB_WITH_NOTE });
+        const r = await service.findInDb(FEEDBACK.id, TENANT, 'teacher');
+        expect(r.teacherInternalNote).toBe('内部：家长沟通需跟进，孩子家庭情况特殊');
+      });
+
+      it('findInDb role=academic/academic_admin/boss/admin → teacherInternalNote 明文保留', async () => {
+        for (const role of ['academic', 'academic_admin', 'boss', 'admin']) {
+          repo.findByIdWithMeta.mockResolvedValueOnce({ ...FB_WITH_NOTE });
+          const r = await service.findInDb(FEEDBACK.id, TENANT, role);
+          expect(r.teacherInternalNote).toBe('内部：家长沟通需跟进，孩子家庭情况特殊');
+        }
+      });
+
+      it('findInDb callerRole 省略（cron/内部）→ 保守剥离 teacherInternalNote=null', async () => {
+        repo.findByIdWithMeta.mockResolvedValueOnce({ ...FB_WITH_NOTE });
+        const r = await service.findInDb(FEEDBACK.id, TENANT);
+        expect(r.teacherInternalNote).toBeNull();
+      });
+
+      // ----- listByStudentInDb -----
+      it('listByStudentInDb role=sales → 每条 teacherInternalNote=null', async () => {
+        repo.listByStudent.mockResolvedValueOnce([
+          { ...FB_WITH_NOTE },
+          { ...FB_WITH_NOTE, id: 'fb' + '1'.repeat(30) },
+        ]);
+        const list = await service.listByStudentInDb(STUDENT, TENANT, {}, 'sales');
+        expect(list).toHaveLength(2);
+        for (const fb of list) {
+          expect(fb.teacherInternalNote).toBeNull();
+          expect(fb.teacherNote).toBe('家长可见：本次进步明显'); // 其它字段不动
+        }
+      });
+
+      it('listByStudentInDb role=parent → 每条 teacherInternalNote=null', async () => {
+        repo.listByStudent.mockResolvedValueOnce([{ ...FB_WITH_NOTE }]);
+        const list = await service.listByStudentInDb(STUDENT, TENANT, {}, 'parent');
+        expect(list[0].teacherInternalNote).toBeNull();
+      });
+
+      it('listByStudentInDb role=teacher → teacherInternalNote 明文保留', async () => {
+        repo.listByStudent.mockResolvedValueOnce([{ ...FB_WITH_NOTE }]);
+        const list = await service.listByStudentInDb(STUDENT, TENANT, {}, 'teacher');
+        expect(list[0].teacherInternalNote).toBe('内部：家长沟通需跟进，孩子家庭情况特殊');
+      });
+
+      it('listByStudentInDb callerRole 省略 → 保守剥离', async () => {
+        repo.listByStudent.mockResolvedValueOnce([{ ...FB_WITH_NOTE }]);
+        const list = await service.listByStudentInDb(STUDENT, TENANT, {});
+        expect(list[0].teacherInternalNote).toBeNull();
+      });
+
+      // ----- markParentReadInDb (2026-05-31 安全审残留路径修复) -----
+      it('markParentReadInDb role=parent → teacherInternalNote=null（家长打已读不泄露内部备注）', async () => {
+        repo.markParentRead.mockResolvedValueOnce({ ...FB_WITH_NOTE });
+        const r = await service.markParentReadInDb(FEEDBACK.id, TENANT, 'parent');
+        expect(r.teacherInternalNote).toBeNull();
+        expect(r.teacherNote).toBe('家长可见：本次进步明显');
+      });
+
+      it('markParentReadInDb role=teacher → teacherInternalNote 明文保留', async () => {
+        repo.markParentRead.mockResolvedValueOnce({ ...FB_WITH_NOTE });
+        const r = await service.markParentReadInDb(FEEDBACK.id, TENANT, 'teacher');
+        expect(r.teacherInternalNote).toBe('内部：家长沟通需跟进，孩子家庭情况特殊');
+      });
+
+      it('markParentReadInDb callerRole 省略 → 保守剥离', async () => {
+        repo.markParentRead.mockResolvedValueOnce({ ...FB_WITH_NOTE });
+        const r = await service.markParentReadInDb(FEEDBACK.id, TENANT);
+        expect(r.teacherInternalNote).toBeNull();
+      });
+    });
+
     it('updateInDb checks 24h via existing record + persists patch', async () => {
       repo.findById.mockResolvedValueOnce(FEEDBACK);
       repo.update.mockResolvedValueOnce({ ...FEEDBACK, teacherNote: '新备注' });

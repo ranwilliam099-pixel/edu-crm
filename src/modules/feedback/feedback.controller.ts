@@ -420,8 +420,12 @@ export class FeedbackController {
   async findFeedbackInDb(
     @Param('feedbackId') feedbackId: string,
     @Body() body: { tenantSchema: string },
+    @Req() req: AuthenticatedRequest,
   ): Promise<LessonFeedback> {
-    return this.feedback.findInDb(feedbackId, body.tenantSchema);
+    // 2026-05-31 SSOT §5.1: 透传 caller role → service 按 role 剥离 teacherInternalNote
+    //   - sales / sales_manager 不可见老师内部备注（只读家长可见内容）
+    //   - parent 经 c 端 isParentDbPath 分流，req.user.role='parent' → 同样剥离
+    return this.feedback.findInDb(feedbackId, body.tenantSchema, req.user?.role);
   }
 
   @Post('db/students/:studentId/feedbacks')
@@ -440,11 +444,17 @@ export class FeedbackController {
   async listFeedbacksByStudentInDb(
     @Param('studentId') studentId: string,
     @Body() body: { tenantSchema: string; limit?: number; offset?: number },
+    @Req() req: AuthenticatedRequest,
   ): Promise<LessonFeedback[]> {
-    return this.feedback.listByStudentInDb(studentId, body.tenantSchema, {
-      limit: body.limit,
-      offset: body.offset,
-    });
+    // 2026-05-31 SSOT §5.1: 透传 caller role → service 逐条剥离 teacherInternalNote
+    //   - sales / sales_manager 不可见老师内部备注
+    //   - parent 经 c 端 isParentDbPath 分流（/api/db/students/:id/feedbacks），role='parent' → 剥离
+    return this.feedback.listByStudentInDb(
+      studentId,
+      body.tenantSchema,
+      { limit: body.limit, offset: body.offset },
+      req.user?.role,
+    );
   }
 
   /**
@@ -520,8 +530,10 @@ export class FeedbackController {
   async markParentReadFeedbackInDb(
     @Param('feedbackId') feedbackId: string,
     @Body() body: { tenantSchema: string },
+    @Req() req: AuthenticatedRequest,
   ): Promise<LessonFeedback> {
-    return this.feedback.markParentReadInDb(feedbackId, body.tenantSchema);
+    // 2026-05-31 安全审残留路径修复：透传 caller role，service 剥离 teacherInternalNote
+    return this.feedback.markParentReadInDb(feedbackId, body.tenantSchema, req.user?.role);
   }
 
   // ----- CourseConsumption -----
