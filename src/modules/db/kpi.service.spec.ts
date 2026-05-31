@@ -807,9 +807,9 @@ describe('KpiService (P4-X 2026-05-20)', () => {
 
       const r = await svc.getSalesHomeKpi(TENANT, SALES_1, CAMPUS_A);
       expect(r.trialRate).toEqual({ rate: '50', total: 4 });
-      // trialRate SQL：分母 stage IN (已试听,已报名)，分子 stage=已报名
+      // trialRate SQL：分母 stage IN (已试听待转化/已出方案/谈单中/已报名 = 已试听及之后)，分子 stage=已报名
       const trialSql = pg.tenantQuery.mock.calls[3][1] as string;
-      expect(trialSql).toContain(`FILTER (WHERE stage IN ('已试听','已报名'))`);
+      expect(trialSql).toContain(`FILTER (WHERE stage IN ('已试听待转化','已出方案','谈单中','已报名'))`);
       expect(trialSql).toContain(`FILTER (WHERE stage = '已报名')`);
       expect(trialSql).toContain(`owner_user_id = $1`);
     });

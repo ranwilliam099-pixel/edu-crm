@@ -778,7 +778,7 @@ export class KpiService {
     );
 
     // 4. trialRate: 试听转化率（SSOT §3.3② 2026-05-31 拍板）
-    //   - 分母 total = 我名下 stage IN ('已试听','已报名') 客户数（至少到过试听）
+    //   - 分母 total = 我名下 stage IN ('已试听待转化','已出方案','谈单中','已报名') 客户数（已试听及之后）
     //   - 分子 = 我名下 stage = '已报名' 客户数（已转化签约）
     //   - rate = Math.round(分子/分母*100) 字符串；分母 0 → { rate:'0', total:0 }
     const trialRate = await this.computeSalesTrialRate(tenantSchema, salesUserId);
@@ -858,7 +858,7 @@ export class KpiService {
    * 试听转化率（SSOT §3.3② 2026-05-31 拍板）
    *
    * 口径（owner = 当前销售；基于 opportunity stage 真实枚举）：
-   *   - 分母 total = stage IN ('已试听','已报名')（至少到过试听）
+   *   - 分母 total = stage IN ('已试听待转化','已出方案','谈单中','已报名')（已试听及之后）
    *   - 分子       = stage = '已报名'（已转化签约）
    *   - rate = 分母>0 ? Math.round(分子/分母*100) 字符串 : '0'
    *
@@ -874,8 +874,10 @@ export class KpiService {
         numer: string | number;
       }>(
         tenantSchema,
+        // stage 真实枚举(V2 CHECK): 初步接触/需求诊断/已预约试听/已试听待转化/已出方案/谈单中/已报名/已失单
+        // 漏斗 trial 桶 = 已试听待转化(dashboard.repository 映射)。分母 = 已试听及之后(已 trial 过)。
         `SELECT
-           COUNT(*) FILTER (WHERE stage IN ('已试听','已报名')) AS denom,
+           COUNT(*) FILTER (WHERE stage IN ('已试听待转化','已出方案','谈单中','已报名')) AS denom,
            COUNT(*) FILTER (WHERE stage = '已报名') AS numer
          FROM opportunities
          WHERE owner_user_id = $1`,
