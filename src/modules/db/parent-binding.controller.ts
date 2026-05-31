@@ -240,18 +240,30 @@ export class ParentBindingController {
    *   3. 若传 tenantSchema，额外 findBrief 校验 studentId 确属本 tenant（友好 404，且防探测）
    *
    * RBAC（SSOT §4.1 联系人信息 = 家长姓名/手机/微信）:
-   *   sales / sales_manager / academic / academic_admin / admin / boss —
-   *   **不含 teacher**（teacher ❌ 联系人信息，SSOT §4.1 / §2 一级 PII；
-   *   teacher 看学员走 /db/students/:id 已硬脱敏家长字段）。
+   *   sales / sales_manager / academic / academic_admin / admin / boss / teacher / marketing。
    *
-   * PII：phone 强制脱敏（138****8000），不返明文 / openid / wechat。
-   *   家长姓名对 sales/academic/admin/boss 合法可见（SSOT §4.1 自己客户/本校/全权）。
+   *   2026-05-31 §4.1 学员权限放开：teacher + marketing 纳入（§4.1「联系人信息（家长姓名/微信）✅，
+   *   手机/身份证脱敏」）。本 endpoint 仅返 name + phoneMasked（138****8000），**永不返手机明文**
+   *   / openid / wechat — 对 teacher/academic/marketing 已天然满足「手机脱敏」墙②，无需额外分支。
+   *
+   * PII：phone 强制脱敏（138****8000，repo findParentsForStudent 内 maskPhone）。
+   *   家长姓名对 sales(自己客户)/academic/marketing/teacher/admin/boss 合法可见
+   *   （SSOT §4.1 联系人信息 ✅）。
    *
    * 只读 → 不写 audit_log（无敏感变更），不加 Idempotency（无副作用）。
    */
   @Post('db/parents/by-student')
   @UseGuards(RbacGuard)
-  @Roles('sales', 'sales_manager', 'academic', 'academic_admin', 'admin', 'boss')
+  @Roles(
+    'sales',
+    'sales_manager',
+    'academic',
+    'academic_admin',
+    'admin',
+    'boss',
+    'teacher', // 2026-05-31 §4.1 放开（联系人姓名 ✅ + phoneMasked，墙②脱敏天然满足）
+    'marketing', // 2026-05-31 §4.1 放开（比照 academic）
+  )
   @HttpCode(HttpStatus.OK)
   async listParentsForStudent(
     @Body()

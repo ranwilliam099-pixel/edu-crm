@@ -40,6 +40,31 @@ import { JwtPayload, TenantRole } from '../../modules/auth/jwt-payload.interface
 import { Customer } from '../../modules/db/customer.repository';
 import { Contract } from '../../modules/db/contract.repository';
 import { Teacher } from '../../modules/teacher/teacher.service';
+import { StudentDetail } from '../../modules/db/student.repository';
+
+// ============================================================
+// 一级隐私脱敏 helper（手机/身份证）
+// ============================================================
+
+/**
+ * 一级隐私脱敏（手机号）— SSOT §5「一级（手机/身份证）：仅自己/老板校长可见」
+ *   + §4.1（2026-05-31）「教务/老师/市场脱敏 138****8801」
+ *
+ * 算法与 customer.repository.maskPhoneForDisplay / teacher.controller.maskPhoneForAudit
+ *   / parent.repository.maskPhone 全库一致：前 3 + **** + 后 4。
+ *
+ * - null / undefined / '' → 原样返回（无值不脱敏，保持字段类型）
+ * - 长度 < 7（非标准手机号）→ '***'（不暴露任何片段）
+ * - 标准 11 位 13800138001 → 138****8001
+ */
+export function maskPhoneLevel1(
+  phone: string | null | undefined,
+): string | null | undefined {
+  if (phone === null || phone === undefined || phone === '') return phone;
+  if (typeof phone !== 'string') return phone;
+  if (phone.length < 7) return '***';
+  return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
+}
 
 // ============================================================
 // Role 解析 helper
@@ -55,8 +80,8 @@ import { Teacher } from '../../modules/teacher/teacher.service';
  */
 export type ActorGroup =
   | 'admin' // admin / boss / sales_manager = 老板/校长/销售校内主管（拍板 ✅ 全权）
-  | 'sales' // sales / marketing = 个人销售线
-  | 'academic' // academic / academic_admin = 教务双层
+  | 'sales' // sales = 个人销售线（owner=me 客户明文）
+  | 'academic' // academic / academic_admin / marketing = 教务双层 + 市场（本校只读 + 一级 PII 脱敏）
   | 'teacher' // teacher = 老师本人
   | 'finance' // finance = 财务
   | 'hr' // hr = 人事
@@ -69,7 +94,6 @@ export function actorGroupOf(role: TenantRole | string | undefined | null): Acto
     case 'boss':
       return 'admin';
     case 'sales':
-    case 'marketing':
       return 'sales';
     case 'sales_manager':
       // 5/15 A-2：sales_manager 仍归 admin group（拍板「销售校内主管」字段全可看）
@@ -77,6 +101,14 @@ export function actorGroupOf(role: TenantRole | string | undefined | null): Acto
       return 'admin';
     case 'academic':
     case 'academic_admin':
+      return 'academic';
+    case 'marketing':
+      // 2026-05-31 SSOT §1 重新引入 marketing + §4.1「市场视角字段可见性 = 比照 academic
+      //   （本校只读级别 + 手机/身份证脱敏）」。
+      //   ⚠️ 此前 marketing 误归 sales group（5/15 前历史）→ 会令 marketing 走 owner=me
+      //   scope 且自己客户 phone 明文，违反 §4.1（marketing 不 owner 客户、phone 须脱敏）。
+      //   归 academic group 后：①student/customer 本校只读（不强制 owner=me）
+      //   ②customer/teacher phone 脱敏 ③contract 价格隐藏，与 academic 完全一致。
       return 'academic';
     case 'teacher':
       return 'teacher';
@@ -144,13 +176,24 @@ export function maskCustomer<T extends Customer>(
       return masked;
 
     case 'academic':
-      // 教务双层：联系人 ✅（拍板「本校已成交」），source 跟进 ❌
-      // 注：拍板「教务全只读老师线」+ 本表 customer 教务有「本校已成交」权限
+      // 教务双层 + 市场（marketing）：联系人姓名/微信 ✅（拍板「本校只读」），source 跟进 ❌。
+      //   2026-05-31 §4.1「手机/身份证 = §5 一级隐私，教务/老师/市场脱敏 138****8801」
+      //     → phone 脱敏（不再明文）；primaryMobile / studentPhone 同为一级 PII 一并脱敏。
+      //   wechat = 联系人信息（非一级 PII），academic/marketing 本校可见，保留。
+      //   ⚠️ 行为变更（Day-A）：原 academic 分支 phone 明文 → 现脱敏。详见报告「拿不准处」。
+      masked.phone = maskPhoneLevel1(masked.phone) as T['phone'];
+      if (masked.primaryMobile !== undefined) {
+        masked.primaryMobile = maskPhoneLevel1(masked.primaryMobile) as T['primaryMobile'];
+      }
+      if (masked.studentPhone !== undefined) {
+        masked.studentPhone = maskPhoneLevel1(masked.studentPhone) as T['studentPhone'];
+      }
       masked.source = null;
       return masked;
 
     case 'sales':
-      // 自己客户 ✅；别人客户 phone/wechat/note 全 null（不该看）
+      // 自己客户 ✅（含 phone 明文，§4.1「自己销售可见明文」）；
+      //   别人客户 phone/wechat/note 全 null（不该看）
       if (options.isOwnerSelf) {
         return masked;
       }
@@ -235,7 +278,10 @@ export function maskTeacher<T extends Teacher>(
       return masked;
 
     case 'academic':
-      // 教务双层 👁：phone 可见（拍板「不改但可看」）
+      // 教务双层 + 市场（marketing）：教学业务字段 ✅，但 §4.3 note「一级隐私（手机/身份证）
+      //   仅 self + boss + admin 可见」→ teacher.phone 脱敏（与 §5 一级隐私一致）。
+      //   ⚠️ 行为变更（Day-A）：原 academic 分支 teacher phone 明文 → 现脱敏（收紧，非放松）。
+      masked.phone = maskPhoneLevel1(masked.phone) as T['phone'];
       return masked;
 
     case 'teacher':
@@ -283,9 +329,12 @@ export function maskTeacher<T extends Teacher>(
  *
  * 实现策略：
  *   - admin / boss：✅ 全字段
+ *   - marketing（市场）：✅ 含价格（2026-05-31 §4.1 表行「业务关系（价格/金额）市 ✅（含价格）」
+ *       — marketing 非 teacher，不受「老师永不看价格」墙约束；显式 raw-role 放行，
+ *       不随 academic group 隐价）
  *   - sales（合同 owner=me）：✅；owner != me 拒绝（controller 校验）
  *   - academic：仅看 totalAmount + 付费状态；价格细节 ❌
- *   - teacher：仅 status + class_type + signed_at + 剩余课时；金额全 ❌
+ *   - teacher：仅 status + class_type + signed_at + 剩余课时；金额全 ❌（§4.1 墙①老师永不看价格）
  *   - finance：✅（作账需要全字段，含 refund）
  *   - parent：看自己孩子合同：基础 + 时间 + 状态；价格细节 ✅（家长视图）
  *
@@ -306,6 +355,14 @@ export function maskContract<T extends Contract>(
 ): T {
   const group = actorGroupOf(user?.role);
   const masked: T = { ...contract };
+
+  // 2026-05-31 §4.1 表行 328「业务关系（价格/金额）市(marketing) ✅（含价格）」：
+  //   marketing 归 academic group（本校只读 + PII 脱敏），但合同价格对 marketing 不隐藏
+  //   （获客/市场需看签约金额）。显式 raw-role 检测，先于 group switch 放行全价格字段。
+  //   注：teacher 不在此分支（墙①老师永不看价格保持）。
+  if (user?.role === 'marketing') {
+    return masked;
+  }
 
   switch (group) {
     case 'admin':
@@ -356,6 +413,99 @@ export function maskContract<T extends Contract>(
       masked.discountAmount = 0;
       masked.totalAmount = 0;
       masked.giftHours = 0;
+      return masked;
+  }
+}
+
+// ============================================================
+// StudentDetail 字段过滤（学员档案 — 一级 PII 联系字段脱敏）
+// ============================================================
+
+/**
+ * StudentDetail 字段权限（SSOT §4.1 student/detail，2026-05-31 全面放开）：
+ *
+ * 学员档案「完整读」对 老板/校长/教务/老师/市场/自己销售 放开，仅两道墙：
+ *   ①老师永不看价格 — StudentDetail **无价格字段**，墙①在 maskContract 处理，本函数不涉及；
+ *   ②手机/身份证 = §5 一级隐私 — 仅 自己销售 / 老板 / 校长 看明文；
+ *     教务(academic/academic_admin) / 老师(teacher) / 市场(marketing) **脱敏** 138****8801。
+ *
+ * 一级 PII 字段（StudentDetail 内）：
+ *   - parentPhone（家长手机，customer.primary_mobile）
+ *   - phone（学员本人电话，V55）
+ *
+ * **非**一级 PII（联系人信息，§4.1 教务/老师/市场本校可见 → 保留明文）：
+ *   - parentName（家长姓名）、parentGender（家长性别）— §4.1 联系人信息 ✅
+ *
+ * 角色策略：
+ *   - admin / boss：✅ 全字段明文（含 parentPhone / phone）
+ *   - sales（自己学员 ownerSalesId=me）：✅ 全字段明文（§4.1「自己销售可见明文」）；
+ *       别人学员 → 脱敏（防个人销售越界看他人客户手机）
+ *   - academic / academic_admin / marketing（academic group）：parentName/parentGender 保留，
+ *       parentPhone / phone **脱敏**
+ *   - teacher：parentName/parentGender 保留（§4.1 新放开「联系人信息」），
+ *       parentPhone / phone **脱敏**（§4.1 墙②；逆转旧实现「teacher 家长字段全 null」）
+ *   - finance / hr / parent / unknown：本函数兜底脱敏（学员档案非其职；endpoint @Roles 已挡，
+ *       本函数仅纵深防御）
+ *
+ * 红线（与拍板对齐）：
+ *   - 不删 key，只脱敏字符串或保留值（前端依旧拿结构化对象）
+ *   - scope（sales 自己学员）由 controller / canAccessStudent 判定，本函数接 isOwnerSelf 标记
+ */
+export interface StudentDetailMaskOptions {
+  /**
+   * 是否是当前用户自己持有的学员（sales ownerSalesId === req.user.sub）
+   *
+   * 仅对 sales 组生效：
+   *   - true：parentPhone / phone 明文（§4.1「自己销售可见明文」）
+   *   - false：脱敏（个人销售不看他人客户一级 PII）
+   */
+  isOwnerSelf?: boolean;
+}
+
+export function maskStudentDetail<T extends StudentDetail>(
+  detail: T,
+  user: JwtPayload | undefined | null,
+  options: StudentDetailMaskOptions = {},
+): T {
+  const group = actorGroupOf(user?.role);
+  const masked: T = { ...detail };
+
+  switch (group) {
+    case 'admin':
+      // 老板校长 ✅ 全字段明文
+      return masked;
+
+    case 'sales':
+      // 自己学员 ✅ 明文；别人学员一级 PII 脱敏（联系人姓名保留 = 本校可见）
+      if (options.isOwnerSelf) {
+        return masked;
+      }
+      masked.parentPhone = maskPhoneLevel1(masked.parentPhone) as T['parentPhone'];
+      masked.phone = maskPhoneLevel1(masked.phone) as T['phone'];
+      return masked;
+
+    case 'academic':
+      // 教务双层 + 市场（marketing）：联系人姓名/性别保留；手机一级 PII 脱敏
+      masked.parentPhone = maskPhoneLevel1(masked.parentPhone) as T['parentPhone'];
+      masked.phone = maskPhoneLevel1(masked.phone) as T['phone'];
+      return masked;
+
+    case 'teacher':
+      // 老师（§4.1 2026-05-31 放开）：联系人姓名/性别可见；手机一级 PII 脱敏。
+      //   逆转旧实现 student.controller findById「teacher → parentName/Phone/Gender 全 null」
+      //   （旧实现按 §4.1 老版「teacher ❌ 联系人」；新版 §4.1 teacher ✅ 联系人，仅手机脱敏）。
+      masked.parentPhone = maskPhoneLevel1(masked.parentPhone) as T['parentPhone'];
+      masked.phone = maskPhoneLevel1(masked.phone) as T['phone'];
+      return masked;
+
+    case 'finance':
+    case 'hr':
+    case 'parent':
+    case 'unknown':
+    default:
+      // 学员档案非其职（endpoint @Roles 已挡 finance/parent）；本函数纵深防御一级 PII 脱敏
+      masked.parentPhone = maskPhoneLevel1(masked.parentPhone) as T['parentPhone'];
+      masked.phone = maskPhoneLevel1(masked.phone) as T['phone'];
       return masked;
   }
 }

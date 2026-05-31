@@ -3,7 +3,7 @@
  *
  * !!! 禁止手改 !!! 改 src/__rbac__/manifest.json + 重跑 scripts/generate-rbac-spec.js
  *
- * 生成时间: 2026-05-19
+ * 生成时间: 2026-05-20
  * 来源: docs/SSOT-拍板权威.md §1 角色 + §4 字段矩阵 + §6 操作权限矩阵
  * 总 case 数: 5 对象 × 4 CRUD × 13 角色 = 260
  *
@@ -130,67 +130,68 @@ describe('[RBAC L9 Batch A] 核心 5 对象 × 4 CRUD × 13 角色 = 260 case', 
     });
 
     describe('read', () => {
-      // manifest: allow=[sales,sales_manager,boss,admin,academic,academic_admin,finance]
-      // manifest: deny=[teacher,parent,platform_admin,finance_admin,marketing,hr]
-      // note: sales 仅看 owner=self / 池; academic 看本校已成交; finance 仅作账金额; SSOT §4.4 customer.联系人=销 owner=me ✅ / 务 本校已成交 ✅ / 老校 ✅ / 财 ❌; customer.购业 财 ✅作账
+      // manifest: allow=[sales,sales_manager,boss,admin,academic,academic_admin,finance,marketing]
+      // manifest: deny=[teacher,parent,platform_admin,finance_admin,hr]
+      // note: sales 仅看 owner=self / 池; academic 看本校已成交; finance 仅作账金额; 2026-05-31 §4.1 marketing 纳入（比照 academic 本校只读 + 手机脱敏）; SSOT §4.4 customer.联系人=销 owner=me ✅ / 务 本校已成交 ✅ / 市 本校脱敏 ✅ / 老校 ✅ / 财 ❌
 
       it('allow sales → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('sales')));
         expect(result).toBe(true);
       });
       it('allow sales_manager → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('sales_manager')));
         expect(result).toBe(true);
       });
       it('allow boss → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('boss')));
         expect(result).toBe(true);
       });
       it('allow admin → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('admin')));
         expect(result).toBe(true);
       });
       it('allow academic → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('academic')));
         expect(result).toBe(true);
       });
       it('allow academic_admin → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('academic_admin')));
         expect(result).toBe(true);
       });
       it('allow finance → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('finance')));
         expect(result).toBe(true);
       });
+      it('allow marketing → canActivate 返 true', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
+        const result = guard.canActivate(mkContext(mkUser('marketing')));
+        expect(result).toBe(true);
+      });
       it('deny teacher → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('teacher')))).toThrow(ForbiddenException);
       });
       it('deny parent → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('parent')))).toThrow(ForbiddenException);
       });
       it('deny platform_admin → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('platform_admin')))).toThrow(ForbiddenException);
       });
       it('deny finance_admin → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('finance_admin')))).toThrow(ForbiddenException);
       });
-      it('deny marketing → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
-        expect(() => guard.canActivate(mkContext(mkUser('marketing')))).toThrow(ForbiddenException);
-      });
       it('deny hr → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('hr')))).toThrow(ForbiddenException);
       });
     });
@@ -388,68 +389,69 @@ describe('[RBAC L9 Batch A] 核心 5 对象 × 4 CRUD × 13 角色 = 260 case', 
     });
 
     describe('read', () => {
-      // manifest: allow=[sales,sales_manager,boss,admin,academic,academic_admin,teacher,parent]
-      // manifest: deny=[finance,platform_admin,finance_admin,marketing,hr]
-      // note: sales 自己客户 ✅; teacher 主带 ✅ (controller 层 ownership 校验, 非 @Roles 层); parent C 端独立 ✅ (走 ParentJwt aud)
+      // manifest: allow=[sales,sales_manager,boss,admin,academic,academic_admin,teacher,parent,marketing]
+      // manifest: deny=[finance,platform_admin,finance_admin,hr]
+      // note: sales 自己客户 ✅; teacher 主带 ✅ (controller 层 ownership 校验, 非 @Roles 层); parent C 端独立 ✅ (走 ParentJwt aud); 2026-05-31 §4.1 marketing 纳入（本校只读 + 手机脱敏，maskStudentDetail）
 
       it('allow sales → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('sales')));
         expect(result).toBe(true);
       });
       it('allow sales_manager → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('sales_manager')));
         expect(result).toBe(true);
       });
       it('allow boss → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('boss')));
         expect(result).toBe(true);
       });
       it('allow admin → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('admin')));
         expect(result).toBe(true);
       });
       it('allow academic → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('academic')));
         expect(result).toBe(true);
       });
       it('allow academic_admin → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('academic_admin')));
         expect(result).toBe(true);
       });
       it('allow teacher → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('teacher')));
         expect(result).toBe(true);
       });
       it('allow parent → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('parent')));
         expect(result).toBe(true);
       });
+      it('allow marketing → canActivate 返 true', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
+        const result = guard.canActivate(mkContext(mkUser('marketing')));
+        expect(result).toBe(true);
+      });
       it('deny finance → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('finance')))).toThrow(ForbiddenException);
       });
       it('deny platform_admin → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('platform_admin')))).toThrow(ForbiddenException);
       });
       it('deny finance_admin → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('finance_admin')))).toThrow(ForbiddenException);
       });
-      it('deny marketing → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
-        expect(() => guard.canActivate(mkContext(mkUser('marketing')))).toThrow(ForbiddenException);
-      });
       it('deny hr → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","teacher","parent","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('hr')))).toThrow(ForbiddenException);
       });
     });
@@ -647,68 +649,69 @@ describe('[RBAC L9 Batch A] 核心 5 对象 × 4 CRUD × 13 角色 = 260 case', 
     });
 
     describe('read', () => {
-      // manifest: allow=[sales,sales_manager,boss,admin,academic,academic_admin,finance,parent]
-      // manifest: deny=[teacher,platform_admin,finance_admin,marketing,hr]
-      // note: §4.5 销 ✅ 自己 / 务 ✅ 本校 / 老校 ✅ / 财 ✅作账 / 家 ✅自己; teacher 仅看主带学员剩余课时不看金额; teacher 不看合同对象本身
+      // manifest: allow=[sales,sales_manager,boss,admin,academic,academic_admin,finance,parent,marketing]
+      // manifest: deny=[teacher,platform_admin,finance_admin,hr]
+      // note: §4.5 销 ✅ 自己 / 务 ✅ 本校 / 老校 ✅ / 财 ✅作账 / 家 ✅自己; teacher 仅看主带学员剩余课时不看金额; teacher 不看合同对象本身; 2026-05-31 §4.1 表行「业务关系（价格）市 ✅（含价格）」marketing 纳入（含价格，maskContract raw-role 放行）
 
       it('allow sales → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('sales')));
         expect(result).toBe(true);
       });
       it('allow sales_manager → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('sales_manager')));
         expect(result).toBe(true);
       });
       it('allow boss → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('boss')));
         expect(result).toBe(true);
       });
       it('allow admin → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('admin')));
         expect(result).toBe(true);
       });
       it('allow academic → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('academic')));
         expect(result).toBe(true);
       });
       it('allow academic_admin → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('academic_admin')));
         expect(result).toBe(true);
       });
       it('allow finance → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('finance')));
         expect(result).toBe(true);
       });
       it('allow parent → canActivate 返 true', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         const result = guard.canActivate(mkContext(mkUser('parent')));
         expect(result).toBe(true);
       });
+      it('allow marketing → canActivate 返 true', () => {
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
+        const result = guard.canActivate(mkContext(mkUser('marketing')));
+        expect(result).toBe(true);
+      });
       it('deny teacher → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('teacher')))).toThrow(ForbiddenException);
       });
       it('deny platform_admin → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('platform_admin')))).toThrow(ForbiddenException);
       });
       it('deny finance_admin → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('finance_admin')))).toThrow(ForbiddenException);
       });
-      it('deny marketing → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
-        expect(() => guard.canActivate(mkContext(mkUser('marketing')))).toThrow(ForbiddenException);
-      });
       it('deny hr → ForbiddenException', () => {
-        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent"]);
+        (reflector.getAllAndOverride as jest.Mock).mockReturnValue(["sales","sales_manager","boss","admin","academic","academic_admin","finance","parent","marketing"]);
         expect(() => guard.canActivate(mkContext(mkUser('hr')))).toThrow(ForbiddenException);
       });
     });

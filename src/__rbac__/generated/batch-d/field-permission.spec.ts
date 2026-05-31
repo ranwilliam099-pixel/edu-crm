@@ -3,7 +3,7 @@
  *
  * !!! 禁止手改 !!! 改 src/__rbac__/manifest.json + 重跑 scripts/generate-rbac-spec.js
  *
- * 生成时间: 2026-05-19
+ * 生成时间: 2026-05-20
  * 来源: docs/SSOT-拍板权威.md §1 角色 + §4 字段矩阵 + §6 操作权限矩阵
  *
  * 测试目标:
@@ -178,9 +178,9 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
 
   describe('customer (maskCustomer × 12 fields)', () => {
     describe('field: phone', () => {
-      // PII 一级隐私（拍板 customer §4.4 联系人）
-      // visible=[admin,boss,sales_manager,sales_owner,academic,academic_admin]
-      // masked=[sales_other,marketing,finance,teacher,hr,parent,unknown]
+      // PII 一级隐私（§5 手机仅自己销售/老板/校长明文；§4.1 2026-05-31 教务/老师/市场脱敏 138****）
+      // visible=[admin,boss,sales_manager,sales_owner]
+      // masked=[academic,academic_admin,marketing,sales_other,finance,teacher,hr,parent,unknown]
       // hidden=[]
 
       it('visible: admin → phone=13800138000', () => {
@@ -199,20 +199,20 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
         const result = maskCustomerByRoleVariant('sales_owner');
         expect((result as Customer & Record<string, unknown>).phone).toBe("13800138000");
       });
-      it('visible: academic → phone=13800138000', () => {
+      it('masked: academic → phone="138****8000"', () => {
         const result = maskCustomerByRoleVariant('academic');
-        expect((result as Customer & Record<string, unknown>).phone).toBe("13800138000");
+        expect((result as Customer & Record<string, unknown>).phone).toBe("138****8000");
       });
-      it('visible: academic_admin → phone=13800138000', () => {
+      it('masked: academic_admin → phone="138****8000"', () => {
         const result = maskCustomerByRoleVariant('academic_admin');
-        expect((result as Customer & Record<string, unknown>).phone).toBe("13800138000");
+        expect((result as Customer & Record<string, unknown>).phone).toBe("138****8000");
+      });
+      it('masked: marketing → phone="138****8000"', () => {
+        const result = maskCustomerByRoleVariant('marketing');
+        expect((result as Customer & Record<string, unknown>).phone).toBe("138****8000");
       });
       it('masked: sales_other → phone=null', () => {
         const result = maskCustomerByRoleVariant('sales_other');
-        expect((result as Customer & Record<string, unknown>).phone).toBeNull();
-      });
-      it('masked: marketing → phone=null', () => {
-        const result = maskCustomerByRoleVariant('marketing');
         expect((result as Customer & Record<string, unknown>).phone).toBeNull();
       });
       it('masked: finance → phone=null', () => {
@@ -238,9 +238,9 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
     });
 
     describe('field: wechat', () => {
-      // PII 一级隐私（拍板 customer §4.4 联系人）
-      // visible=[admin,boss,sales_manager,sales_owner,academic,academic_admin]
-      // masked=[sales_other,marketing,finance,teacher,hr,parent,unknown]
+      // 联系人信息（微信非一级 PII；§4.1 教务/市场本校可见明文）
+      // visible=[admin,boss,sales_manager,sales_owner,academic,academic_admin,marketing]
+      // masked=[sales_other,finance,teacher,hr,parent,unknown]
       // hidden=[]
 
       it('visible: admin → wechat=wx_parent_abc', () => {
@@ -267,12 +267,12 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
         const result = maskCustomerByRoleVariant('academic_admin');
         expect((result as Customer & Record<string, unknown>).wechat).toBe("wx_parent_abc");
       });
+      it('visible: marketing → wechat=wx_parent_abc', () => {
+        const result = maskCustomerByRoleVariant('marketing');
+        expect((result as Customer & Record<string, unknown>).wechat).toBe("wx_parent_abc");
+      });
       it('masked: sales_other → wechat=null', () => {
         const result = maskCustomerByRoleVariant('sales_other');
-        expect((result as Customer & Record<string, unknown>).wechat).toBeNull();
-      });
-      it('masked: marketing → wechat=null', () => {
-        const result = maskCustomerByRoleVariant('marketing');
         expect((result as Customer & Record<string, unknown>).wechat).toBeNull();
       });
       it('masked: finance → wechat=null', () => {
@@ -298,7 +298,7 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
     });
 
     describe('field: source', () => {
-      // 业务（销售渠道，仅销售看 / 教务不看）
+      // 业务（销售渠道，仅销售看 / 教务市场不看）
       // visible=[admin,boss,sales_manager,sales_owner]
       // masked=[academic,academic_admin,sales_other,marketing,finance,teacher,hr,parent,unknown]
       // hidden=[]
@@ -358,9 +358,9 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
     });
 
     describe('field: note', () => {
-      // 业务（销售跟进备注）
-      // visible=[admin,boss,sales_manager,sales_owner,academic,academic_admin]
-      // masked=[sales_other,marketing,finance,teacher,hr,parent,unknown]
+      // 业务（销售跟进备注；§4.1 教务/市场本校可见）
+      // visible=[admin,boss,sales_manager,sales_owner,academic,academic_admin,marketing]
+      // masked=[sales_other,finance,teacher,hr,parent,unknown]
       // hidden=[]
 
       it('visible: admin → note=内部跟进备注', () => {
@@ -387,12 +387,12 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
         const result = maskCustomerByRoleVariant('academic_admin');
         expect((result as Customer & Record<string, unknown>).note).toBe("内部跟进备注");
       });
+      it('visible: marketing → note=内部跟进备注', () => {
+        const result = maskCustomerByRoleVariant('marketing');
+        expect((result as Customer & Record<string, unknown>).note).toBe("内部跟进备注");
+      });
       it('masked: sales_other → note=null', () => {
         const result = maskCustomerByRoleVariant('sales_other');
-        expect((result as Customer & Record<string, unknown>).note).toBeNull();
-      });
-      it('masked: marketing → note=null', () => {
-        const result = maskCustomerByRoleVariant('marketing');
         expect((result as Customer & Record<string, unknown>).note).toBeNull();
       });
       it('masked: finance → note=null', () => {
@@ -901,10 +901,10 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
 
   describe('teacher (maskTeacher × 9 fields)', () => {
     describe('field: phone', () => {
-      // PII 一级隐私（拍板 teacher §4.3 仅 self/老板/校长/教务/hr 可见）
-      // visible=[admin,boss,sales_manager,academic,academic_admin,teacher_self,hr]
-      // masked=[]
-      // hidden=[teacher_other,sales,marketing,finance,parent,unknown]
+      // PII 一级隐私（§4.3 note 一级隐私仅 self/老板/校长可见明文；§4.1 教务/市场脱敏 139****）
+      // visible=[admin,boss,sales_manager,teacher_self,hr]
+      // masked=[academic,academic_admin,marketing]
+      // hidden=[teacher_other,sales,finance,parent,unknown]
 
       it('visible: admin → phone=13900139000', () => {
         const result = maskTeacherByRoleVariant('admin');
@@ -918,14 +918,6 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
         const result = maskTeacherByRoleVariant('sales_manager');
         expect((result as Teacher & Record<string, unknown>).phone).toBe("13900139000");
       });
-      it('visible: academic → phone=13900139000', () => {
-        const result = maskTeacherByRoleVariant('academic');
-        expect((result as Teacher & Record<string, unknown>).phone).toBe("13900139000");
-      });
-      it('visible: academic_admin → phone=13900139000', () => {
-        const result = maskTeacherByRoleVariant('academic_admin');
-        expect((result as Teacher & Record<string, unknown>).phone).toBe("13900139000");
-      });
       it('visible: teacher_self → phone=13900139000', () => {
         const result = maskTeacherByRoleVariant('teacher_self');
         expect((result as Teacher & Record<string, unknown>).phone).toBe("13900139000");
@@ -934,16 +926,24 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
         const result = maskTeacherByRoleVariant('hr');
         expect((result as Teacher & Record<string, unknown>).phone).toBe("13900139000");
       });
+      it('masked: academic → phone="139****9000"', () => {
+        const result = maskTeacherByRoleVariant('academic');
+        expect((result as Teacher & Record<string, unknown>).phone).toBe("139****9000");
+      });
+      it('masked: academic_admin → phone="139****9000"', () => {
+        const result = maskTeacherByRoleVariant('academic_admin');
+        expect((result as Teacher & Record<string, unknown>).phone).toBe("139****9000");
+      });
+      it('masked: marketing → phone="139****9000"', () => {
+        const result = maskTeacherByRoleVariant('marketing');
+        expect((result as Teacher & Record<string, unknown>).phone).toBe("139****9000");
+      });
       it('hidden: teacher_other → phone undefined', () => {
         const result = maskTeacherByRoleVariant('teacher_other');
         expect((result as Teacher & Record<string, unknown>).phone).toBeUndefined();
       });
       it('hidden: sales → phone undefined', () => {
         const result = maskTeacherByRoleVariant('sales');
-        expect((result as Teacher & Record<string, unknown>).phone).toBeUndefined();
-      });
-      it('hidden: marketing → phone undefined', () => {
-        const result = maskTeacherByRoleVariant('marketing');
         expect((result as Teacher & Record<string, unknown>).phone).toBeUndefined();
       });
       it('hidden: finance → phone undefined', () => {
@@ -1444,9 +1444,9 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
 
   describe('contract (maskContract × 12 fields)', () => {
     describe('field: totalAmount', () => {
-      // 财务二级隐私（拍板 contract §4.5 教务保留续费话术依据 / 老师不看价格）
-      // visible=[admin,boss,sales_manager,finance,sales_owner,academic,academic_admin,parent]
-      // masked=[sales_other,marketing,teacher,hr,unknown]
+      // 财务二级隐私（§4.5 教务保留续费话术依据 / 老师墙①不看价格 / §4.1 市场含价格）
+      // visible=[admin,boss,sales_manager,finance,sales_owner,academic,academic_admin,parent,marketing]
+      // masked=[sales_other,teacher,hr,unknown]
       // hidden=[]
 
       it('visible: admin → totalAmount=9000', () => {
@@ -1481,12 +1481,12 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
         const result = maskContractByRoleVariant('parent');
         expect((result as Contract & Record<string, unknown>).totalAmount).toBe(9000);
       });
+      it('visible: marketing → totalAmount=9000', () => {
+        const result = maskContractByRoleVariant('marketing');
+        expect((result as Contract & Record<string, unknown>).totalAmount).toBe(9000);
+      });
       it('masked: sales_other → totalAmount=0', () => {
         const result = maskContractByRoleVariant('sales_other');
-        expect((result as Contract & Record<string, unknown>).totalAmount).toBe(0);
-      });
-      it('masked: marketing → totalAmount=0', () => {
-        const result = maskContractByRoleVariant('marketing');
         expect((result as Contract & Record<string, unknown>).totalAmount).toBe(0);
       });
       it('masked: teacher → totalAmount=0', () => {
@@ -1504,9 +1504,9 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
     });
 
     describe('field: standardPrice', () => {
-      // 财务（原价，academic 不看细节 / parent 可看用于折扣对比）
-      // visible=[admin,boss,sales_manager,finance,sales_owner,parent]
-      // masked=[academic,academic_admin,sales_other,marketing,teacher,hr,unknown]
+      // 财务（原价，academic 不看细节 / parent 可看用于折扣对比 / §4.1 市场含价格）
+      // visible=[admin,boss,sales_manager,finance,sales_owner,parent,marketing]
+      // masked=[academic,academic_admin,sales_other,teacher,hr,unknown]
       // hidden=[]
 
       it('visible: admin → standardPrice=9999', () => {
@@ -1533,6 +1533,10 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
         const result = maskContractByRoleVariant('parent');
         expect((result as Contract & Record<string, unknown>).standardPrice).toBe(9999);
       });
+      it('visible: marketing → standardPrice=9999', () => {
+        const result = maskContractByRoleVariant('marketing');
+        expect((result as Contract & Record<string, unknown>).standardPrice).toBe(9999);
+      });
       it('masked: academic → standardPrice=0', () => {
         const result = maskContractByRoleVariant('academic');
         expect((result as Contract & Record<string, unknown>).standardPrice).toBe(0);
@@ -1543,10 +1547,6 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
       });
       it('masked: sales_other → standardPrice=0', () => {
         const result = maskContractByRoleVariant('sales_other');
-        expect((result as Contract & Record<string, unknown>).standardPrice).toBe(0);
-      });
-      it('masked: marketing → standardPrice=0', () => {
-        const result = maskContractByRoleVariant('marketing');
         expect((result as Contract & Record<string, unknown>).standardPrice).toBe(0);
       });
       it('masked: teacher → standardPrice=0', () => {
@@ -1564,9 +1564,9 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
     });
 
     describe('field: discountAmount', () => {
-      // 财务（折扣，parent 也不看）
-      // visible=[admin,boss,sales_manager,finance,sales_owner]
-      // masked=[academic,academic_admin,sales_other,marketing,teacher,parent,hr,unknown]
+      // 财务（折扣，parent 也不看 / §4.1 市场含价格）
+      // visible=[admin,boss,sales_manager,finance,sales_owner,marketing]
+      // masked=[academic,academic_admin,sales_other,teacher,parent,hr,unknown]
       // hidden=[]
 
       it('visible: admin → discountAmount=999', () => {
@@ -1589,6 +1589,10 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
         const result = maskContractByRoleVariant('sales_owner');
         expect((result as Contract & Record<string, unknown>).discountAmount).toBe(999);
       });
+      it('visible: marketing → discountAmount=999', () => {
+        const result = maskContractByRoleVariant('marketing');
+        expect((result as Contract & Record<string, unknown>).discountAmount).toBe(999);
+      });
       it('masked: academic → discountAmount=0', () => {
         const result = maskContractByRoleVariant('academic');
         expect((result as Contract & Record<string, unknown>).discountAmount).toBe(0);
@@ -1599,10 +1603,6 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
       });
       it('masked: sales_other → discountAmount=0', () => {
         const result = maskContractByRoleVariant('sales_other');
-        expect((result as Contract & Record<string, unknown>).discountAmount).toBe(0);
-      });
-      it('masked: marketing → discountAmount=0', () => {
-        const result = maskContractByRoleVariant('marketing');
         expect((result as Contract & Record<string, unknown>).discountAmount).toBe(0);
       });
       it('masked: teacher → discountAmount=0', () => {
@@ -1624,9 +1624,9 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
     });
 
     describe('field: giftHours', () => {
-      // 财务（赠课，academic + parent 都不看）
-      // visible=[admin,boss,sales_manager,finance,sales_owner]
-      // masked=[sales_other,marketing,academic,academic_admin,teacher,parent,hr,unknown]
+      // 财务（赠课，academic + parent 都不看 / §4.1 市场含价格）
+      // visible=[admin,boss,sales_manager,finance,sales_owner,marketing]
+      // masked=[sales_other,academic,academic_admin,teacher,parent,hr,unknown]
       // hidden=[]
 
       it('visible: admin → giftHours=5', () => {
@@ -1649,12 +1649,12 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
         const result = maskContractByRoleVariant('sales_owner');
         expect((result as Contract & Record<string, unknown>).giftHours).toBe(5);
       });
+      it('visible: marketing → giftHours=5', () => {
+        const result = maskContractByRoleVariant('marketing');
+        expect((result as Contract & Record<string, unknown>).giftHours).toBe(5);
+      });
       it('masked: sales_other → giftHours=0', () => {
         const result = maskContractByRoleVariant('sales_other');
-        expect((result as Contract & Record<string, unknown>).giftHours).toBe(0);
-      });
-      it('masked: marketing → giftHours=0', () => {
-        const result = maskContractByRoleVariant('marketing');
         expect((result as Contract & Record<string, unknown>).giftHours).toBe(0);
       });
       it('masked: academic → giftHours=0', () => {
@@ -2372,8 +2372,8 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
     it('actorGroupOf("sales") → "sales"', () => {
       expect(actorGroupOf('sales' as TenantRole)).toBe('sales');
     });
-    it('actorGroupOf("marketing") → "sales"', () => {
-      expect(actorGroupOf('marketing' as TenantRole)).toBe('sales');
+    it('actorGroupOf("marketing") → "academic"', () => {
+      expect(actorGroupOf('marketing' as TenantRole)).toBe('academic');
     });
     it('actorGroupOf("academic") → "academic"', () => {
       expect(actorGroupOf('academic' as TenantRole)).toBe('academic');

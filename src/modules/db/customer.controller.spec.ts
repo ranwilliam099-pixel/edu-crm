@@ -163,26 +163,39 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
       expect(r.phone).toBe('13800138000');
     });
 
-    it('academic → phone/wechat 可见，source/note null', async () => {
+    it('academic → phone 脱敏（§4.1 一级隐私），wechat 可见，source/note null', async () => {
+      // ⚠️ 行为变更（Day-A）：原 academic phone 明文 → §4.1（2026-05-31）一级隐私脱敏 138****。
       repo.findById.mockResolvedValueOnce(customerFixture());
       const r = (await controller.detail(
         CUSTOMER_ID,
         TENANT_SCHEMA,
         req(jwt('academic')),
       )) as Customer;
-      expect(r.phone).toBe('13800138000');
-      expect(r.wechat).toBe('wx_parent_abc');
+      expect(r.phone).toBe('138****8000'); // 脱敏（非明文）
+      expect(r.wechat).toBe('wx_parent_abc'); // 微信非一级 PII，本校可见
       expect(r.source).toBeNull();
     });
 
-    it('academic_admin 同 academic', async () => {
+    it('academic_admin 同 academic（phone 脱敏）', async () => {
       repo.findById.mockResolvedValueOnce(customerFixture());
       const r = (await controller.detail(
         CUSTOMER_ID,
         TENANT_SCHEMA,
         req(jwt('academic_admin')),
       )) as Customer;
-      expect(r.phone).toBe('13800138000');
+      expect(r.phone).toBe('138****8000');
+      expect(r.source).toBeNull();
+    });
+
+    it('marketing → 比照 academic：phone 脱敏 + wechat 可见 + source null（§4.1 2026-05-31 放开）', async () => {
+      repo.findById.mockResolvedValueOnce(customerFixture());
+      const r = (await controller.detail(
+        CUSTOMER_ID,
+        TENANT_SCHEMA,
+        req(jwt('marketing')),
+      )) as Customer;
+      expect(r.phone).toBe('138****8000'); // 脱敏
+      expect(r.wechat).toBe('wx_parent_abc');
       expect(r.source).toBeNull();
     });
 

@@ -25,7 +25,7 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 //   - teacher 只看 assigned_teacher_id=ownTeacherId（OOUX 主带）
 //   - admin / boss / academic / sales_manager：全部（5/15 A-2 删 sales_director）
 // 注：student 现 schema 无 phone/家庭住址等 PII（仅 brief 字段），不做字段 mask
-import { actorGroupOf } from '../../common/role-field-filter';
+import { actorGroupOf, maskStudentDetail } from '../../common/role-field-filter';
 import { TeacherRepository } from './teacher.repository';
 // Sprint B.3 复审 (2026-05-11) 修 4 OOUX:
 //   - POST /db/students/:id/contracts 新 endpoint（contract 是 student 子对象）
@@ -251,11 +251,18 @@ export class StudentController {
    * 2026-05-21 新增 — 学员档案完整详情（b/student/detail page 用）
    *   GET /db/students/:studentId?tenantSchema=tenant_xxx
    *   返回 StudentDetail (学员 + 主家长 + 校区 + owner 销售 + 主带老师 JOIN)
-   *   RBAC: admin/boss/sales/sales_manager/academic/academic_admin/teacher 都可读
+   *   RBAC: admin/boss/sales/sales_manager/academic/academic_admin/teacher/marketing 都可读
    *     - finance 角色禁访（学员档案不涉及财务）
    *     - parent 走 c/student-profile 不走 B 端
-   *   注：finance 角色禁访；teacher 角色后端硬脱敏家长联系字段（parentName/Phone/Gender）
-   *      防客户端绕过前端 maskPhone（SSOT §4.1 teacher ❌ 联系人信息 / §2 一级 PII）
+   *
+   *   2026-05-31 §4.1 学员权限全面放开：marketing 纳入读权限（比照 academic 本校只读）。
+   *   字段墙改为走 maskStudentDetail（替代旧「teacher 家长字段全 null」硬编码）：
+   *     - teacher/academic/academic_admin/marketing：parentName/parentGender 可见（§4.1 联系人 ✅），
+   *       parentPhone / phone（学员电话）= §5 一级隐私脱敏 138****8801
+   *     - sales 自己学员（ownerSalesId=me）/ admin / boss：手机明文
+   *     - sales 别人学员：手机脱敏（个人销售不看他人客户一级 PII）
+   *   逆转旧实现「teacher → parentName/parentGender 全 null」（旧 §4.1 teacher ❌ 联系人；
+   *   新 §4.1 teacher ✅ 联系人，仅手机脱敏）。
    */
   @Get(':studentId')
   @UseGuards(RbacGuard)
@@ -267,6 +274,7 @@ export class StudentController {
     'academic',
     'academic_admin',
     'teacher',
+    'marketing', // 2026-05-31 §4.1 学员权限放开（比照 academic 本校只读 + PII 脱敏）
   )
   @HttpCode(HttpStatus.OK)
   async findById(
@@ -282,16 +290,14 @@ export class StudentController {
     if (!detail) {
       throw new NotFoundException(`student ${studentId} not found`);
     }
-    // 2026-05-29 全面检测 P0: teacher ❌ 联系人信息（SSOT §4.1 / §2 一级 PII）。
-    //   前端 maskPhone 客户端可绕过 → 后端按 role 硬脱敏家长 + 学员联系字段。
-    //   安全审 round-1 finding 3: detail.phone（学员本人电话）也是一级 PII，补 null。
-    if (req.user?.role === 'teacher') {
-      detail.parentName = null;
-      detail.parentPhone = null;
-      detail.parentGender = null;
-      detail.phone = null;
-    }
-    return detail;
+    // 2026-05-31 §4.1 字段墙：maskStudentDetail 按 role 脱敏一级 PII（parentPhone / phone）。
+    //   - sales 自己学员（ownerSalesId === me）→ 手机明文；别人学员 → 脱敏
+    //   - academic/teacher/marketing → 联系人姓名可见 + 手机脱敏
+    //   - admin/boss → 全字段明文
+    //   前端 maskPhone 客户端可绕过 → 后端硬脱敏防泄露（§2 一级 PII / 纵深防御）
+    const isOwnerSelf =
+      req.user?.sub !== undefined && detail.ownerSalesId === req.user.sub;
+    return maskStudentDetail(detail, req.user, { isOwnerSelf });
   }
 
   @Get('by-teacher/:teacherId')
@@ -304,6 +310,7 @@ export class StudentController {
     'academic_admin',
     'sales',
     'sales_manager',
+    'marketing', // 2026-05-31 §4.1 学员权限放开（本校只读；StudentBrief 无 PII）
     // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)
@@ -353,6 +360,7 @@ export class StudentController {
     'teacher',
     'academic',
     'academic_admin',
+    'marketing', // 2026-05-31 §4.1 学员权限放开（本校只读；StudentBrief 无 PII）
   )
   @HttpCode(HttpStatus.OK)
   async listAll(

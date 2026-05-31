@@ -10,6 +10,8 @@ export {
   maskCustomer,
   maskTeacher,
   maskContract,
+  maskStudentDetail,
+  maskPhoneLevel1,
   canAccessCustomer,
   canAccessContract,
   canAccessStudent,
@@ -21,4 +23,5 @@ export type {
   CustomerMaskOptions,
   TeacherMaskOptions,
   ContractMaskOptions,
+  StudentDetailMaskOptions,
 } from './role-field-filter';

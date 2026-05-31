@@ -204,17 +204,19 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
       });
     });
 
-    it('marketing → sales group 强制覆盖 ownerSalesId = req.user.sub', async () => {
+    it('marketing → academic group 本校只读，不强制覆盖 ownerSalesId（§4.1 2026-05-31）', async () => {
+      // ⚠️ 行为变更（Day-A）：marketing 此前 sales group 会强制 owner=me；
+      //   §4.1 重新引入 marketing 后归 academic group（本校只读），不强制覆盖 → 按 body 透传。
       repo.listAll.mockResolvedValueOnce([]);
       await controller.listAll(
         { tenantSchema: TENANT_SCHEMA, ownerSalesId: SALES_B },
         req(jwt('marketing', SALES_A)),
       );
-      // marketing 走 sales group → 强制 owner=me
+      // marketing 走 academic group → 不强制覆盖（与 academic/sales_manager 等同）
       expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
         limit: 100,
         offset: 0,
-        ownerSalesId: SALES_A,
+        ownerSalesId: SALES_B,
         assignedTeacherId: undefined,
       });
     });

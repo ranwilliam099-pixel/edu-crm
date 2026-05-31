@@ -438,6 +438,7 @@ export class FeedbackController {
     'boss',
     'sales',
     'sales_manager',
+    'marketing', // 2026-05-31 §4.1 学习表现 市 ✅（只读）；teacherInternalNote 仍按 §5.1 剥离（marketing 不在白名单）
     // 5/15 A-2：删 'sales_director'（不在拍板角色清单）
   )
   @HttpCode(HttpStatus.OK)

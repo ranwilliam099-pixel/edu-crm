@@ -565,7 +565,9 @@ export class CustomerController {
   }
 
   @Get(':customerId')
-  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
+  // 2026-05-31 §4.1 学员权限放开：marketing 纳入（比照 academic 本校只读 + 手机脱敏）。
+  //   canAccessCustomer(marketing)→academic group 放行本校；maskCustomer academic 分支脱敏 phone。
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin', 'marketing')
   @HttpCode(HttpStatus.OK)
   async detail(
     @Param('customerId') customerId: string,

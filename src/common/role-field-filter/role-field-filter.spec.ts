@@ -20,6 +20,8 @@ import {
   maskCustomer,
   maskTeacher,
   maskContract,
+  maskStudentDetail,
+  maskPhoneLevel1,
   canAccessCustomer,
   canAccessContract,
   canAccessStudent,
@@ -29,6 +31,7 @@ import { JwtPayload, TenantRole } from '../../modules/auth/jwt-payload.interface
 import { Customer } from '../../modules/db/customer.repository';
 import { Contract } from '../../modules/db/contract.repository';
 import { Teacher } from '../../modules/teacher/teacher.service';
+import { StudentDetail } from '../../modules/db/student.repository';
 
 // ============================================================
 // Fixtures
@@ -51,6 +54,14 @@ function customerFixture(overrides: Partial<Customer> = {}): Customer {
     studentName: '小明',
     gradeOrAge: '三年级',
     intendedSubject: '英语',
+    // § 12B JOIN customers 家长字段（findById 路径含；含一级 PII primaryMobile）
+    parentName: '小明妈妈',
+    parentGender: '女',
+    primaryMobile: '13800138000',
+    // V55 JOIN students 字段（studentPhone = 学员本人电话，一级 PII）
+    studentGender: '男',
+    school: '实验小学',
+    studentPhone: '13700137000',
     ownerUserId: USER_OWNER,
     stage: '初步接触',
     source: '抖音',
@@ -110,6 +121,32 @@ function contractFixture(overrides: Partial<Contract> = {}): Contract {
   };
 }
 
+function studentDetailFixture(overrides: Partial<StudentDetail> = {}): StudentDetail {
+  return {
+    id: 'student00000000000000000000A001',
+    studentName: '小明',
+    gradeOrAge: '三年级',
+    intendedSubject: '英语',
+    customerId: 'oppor000000000000000000000000A01',
+    parentName: '小明妈妈',
+    parentPhone: '13800138000', // 一级 PII（家长手机）
+    parentGender: '女',
+    campusId: CAMPUS_A,
+    campusName: '总校区',
+    ownerSalesId: USER_OWNER,
+    ownerSalesName: '李雷',
+    assignedTeacherId: TEACHER_OWN,
+    assignedTeacherName: '王老师',
+    notes: '内部备注',
+    gender: '男',
+    school: '实验小学',
+    phone: '13700137000', // 一级 PII（学员本人电话）
+    availableTime: ['周一晚'],
+    createdAt: '2026-05-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
 // ============================================================
 // actorGroupOf
 // ============================================================
@@ -132,9 +169,14 @@ describe('actorGroupOf', () => {
     expect(actorGroupOf('sales_director' as never)).toBe('unknown');
   });
 
-  it('sales/marketing → sales group（个人销售视角）', () => {
+  it('sales → sales group（个人销售视角，owner=me 客户明文）', () => {
     expect(actorGroupOf('sales')).toBe('sales');
-    expect(actorGroupOf('marketing')).toBe('sales');
+  });
+
+  it('marketing → academic group（2026-05-31 §4.1「市场视角 = 比照 academic 本校只读 + PII 脱敏」）', () => {
+    // ⚠️ 行为变更（Day-A）：marketing 此前误归 sales group（走 owner=me scope + 自己客户 phone 明文）。
+    //   §4.1 重新引入 marketing 后归 academic group：本校只读、customer/teacher phone 脱敏、合同价格另议（见 maskContract 单独 raw-role 放行）。
+    expect(actorGroupOf('marketing')).toBe('academic');
   });
 
   it('academic/academic_admin → academic group', () => {
@@ -214,19 +256,44 @@ describe('maskCustomer', () => {
     });
   });
 
-  describe('academic → phone/wechat ✅，source ❌', () => {
-    it('academic 看到 phone/wechat（拍板「本校已成交可看」）', () => {
+  describe('academic / marketing → 联系人姓名/微信 ✅，手机一级 PII 脱敏，source ❌', () => {
+    // 2026-05-31 §4.1：「手机/身份证 = §5 一级隐私，教务/老师/市场脱敏 138****8801」
+    //   ⚠️ 行为变更（Day-A）：原 academic 分支 phone 明文 → 现脱敏（与 §4.1 一级隐私一致）。
+    it('academic 手机脱敏（phone / primaryMobile / studentPhone 全 138****），wechat 保留', () => {
       const r = maskCustomer(customerFixture(), jwt('academic'));
-      expect(r.phone).toBe('13800138000');
-      expect(r.wechat).toBe('wx_parent_abc');
+      expect(r.phone).toBe('138****8000'); // 脱敏（非明文）
+      expect(r.primaryMobile).toBe('138****8000'); // 家长手机一级 PII 脱敏
+      expect(r.studentPhone).toBe('137****7000'); // 学员手机一级 PII 脱敏
+      expect(r.wechat).toBe('wx_parent_abc'); // 微信非一级 PII，本校可见
+      expect(r.parentName).toBe('小明妈妈'); // 联系人姓名 ✅
       // source 是销售跟进字段，教务不看
       expect(r.source).toBeNull();
     });
 
-    it('academic_admin 同 academic', () => {
+    it('academic_admin 同 academic（手机脱敏）', () => {
       const r = maskCustomer(customerFixture(), jwt('academic_admin'));
-      expect(r.phone).toBe('13800138000');
+      expect(r.phone).toBe('138****8000');
+      expect(r.primaryMobile).toBe('138****8000');
       expect(r.source).toBeNull();
+    });
+
+    it('marketing 比照 academic：手机脱敏 + wechat/姓名可见 + source ❌（§4.1 2026-05-31）', () => {
+      const r = maskCustomer(customerFixture(), jwt('marketing'));
+      expect(r.phone).toBe('138****8000'); // 脱敏（marketing 非 owner，无明文）
+      expect(r.primaryMobile).toBe('138****8000');
+      expect(r.studentPhone).toBe('137****7000');
+      expect(r.wechat).toBe('wx_parent_abc');
+      expect(r.parentName).toBe('小明妈妈');
+      expect(r.source).toBeNull();
+    });
+
+    it('academic 无值手机不脱敏成 ***（保持字段类型 null/原值）', () => {
+      const r = maskCustomer(
+        customerFixture({ phone: null, primaryMobile: undefined }),
+        jwt('academic'),
+      );
+      expect(r.phone).toBeNull(); // null 原样返回
+      expect(r.primaryMobile).toBeUndefined(); // undefined 原样返回
     });
   });
 
@@ -313,10 +380,21 @@ describe('maskTeacher', () => {
     });
   });
 
-  describe('academic → phone ✅', () => {
-    it('教务双层 👁 看 phone', () => {
+  describe('academic / marketing → teacher phone 脱敏（§4.3 note 一级隐私仅 self+boss+admin）', () => {
+    // ⚠️ 行为变更（Day-A）：原 academic 分支 teacher phone 明文 → 现脱敏（收紧，对齐 §4.3
+    //   「一级隐私（手机/身份证）仅 self + boss + admin 可见」+ §5 一级隐私）。
+    it('教务双层 → teacher phone 脱敏 138****', () => {
       const r = maskTeacher(teacherFixture(), jwt('academic'));
-      expect(r.phone).toBe('13900139000');
+      expect(r.phone).toBe('139****9000');
+      // 教学业务字段保留
+      expect(r.name).toBe('王老师');
+      expect(r.subjects).toEqual(['数学', '物理']);
+    });
+
+    it('marketing（归 academic group）→ teacher phone 脱敏', () => {
+      const r = maskTeacher(teacherFixture(), jwt('marketing'));
+      expect(r.phone).toBe('139****9000');
+      expect(r.name).toBe('王老师');
     });
   });
 
@@ -411,7 +489,19 @@ describe('maskContract', () => {
     });
   });
 
-  describe('teacher → 金额全 0', () => {
+  describe('marketing → 含价格全字段（§4.1 表行「业务关系（价格/金额）市 ✅（含价格）」）', () => {
+    // 2026-05-31 §4.1 表行 328：marketing 看合同含价格（获客/市场需看签约金额）。
+    //   marketing 归 academic group，但 maskContract 内 raw-role 'marketing' 先放行全价格（不随 academic 隐价）。
+    it('marketing 看到 standardPrice/discountAmount/totalAmount/giftHours 全值', () => {
+      const r = maskContract(contractFixture(), jwt('marketing'));
+      expect(r.standardPrice).toBe(9999);
+      expect(r.discountAmount).toBe(999);
+      expect(r.totalAmount).toBe(9000);
+      expect(r.giftHours).toBe(5);
+    });
+  });
+
+  describe('teacher → 金额全 0（§4.1 墙①老师永不看价格）', () => {
     it('老师看合同 → 金额全清零，仅看 status/classType/lessonHours', () => {
       const r = maskContract(contractFixture(), jwt('teacher'));
       expect(r.standardPrice).toBe(0);
@@ -543,6 +633,10 @@ describe('canAccessContract', () => {
     expect(canAccessContract(c, jwt('teacher'))).toBe(true);
   });
 
+  it('marketing → 可看（§4.1 归 academic group，本校全放行；合同价格 maskContract 不隐）', () => {
+    expect(canAccessContract(c, jwt('marketing', USER_OTHER))).toBe(true);
+  });
+
   it('hr → 拒绝（不该看合同）', () => {
     expect(canAccessContract(c, jwt('hr'))).toBe(false);
   });
@@ -595,6 +689,11 @@ describe('canAccessStudent', () => {
     expect(canAccessStudent(s, jwt('academic'))).toBe(true);
   });
 
+  it('marketing → 全部可看（§4.1 归 academic group，本校只读，不强制 owner=me）', () => {
+    // ⚠️ 行为变更（Day-A）：marketing 此前 sales group 会被强制 owner=me；现 academic group 本校全放行。
+    expect(canAccessStudent(s, jwt('marketing', USER_OTHER))).toBe(true);
+  });
+
   it('finance → 拒绝（SSOT §4.1 student 列头不含 finance，2026-05-19 Day 6 BLOCKER B1 修）', () => {
     // student 是教学线对象，finance 仅在 §6 finance.invoice.* 有权限
     // 双层防御：student.controller @Roles 全 deny finance；本 helper 兜底返 false
@@ -607,5 +706,145 @@ describe('canAccessStudent', () => {
 
   it('user undefined → 拒绝', () => {
     expect(canAccessStudent(s, undefined)).toBe(false);
+  });
+});
+
+// ============================================================
+// maskPhoneLevel1（一级隐私脱敏 helper）
+// ============================================================
+
+describe('maskPhoneLevel1', () => {
+  it('标准 11 位手机号 → 前 3 + **** + 后 4', () => {
+    expect(maskPhoneLevel1('13800138001')).toBe('138****8001');
+    expect(maskPhoneLevel1('13700137000')).toBe('137****7000');
+  });
+
+  it('null / undefined / 空串 → 原样返回（保持字段类型，不脱敏成 ***）', () => {
+    expect(maskPhoneLevel1(null)).toBeNull();
+    expect(maskPhoneLevel1(undefined)).toBeUndefined();
+    expect(maskPhoneLevel1('')).toBe('');
+  });
+
+  it('长度 < 7（非标准号）→ ***（不暴露任何片段）', () => {
+    expect(maskPhoneLevel1('123')).toBe('***');
+    expect(maskPhoneLevel1('123456')).toBe('***');
+  });
+
+  it('算法与全库 maskPhoneForDisplay / maskPhoneForAudit 一致（前3后4）', () => {
+    // customer.repository.maskPhoneForDisplay / teacher.controller.maskPhoneForAudit
+    //   / parent.repository.maskPhone 全用 `${slice(0,3)}****${slice(-4)}`
+    const phone = '13912345678';
+    expect(maskPhoneLevel1(phone)).toBe(`${phone.slice(0, 3)}****${phone.slice(-4)}`);
+  });
+});
+
+// ============================================================
+// maskStudentDetail（学员档案 — 一级 PII 联系字段脱敏，2026-05-31 §4.1）
+// ============================================================
+
+describe('maskStudentDetail', () => {
+  describe('admin / boss → 全字段明文（含 parentPhone / phone）', () => {
+    it('admin 看到家长手机 + 学员电话明文', () => {
+      const r = maskStudentDetail(studentDetailFixture(), jwt('admin'));
+      expect(r.parentPhone).toBe('13800138000');
+      expect(r.phone).toBe('13700137000');
+      expect(r.parentName).toBe('小明妈妈');
+    });
+
+    it('boss 同 admin（全字段明文）', () => {
+      const r = maskStudentDetail(studentDetailFixture(), jwt('boss'));
+      expect(r.parentPhone).toBe('13800138000');
+      expect(r.phone).toBe('13700137000');
+    });
+  });
+
+  describe('sales 自己学员（ownerSalesId=me）→ 手机明文（§4.1 自己销售可见明文）', () => {
+    it('sales owner=me isOwnerSelf=true → parentPhone / phone 明文', () => {
+      const r = maskStudentDetail(studentDetailFixture(), jwt('sales', USER_OWNER), {
+        isOwnerSelf: true,
+      });
+      expect(r.parentPhone).toBe('13800138000');
+      expect(r.phone).toBe('13700137000');
+    });
+  });
+
+  describe('sales 别人学员 → 手机脱敏（个人销售不看他人客户一级 PII）', () => {
+    it('sales isOwnerSelf=false → parentPhone / phone 脱敏，姓名保留', () => {
+      const r = maskStudentDetail(studentDetailFixture(), jwt('sales', USER_OTHER), {
+        isOwnerSelf: false,
+      });
+      expect(r.parentPhone).toBe('138****8000');
+      expect(r.phone).toBe('137****7000');
+      // 联系人姓名 / 基础信息保留
+      expect(r.parentName).toBe('小明妈妈');
+      expect(r.studentName).toBe('小明');
+    });
+  });
+
+  describe('teacher → 联系人姓名/性别 ✅ + 手机脱敏（§4.1 2026-05-31 放开，墙②脱敏）', () => {
+    it('teacher 看到 parentName/parentGender，但 parentPhone / phone 脱敏', () => {
+      const r = maskStudentDetail(studentDetailFixture(), jwt('teacher'));
+      // 逆转旧实现「teacher → parentName/parentGender 全 null」
+      expect(r.parentName).toBe('小明妈妈'); // §4.1 联系人姓名 ✅
+      expect(r.parentGender).toBe('女'); // §4.1 联系人 ✅
+      expect(r.parentPhone).toBe('138****8000'); // 墙② 一级 PII 脱敏
+      expect(r.phone).toBe('137****7000'); // 学员电话一级 PII 脱敏
+    });
+  });
+
+  describe('academic / academic_admin / marketing → 联系人姓名 ✅ + 手机脱敏', () => {
+    it('academic 手机脱敏，姓名/性别保留', () => {
+      const r = maskStudentDetail(studentDetailFixture(), jwt('academic'));
+      expect(r.parentPhone).toBe('138****8000');
+      expect(r.phone).toBe('137****7000');
+      expect(r.parentName).toBe('小明妈妈');
+    });
+
+    it('academic_admin 同 academic', () => {
+      const r = maskStudentDetail(studentDetailFixture(), jwt('academic_admin'));
+      expect(r.parentPhone).toBe('138****8000');
+      expect(r.phone).toBe('137****7000');
+    });
+
+    it('marketing 比照 academic：手机脱敏 + 姓名保留（§4.1 市场可读学员）', () => {
+      const r = maskStudentDetail(studentDetailFixture(), jwt('marketing'));
+      expect(r.parentPhone).toBe('138****8000');
+      expect(r.phone).toBe('137****7000');
+      expect(r.parentName).toBe('小明妈妈');
+      expect(r.studentName).toBe('小明');
+    });
+  });
+
+  describe('finance / parent / unknown → 兜底脱敏（纵深防御；endpoint @Roles 已挡）', () => {
+    it('finance → 手机脱敏（学员档案非其职，@Roles 已 deny，本函数兜底）', () => {
+      const r = maskStudentDetail(studentDetailFixture(), jwt('finance'));
+      expect(r.parentPhone).toBe('138****8000');
+      expect(r.phone).toBe('137****7000');
+    });
+
+    it('user undefined → 手机脱敏', () => {
+      const r = maskStudentDetail(studentDetailFixture(), undefined);
+      expect(r.parentPhone).toBe('138****8000');
+      expect(r.phone).toBe('137****7000');
+    });
+  });
+
+  it('mask 返回新对象，不污染原对象', () => {
+    const original = studentDetailFixture();
+    const r = maskStudentDetail(original, jwt('academic'));
+    expect(r.parentPhone).toBe('138****8000');
+    // 原对象不变
+    expect(original.parentPhone).toBe('13800138000');
+  });
+
+  it('手机字段为 null → 原样 null（不脱敏成 ***）', () => {
+    const r = maskStudentDetail(
+      studentDetailFixture({ parentPhone: null, phone: null }),
+      jwt('teacher'),
+    );
+    expect(r.parentPhone).toBeNull();
+    expect(r.phone).toBeNull();
+    // 姓名仍保留
+    expect(r.parentName).toBe('小明妈妈');
   });
 });

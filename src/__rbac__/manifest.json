@@ -71,9 +71,9 @@
         "deny": ["academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
       },
       "read": {
-        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "finance"],
-        "_note": "sales 仅看 owner=self / 池; academic 看本校已成交; finance 仅作账金额; SSOT §4.4 customer.联系人=销 owner=me ✅ / 务 本校已成交 ✅ / 老校 ✅ / 财 ❌; customer.购业 财 ✅作账",
-        "deny": ["teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "finance", "marketing"],
+        "_note": "sales 仅看 owner=self / 池; academic 看本校已成交; finance 仅作账金额; 2026-05-31 §4.1 marketing 纳入（比照 academic 本校只读 + 手机脱敏）; SSOT §4.4 customer.联系人=销 owner=me ✅ / 务 本校已成交 ✅ / 市 本校脱敏 ✅ / 老校 ✅ / 财 ❌",
+        "deny": ["teacher", "parent", "platform_admin", "finance_admin", "hr"]
       },
       "update": {
         "allow": ["sales", "sales_manager", "boss", "admin"],
@@ -95,9 +95,9 @@
         "deny": ["teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
       },
       "read": {
-        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "teacher", "parent"],
-        "_note": "sales 自己客户 ✅; teacher 主带 ✅ (controller 层 ownership 校验, 非 @Roles 层); parent C 端独立 ✅ (走 ParentJwt aud)",
-        "deny": ["finance", "platform_admin", "finance_admin", "marketing", "hr"]
+        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "teacher", "parent", "marketing"],
+        "_note": "sales 自己客户 ✅; teacher 主带 ✅ (controller 层 ownership 校验, 非 @Roles 层); parent C 端独立 ✅ (走 ParentJwt aud); 2026-05-31 §4.1 marketing 纳入（本校只读 + 手机脱敏，maskStudentDetail）",
+        "deny": ["finance", "platform_admin", "finance_admin", "hr"]
       },
       "update": {
         "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin"],
@@ -119,9 +119,9 @@
         "deny": ["academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
       },
       "read": {
-        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "finance", "parent"],
-        "_note": "§4.5 销 ✅ 自己 / 务 ✅ 本校 / 老校 ✅ / 财 ✅作账 / 家 ✅自己; teacher 仅看主带学员剩余课时不看金额; teacher 不看合同对象本身",
-        "deny": ["teacher", "platform_admin", "finance_admin", "marketing", "hr"]
+        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "finance", "parent", "marketing"],
+        "_note": "§4.5 销 ✅ 自己 / 务 ✅ 本校 / 老校 ✅ / 财 ✅作账 / 家 ✅自己; teacher 仅看主带学员剩余课时不看金额; teacher 不看合同对象本身; 2026-05-31 §4.1 表行「业务关系（价格）市 ✅（含价格）」marketing 纳入（含价格，maskContract raw-role 放行）",
+        "deny": ["teacher", "platform_admin", "finance_admin", "hr"]
       },
       "update": {
         "allow": ["sales", "sales_manager", "boss", "admin"],
@@ -579,23 +579,26 @@
         "_maskFn": "maskCustomer(customer, user, { isOwnerSelf })",
         "_fields": {
           "phone": {
-            "_category": "PII 一级隐私（拍板 customer §4.4 联系人）",
+            "_category": "PII 一级隐私（§5 手机仅自己销售/老板/校长明文；§4.1 2026-05-31 教务/老师/市场脱敏 138****）",
             "_originalValue": "13800138000",
             "_maskedValue": null,
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "academic", "academic_admin"],
-            "masked": ["sales_other", "marketing", "finance", "teacher", "hr", "parent", "unknown"],
+            "_maskedValueByRole": { "academic": "138****8000", "academic_admin": "138****8000", "marketing": "138****8000" },
+            "_note_day_a": "2026-05-31 §4.1：academic/academic_admin/marketing 从 visible 移入 masked（一级隐私脱敏，非明文）。sales_other/finance/teacher/hr/parent/unknown 仍 null。",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner"],
+            "masked": ["academic", "academic_admin", "marketing", "sales_other", "finance", "teacher", "hr", "parent", "unknown"],
             "hidden": []
           },
           "wechat": {
-            "_category": "PII 一级隐私（拍板 customer §4.4 联系人）",
+            "_category": "联系人信息（微信非一级 PII；§4.1 教务/市场本校可见明文）",
             "_originalValue": "wx_parent_abc",
             "_maskedValue": null,
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "academic", "academic_admin"],
-            "masked": ["sales_other", "marketing", "finance", "teacher", "hr", "parent", "unknown"],
+            "_note_day_a": "2026-05-31 §4.1：marketing 移入 visible（比照 academic 本校联系人 ✅）。wechat 非一级 PII 不脱敏。",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "academic", "academic_admin", "marketing"],
+            "masked": ["sales_other", "finance", "teacher", "hr", "parent", "unknown"],
             "hidden": []
           },
           "source": {
-            "_category": "业务（销售渠道，仅销售看 / 教务不看）",
+            "_category": "业务（销售渠道，仅销售看 / 教务市场不看）",
             "_originalValue": "抖音",
             "_maskedValue": null,
             "visible": ["admin", "boss", "sales_manager", "sales_owner"],
@@ -603,11 +606,12 @@
             "hidden": []
           },
           "note": {
-            "_category": "业务（销售跟进备注）",
+            "_category": "业务（销售跟进备注；§4.1 教务/市场本校可见）",
             "_originalValue": "内部跟进备注",
             "_maskedValue": null,
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "academic", "academic_admin"],
-            "masked": ["sales_other", "marketing", "finance", "teacher", "hr", "parent", "unknown"],
+            "_note_day_a": "2026-05-31 §4.1：marketing 移入 visible（比照 academic）。",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "academic", "academic_admin", "marketing"],
+            "masked": ["sales_other", "finance", "teacher", "hr", "parent", "unknown"],
             "hidden": []
           },
           "stage": {
@@ -673,12 +677,14 @@
         "_maskFn": "maskTeacher(teacher, user, { isSelf })",
         "_fields": {
           "phone": {
-            "_category": "PII 一级隐私（拍板 teacher §4.3 仅 self/老板/校长/教务/hr 可见）",
+            "_category": "PII 一级隐私（§4.3 note 一级隐私仅 self/老板/校长可见明文；§4.1 教务/市场脱敏 139****）",
             "_originalValue": "13900139000",
             "_maskedValue": "undefined (via assign)",
-            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "hr"],
-            "masked": [],
-            "hidden": ["teacher_other", "sales", "marketing", "finance", "parent", "unknown"]
+            "_maskedValueByRole": { "academic": "139****9000", "academic_admin": "139****9000", "marketing": "139****9000" },
+            "_note_day_a": "2026-05-31 (Day-A)：academic/academic_admin 从 visible 移入 masked（teacher phone 脱敏，对齐 §4.3 note 一级隐私仅 self+boss+admin）。marketing（归 academic group）从 hidden 移入 masked。teacher_other/sales/finance/parent/unknown 仍 hidden（undefined）。",
+            "visible": ["admin", "boss", "sales_manager", "teacher_self", "hr"],
+            "masked": ["academic", "academic_admin", "marketing"],
+            "hidden": ["teacher_other", "sales", "finance", "parent", "unknown"]
           },
           "name": {
             "_category": "业务（公开姓名，所有角色保留）",
@@ -745,36 +751,40 @@
         "_maskFn": "maskContract(contract, user, { isOwnerSelf })",
         "_fields": {
           "totalAmount": {
-            "_category": "财务二级隐私（拍板 contract §4.5 教务保留续费话术依据 / 老师不看价格）",
+            "_category": "财务二级隐私（§4.5 教务保留续费话术依据 / 老师墙①不看价格 / §4.1 市场含价格）",
             "_originalValue": 9000,
             "_maskedValue": 0,
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "academic", "academic_admin", "parent"],
-            "masked": ["sales_other", "marketing", "teacher", "hr", "unknown"],
+            "_note_day_a": "2026-05-31 §4.1 表行「业务关系（价格）市 ✅（含价格）」：marketing 从 masked 移入 visible（maskContract raw-role 放行）。",
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "academic", "academic_admin", "parent", "marketing"],
+            "masked": ["sales_other", "teacher", "hr", "unknown"],
             "hidden": []
           },
           "standardPrice": {
-            "_category": "财务（原价，academic 不看细节 / parent 可看用于折扣对比）",
+            "_category": "财务（原价，academic 不看细节 / parent 可看用于折扣对比 / §4.1 市场含价格）",
             "_originalValue": 9999,
             "_maskedValue": 0,
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "parent"],
-            "masked": ["academic", "academic_admin", "sales_other", "marketing", "teacher", "hr", "unknown"],
+            "_note_day_a": "2026-05-31 §4.1：marketing 从 masked 移入 visible（含价格）。",
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "parent", "marketing"],
+            "masked": ["academic", "academic_admin", "sales_other", "teacher", "hr", "unknown"],
             "hidden": []
           },
           "discountAmount": {
-            "_category": "财务（折扣，parent 也不看）",
+            "_category": "财务（折扣，parent 也不看 / §4.1 市场含价格）",
             "_originalValue": 999,
             "_maskedValue": 0,
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner"],
-            "masked": ["academic", "academic_admin", "sales_other", "marketing", "teacher", "parent", "hr", "unknown"],
+            "_note_day_a": "2026-05-31 §4.1：marketing 从 masked 移入 visible（含价格）。",
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "marketing"],
+            "masked": ["academic", "academic_admin", "sales_other", "teacher", "parent", "hr", "unknown"],
             "hidden": []
           },
           "giftHours": {
-            "_category": "财务（赠课，academic + parent 都不看）",
+            "_category": "财务（赠课，academic + parent 都不看 / §4.1 市场含价格）",
             "_originalValue": 5,
             "_maskedValue": 0,
-            "_leaderDecision": "Day 6 leader 拍板（最严）: academic/academic_admin 不看赠课（避免反推折扣构成）— SSOT §4.5 academic '价格 👁 仅付费状态' 严格解读包含赠课。已改 role-field-filter.ts:331 加 masked.giftHours = 0。",
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner"],
-            "masked": ["sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "_leaderDecision": "Day 6 leader 拍板（最严）: academic/academic_admin 不看赠课（避免反推折扣构成）— SSOT §4.5 academic '价格 👁 仅付费状态' 严格解读包含赠课。已改 role-field-filter.ts maskContract academic 加 masked.giftHours = 0。",
+            "_note_day_a": "2026-05-31 §4.1：marketing 从 masked 移入 visible（含价格）。",
+            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "marketing"],
+            "masked": ["sales_other", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
             "hidden": []
           },
           "lessonHours": {
@@ -875,7 +885,7 @@
               "boss": "admin",
               "sales_manager": "admin",
               "sales": "sales",
-              "marketing": "sales",
+              "marketing": "academic",
               "academic": "academic",
               "academic_admin": "academic",
               "teacher": "teacher",

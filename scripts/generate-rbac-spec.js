@@ -746,6 +746,33 @@ function emitBatchD() {
   const studentFields = fp.objects.student._fields;
   const parentObj = fp.objects.parent;
 
+  // 2026-05-31 §4.1 (Day-A) — 单字段多 masked 值支持。
+  //   一级 PII 脱敏（customer.phone / teacher.phone）对 academic / marketing = 138****（masked string），
+  //   对 sales_other / finance / teacher / parent = null。原 _maskedValue 单值模型无法表达。
+  //   新增可选 cell._maskedValueByRole（role → 该角色的 masked 期望值），缺省回退 cell._maskedValue。
+  const resolveMaskedValue = (cell, role) => {
+    if (cell._maskedValueByRole && Object.prototype.hasOwnProperty.call(cell._maskedValueByRole, role)) {
+      return cell._maskedValueByRole[role];
+    }
+    return cell._maskedValue;
+  };
+  // 生成单条 masked 断言（按解析后的 maskedValue 类型分派 toBeNull / toBeUndefined / toBe）。
+  const emitMaskedAssert = (typeName, fieldName, role, maskedValue) => {
+    if (maskedValue === null) {
+      lines.push(`        expect((result as ${typeName} & Record<string, unknown>).${fieldName}).toBeNull();`);
+    } else if (typeof maskedValue === 'string' && maskedValue.startsWith('undefined')) {
+      lines.push(`        expect((result as ${typeName} & Record<string, unknown>).${fieldName}).toBeUndefined();`);
+    } else {
+      lines.push(`        expect((result as ${typeName} & Record<string, unknown>).${fieldName}).toBe(${JSON.stringify(maskedValue)});`);
+    }
+  };
+  // 单条 masked 描述（label 显示该角色解析后的期望值）。
+  const maskedLabel = (maskedValue) => {
+    if (maskedValue === null) return 'null';
+    if (typeof maskedValue === 'string' && maskedValue.startsWith('undefined')) return 'undefined';
+    return JSON.stringify(maskedValue);
+  };
+
   // Count cases statically for header comment
   let caseCount = 0;
   for (const [, cell] of Object.entries(customerFields)) {
@@ -975,16 +1002,12 @@ function emitBatchD() {
       }
       lines.push(`      });`);
     }
-    // masked cases
+    // masked cases（支持 _maskedValueByRole 单字段多值，§4.1 一级 PII 脱敏）
     for (const role of cell.masked) {
-      const maskJs = JSON.stringify(cell._maskedValue);
-      lines.push(`      it('masked: ${role} → ${fieldName}=${cell._maskedValue === null ? 'null' : JSON.stringify(cell._maskedValue)}', () => {`);
+      const mv = resolveMaskedValue(cell, role);
+      lines.push(`      it('masked: ${role} → ${fieldName}=${maskedLabel(mv)}', () => {`);
       lines.push(`        const result = maskCustomerByRoleVariant('${role}');`);
-      if (cell._maskedValue === null) {
-        lines.push(`        expect((result as Customer & Record<string, unknown>).${fieldName}).toBeNull();`);
-      } else {
-        lines.push(`        expect((result as Customer & Record<string, unknown>).${fieldName}).toBe(${maskJs});`);
-      }
+      emitMaskedAssert('Customer', fieldName, role, mv);
       lines.push(`      });`);
     }
     // hidden cases (customer mask 用 null, 不 delete key — 无 hidden 期望, 但仍生成 case 防 manifest 误标)
@@ -1023,16 +1046,10 @@ function emitBatchD() {
       lines.push(`      });`);
     }
     for (const role of cell.masked) {
-      const maskJs = JSON.stringify(cell._maskedValue);
-      lines.push(`      it('masked: ${role} → ${fieldName} masked', () => {`);
+      const mv = resolveMaskedValue(cell, role);
+      lines.push(`      it('masked: ${role} → ${fieldName}=${maskedLabel(mv)}', () => {`);
       lines.push(`        const result = maskTeacherByRoleVariant('${role}');`);
-      if (cell._maskedValue === null) {
-        lines.push(`        expect((result as Teacher & Record<string, unknown>).${fieldName}).toBeNull();`);
-      } else if (typeof cell._maskedValue === 'string' && cell._maskedValue.startsWith('undefined')) {
-        lines.push(`        expect((result as Teacher & Record<string, unknown>).${fieldName}).toBeUndefined();`);
-      } else {
-        lines.push(`        expect((result as Teacher & Record<string, unknown>).${fieldName}).toBe(${maskJs});`);
-      }
+      emitMaskedAssert('Teacher', fieldName, role, mv);
       lines.push(`      });`);
     }
     for (const role of cell.hidden) {
@@ -1070,14 +1087,10 @@ function emitBatchD() {
       lines.push(`      });`);
     }
     for (const role of cell.masked) {
-      const maskJs = JSON.stringify(cell._maskedValue);
-      lines.push(`      it('masked: ${role} → ${fieldName}=${cell._maskedValue === null ? 'null' : JSON.stringify(cell._maskedValue)}', () => {`);
+      const mv = resolveMaskedValue(cell, role);
+      lines.push(`      it('masked: ${role} → ${fieldName}=${maskedLabel(mv)}', () => {`);
       lines.push(`        const result = maskContractByRoleVariant('${role}');`);
-      if (cell._maskedValue === null) {
-        lines.push(`        expect((result as Contract & Record<string, unknown>).${fieldName}).toBeNull();`);
-      } else {
-        lines.push(`        expect((result as Contract & Record<string, unknown>).${fieldName}).toBe(${maskJs});`);
-      }
+      emitMaskedAssert('Contract', fieldName, role, mv);
       lines.push(`      });`);
     }
     for (const role of cell.hidden) {

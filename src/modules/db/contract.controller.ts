@@ -185,7 +185,8 @@ export class ContractController {
   }
 
   @Get(':contractId')
-  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin', 'finance') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
+  // 2026-05-31 §4.1 表行「业务关系（价格/金额）市 ✅（含价格）」：marketing 纳入合同读，且 maskContract 不隐价。
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin', 'finance', 'marketing')
   @HttpCode(HttpStatus.OK)
   async detail(
     @Param('contractId') contractId: string,
@@ -247,7 +248,9 @@ export class ContractController {
    *   - 失败 → ForbiddenException
    */
   @Get('by-student/:studentId')
-  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin', 'finance') // T-NEW-1 defense-in-depth (Roles 待 SSOT 拍板, Sprint B backlog)
+  // 2026-05-31 §4.1 学员权限放开 + 表行「业务关系（价格）市 ✅（含价格）」：
+  //   marketing 纳入（academic group → 本校全放行 scope；maskContract marketing 不隐价）。
+  @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin', 'finance', 'marketing')
   @HttpCode(HttpStatus.OK)
   async listByStudent(
     @Param('studentId') studentId: string,
