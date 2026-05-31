@@ -703,4 +703,143 @@ describe('KpiService (P4-X 2026-05-20)', () => {
       ]);
     });
   });
+
+  // ============================================================
+  // getSalesHomeKpi — 2026-05-31 §3.3 排名 + 试听转化率口径
+  //   query 顺序：1 signed(SUM) → 2 inProgress(COUNT) → 3 rank(若有campus) → 4 trialRate
+  // ============================================================
+  describe('getSalesHomeKpi (2026-05-31 §3.3)', () => {
+    // 1=signedRows, 2=inProgressRows
+    function mockBaseSigned() {
+      pg.tenantQuery.mockResolvedValueOnce([{ total_amount: '12000', cnt: '3' }]);
+      pg.tenantQuery.mockResolvedValueOnce([{ cnt: '7' }]);
+    }
+
+    it('salesUserId 空 → emptySalesHome（不查库）', async () => {
+      const r = await svc.getSalesHomeKpi(TENANT, '');
+      expect(r.personalSigned.rankText).toBe('— / —');
+      expect(r.trialRate).toEqual({ rate: '0', total: 0 });
+      expect(pg.tenantQuery).not.toHaveBeenCalled();
+    });
+
+    it('rankText: 同校区 3 销售按本月签约额降序 → 我第 2 / 共 3', async () => {
+      mockBaseSigned();
+      // 3=rank：SALES_1=30000, me(SALES_2)=20000, SALES_other=5000 → 降序 me 第 2
+      pg.tenantQuery.mockResolvedValueOnce([
+        { owner_user_id: SALES_1, amount: '30000' },
+        { owner_user_id: SALES_2, amount: '20000' },
+        { owner_user_id: 'sales000000000000000000000000A03', amount: '5000' },
+      ]);
+      // 4=trialRate
+      pg.tenantQuery.mockResolvedValueOnce([{ denom: '4', numer: '2' }]);
+
+      const r = await svc.getSalesHomeKpi(TENANT, SALES_2, CAMPUS_A);
+      expect(r.personalSigned.rankText).toBe('第 2 / 共 3');
+      // 排名 SQL 校验：同校区销售线 + 当月 + 排除 cancelled/refunded，绝不暴露他人金额
+      const rankSql = pg.tenantQuery.mock.calls[2][1] as string;
+      expect(rankSql).toContain(`u.campus_id = $1`);
+      expect(rankSql).toContain(`u.role IN ('sales','sales_manager')`);
+      expect(rankSql).toContain(`date_trunc('month', NOW())`);
+      expect(rankSql).toContain(`c.status NOT IN ('cancelled','refunded')`);
+      expect(pg.tenantQuery.mock.calls[2][2]).toEqual([CAMPUS_A]);
+    });
+
+    it('rankText: 本校仅我 1 人 → 第 1 / 共 1', async () => {
+      mockBaseSigned();
+      pg.tenantQuery.mockResolvedValueOnce([
+        { owner_user_id: SALES_1, amount: '8000' },
+      ]);
+      pg.tenantQuery.mockResolvedValueOnce([{ denom: '0', numer: '0' }]);
+
+      const r = await svc.getSalesHomeKpi(TENANT, SALES_1, CAMPUS_A);
+      expect(r.personalSigned.rankText).toBe('第 1 / 共 1');
+    });
+
+    it('rankText: 金额并列按 owner_user_id 稳定排序（确定名次）', async () => {
+      mockBaseSigned();
+      // SALES_1/SALES_2 同 10000 → localeCompare：A01 < A02 → SALES_1 第1, SALES_2 第2
+      pg.tenantQuery.mockResolvedValueOnce([
+        { owner_user_id: SALES_2, amount: '10000' },
+        { owner_user_id: SALES_1, amount: '10000' },
+      ]);
+      pg.tenantQuery.mockResolvedValueOnce([{ denom: '0', numer: '0' }]);
+
+      const r = await svc.getSalesHomeKpi(TENANT, SALES_2, CAMPUS_A);
+      expect(r.personalSigned.rankText).toBe('第 2 / 共 2');
+    });
+
+    it('rankText: campusId 为 null → "— / —"（跳过 rank 查询，只 3 次查库）', async () => {
+      mockBaseSigned();
+      // 无 campus → 不发 rank 查询，下一条即 trialRate
+      pg.tenantQuery.mockResolvedValueOnce([{ denom: '4', numer: '2' }]);
+
+      const r = await svc.getSalesHomeKpi(TENANT, SALES_1, null);
+      expect(r.personalSigned.rankText).toBe('— / —');
+      expect(pg.tenantQuery).toHaveBeenCalledTimes(3);
+    });
+
+    it('rankText: 我不在本校销售线结果集 → "— / —"', async () => {
+      mockBaseSigned();
+      pg.tenantQuery.mockResolvedValueOnce([
+        { owner_user_id: SALES_1, amount: '9000' },
+      ]);
+      pg.tenantQuery.mockResolvedValueOnce([{ denom: '0', numer: '0' }]);
+
+      const r = await svc.getSalesHomeKpi(TENANT, SALES_2, CAMPUS_A);
+      expect(r.personalSigned.rankText).toBe('— / —');
+    });
+
+    it('rankText: rank 查询抛错 → fail-open "— / —"（不影响其他卡片）', async () => {
+      mockBaseSigned();
+      pg.tenantQuery.mockRejectedValueOnce(new Error('boom'));
+      pg.tenantQuery.mockResolvedValueOnce([{ denom: '4', numer: '2' }]);
+
+      const r = await svc.getSalesHomeKpi(TENANT, SALES_1, CAMPUS_A);
+      expect(r.personalSigned.rankText).toBe('— / —');
+      // signed 卡片仍正常
+      expect(r.personalSigned.count).toBe(3);
+    });
+
+    it('trialRate: 分母 4 分子 2 → rate "50" + total 4（Math.round 整数串无 %）', async () => {
+      mockBaseSigned();
+      pg.tenantQuery.mockResolvedValueOnce([]); // rank 空 → '— / —'
+      pg.tenantQuery.mockResolvedValueOnce([{ denom: '4', numer: '2' }]);
+
+      const r = await svc.getSalesHomeKpi(TENANT, SALES_1, CAMPUS_A);
+      expect(r.trialRate).toEqual({ rate: '50', total: 4 });
+      // trialRate SQL：分母 stage IN (已试听,已报名)，分子 stage=已报名
+      const trialSql = pg.tenantQuery.mock.calls[3][1] as string;
+      expect(trialSql).toContain(`FILTER (WHERE stage IN ('已试听','已报名'))`);
+      expect(trialSql).toContain(`FILTER (WHERE stage = '已报名')`);
+      expect(trialSql).toContain(`owner_user_id = $1`);
+    });
+
+    it('trialRate: 7/3 → 四舍五入 "43"', async () => {
+      mockBaseSigned();
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      pg.tenantQuery.mockResolvedValueOnce([{ denom: '7', numer: '3' }]);
+
+      const r = await svc.getSalesHomeKpi(TENANT, SALES_1, CAMPUS_A);
+      // 3/7=0.4285… *100=42.857 → Math.round=43
+      expect(r.trialRate).toEqual({ rate: '43', total: 7 });
+    });
+
+    it('trialRate: 分母 0 → { rate:"0", total:0 }', async () => {
+      mockBaseSigned();
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      pg.tenantQuery.mockResolvedValueOnce([{ denom: '0', numer: '0' }]);
+
+      const r = await svc.getSalesHomeKpi(TENANT, SALES_1, CAMPUS_A);
+      expect(r.trialRate).toEqual({ rate: '0', total: 0 });
+    });
+
+    it('trialRate: 查询抛错 → fail-open { rate:"0", total:0 }', async () => {
+      mockBaseSigned();
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      pg.tenantQuery.mockRejectedValueOnce(new Error('boom'));
+
+      const r = await svc.getSalesHomeKpi(TENANT, SALES_1, CAMPUS_A);
+      expect(r.trialRate).toEqual({ rate: '0', total: 0 });
+    });
+  });
 });

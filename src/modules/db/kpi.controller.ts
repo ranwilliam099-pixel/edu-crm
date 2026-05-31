@@ -204,7 +204,9 @@ export class KpiController {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
     const salesUserId = req.user?.sub;
     if (!salesUserId) throw new BadRequestException('user sub required');
-    return this.kpi.getSalesHomeKpi(tenantSchema, salesUserId);
+    // 2026-05-31 §3.3① 单校区排名口径：campusId 从 JWT 拿（防 client 伪造 scope）
+    const campusId = req.user?.campusId ?? null;
+    return this.kpi.getSalesHomeKpi(tenantSchema, salesUserId, campusId);
   }
 
   /**

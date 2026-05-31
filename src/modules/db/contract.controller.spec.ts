@@ -644,4 +644,104 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
       expect(auditLog.log.mock.calls[0][1].after.attempted_role).toBe('teacher');
     });
   });
+
+  // ============================================================
+  // activate() — 2026-05-31 §6 收口 finance-only + audit contract.activate
+  //   RBAC（@Roles）由 RbacGuard 在 HTTP 层强制；单测断言装饰器元数据 →
+  //   sales/sales_manager/boss/admin 不在白名单（= 403 保证），仅 finance 通过。
+  //   行为：setStatus 翻 active（不建课时包）+ audit before/after status。
+  // ============================================================
+  describe('activate() — finance-only 收口 + audit', () => {
+    const ROLES_KEY = 'rbac_roles'; // guards/rbac.decorator.ts ROLES_METADATA_KEY
+
+    it('@Roles 严格 = [finance]（收口前误含 sales/sales_manager/boss/admin）', () => {
+      const roles = Reflect.getMetadata(
+        ROLES_KEY,
+        ContractController.prototype.activate,
+      );
+      expect(roles).toEqual(['finance']);
+    });
+
+    it('越权角色不在白名单（sales/sales_manager/boss/admin/teacher/academic/parent）→ RbacGuard 403', () => {
+      const roles = Reflect.getMetadata(
+        ROLES_KEY,
+        ContractController.prototype.activate,
+      ) as string[];
+      for (const r of [
+        'sales',
+        'sales_manager',
+        'boss',
+        'admin',
+        'teacher',
+        'academic',
+        'academic_admin',
+        'parent',
+        'hr',
+        'marketing',
+      ]) {
+        expect(roles).not.toContain(r);
+      }
+    });
+
+    it('finance 激活 → setStatus(active) + audit contract.activate（before/after status）', async () => {
+      repo.findById.mockResolvedValueOnce(
+        contractFixture({ status: 'pending' }),
+      );
+      repo.setStatus.mockResolvedValueOnce(
+        contractFixture({ status: 'active', activatedAt: '2026-05-31T00:00:00.000Z' }),
+      );
+
+      const out = await controller.activate(
+        CONTRACT_ID,
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA },
+        req(jwt('finance', SALES_A)),
+      );
+
+      // 仅翻状态，不建课时包：调 setStatus active 1 次
+      expect(repo.setStatus).toHaveBeenCalledTimes(1);
+      expect(repo.setStatus).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        CONTRACT_ID,
+        'active',
+        SALES_A,
+      );
+      expect(out.status).toBe('active');
+
+      // audit_log 写入 contract.activate（before pending → after active）
+      expect(auditLog.log).toHaveBeenCalledTimes(1);
+      const entry = auditLog.log.mock.calls[0][1];
+      expect(entry.action).toBe('contract.activate');
+      expect(entry.targetType).toBe('contract');
+      expect(entry.targetId).toBe(CONTRACT_ID);
+      expect(entry.actorUserId).toBe(SALES_A);
+      expect(entry.before).toEqual({ status: 'pending' });
+      expect(entry.after).toEqual({ status: 'active' });
+    });
+
+    it('before 取自 findById（先于 setStatus）；findById 返 null → before.status=null', async () => {
+      repo.findById.mockResolvedValueOnce(null);
+      repo.setStatus.mockResolvedValueOnce(
+        contractFixture({ status: 'active' }),
+      );
+
+      await controller.activate(
+        CONTRACT_ID,
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA },
+        req(jwt('finance', SALES_A)),
+      );
+      expect(repo.findById).toHaveBeenCalledWith(TENANT_SCHEMA, CONTRACT_ID);
+      expect(auditLog.log.mock.calls[0][1].before).toEqual({ status: null });
+    });
+
+    it('tenantSchema 缺失 → BadRequest（不查库）', async () => {
+      await expect(
+        controller.activate(
+          CONTRACT_ID,
+          { tenantId: TENANT_A, tenantSchema: '' },
+          req(jwt('finance', SALES_A)),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(repo.setStatus).not.toHaveBeenCalled();
+    });
+  });
 });

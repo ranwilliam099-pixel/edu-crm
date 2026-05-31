@@ -346,8 +346,12 @@ export class ContractController {
   //   miniprogram/pages/b/student/detail/detail.js:345 用 /db/contracts/by-student/:id (GET) ✅
   //   miniprogram/utils/openapi-schema.json:1592 旧 baseline，需重 gen
 
+  // 2026-05-31 §6 权限矩阵 contract.activate 收口：@Roles 从误含
+  //   sales/sales_manager/boss/admin → 仅 finance（销售不可绕财务把合同翻 active）。
+  //   正途仍是 markPaid 派生激活（同事务建课时包）；本端点仅 finance 兜底，
+  //   **不建课时包**，须配 audit_log（action='contract.activate'，记 before/after status）。
   @Post(':contractId/activate')
-  @Roles('sales', 'sales_manager', 'boss', 'admin')
+  @Roles('finance')
   @HttpCode(HttpStatus.OK)
   async activate(
     @Param('contractId') contractId: string,
@@ -355,8 +359,30 @@ export class ContractController {
     @Req() req: AuthenticatedRequest,
   ): Promise<Contract> {
     if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    const tenantSchema = body.tenantSchema;
     const userId = req.user?.sub;
     if (!userId) throw new BadRequestException('user sub required');
-    return this.repo.setStatus(body.tenantSchema, contractId, 'active', userId);
+
+    // setStatus 前先取 before 状态用于 audit（NotFound 抛 setStatus 自带）
+    const before = await this.repo.findById(tenantSchema, contractId);
+    const result = await this.repo.setStatus(
+      tenantSchema,
+      contractId,
+      'active',
+      userId,
+    );
+
+    // audit_log：finance 激活留证（before.status / after.status）
+    await this.tryAudit(tenantSchema, {
+      actorUserId: userId,
+      ...this.auditCtx(req),
+      action: 'contract.activate',
+      targetType: 'contract',
+      targetId: contractId,
+      before: { status: before?.status ?? null },
+      after: { status: result.status },
+    });
+
+    return result;
   }
 }

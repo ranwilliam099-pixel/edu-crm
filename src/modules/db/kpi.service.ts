@@ -731,6 +731,7 @@ export class KpiService {
   async getSalesHomeKpi(
     tenantSchema: string,
     salesUserId: string,
+    campusId?: string | null,
   ): Promise<SalesHomeKpiResult> {
     if (!salesUserId) {
       return this.emptySalesHome();
@@ -765,16 +766,131 @@ export class KpiService {
     );
     const inProgressCount = Number(inProgressRows[0]?.cnt || 0);
 
-    // 3. trialRate: Sprint Y 后端补 schedule + status 分析
+    // 3. rankText: 单校区内本月签约额排名（SSOT §3.3① 2026-05-31 拍板）
+    //   - 分组：同一 users.campus_id 的销售线用户（sales + sales_manager）
+    //   - 排序：本月（当前自然月 signed_at）签约额降序，status ∉ {cancelled,refunded}
+    //   - 只返我的 1-based 名次，绝不返他人金额（同校也只看名次不看数额）
+    //   - 本校 < 1 人 或 我无 campus_id → '— / —'
+    const rankText = await this.computeSalesMonthlyRank(
+      tenantSchema,
+      salesUserId,
+      campusId ?? null,
+    );
+
+    // 4. trialRate: 试听转化率（SSOT §3.3② 2026-05-31 拍板）
+    //   - 分母 total = 我名下 stage IN ('已试听','已报名') 客户数（至少到过试听）
+    //   - 分子 = 我名下 stage = '已报名' 客户数（已转化签约）
+    //   - rate = Math.round(分子/分母*100) 字符串；分母 0 → { rate:'0', total:0 }
+    const trialRate = await this.computeSalesTrialRate(tenantSchema, salesUserId);
+
     return {
       personalSigned: {
         amount: formatPlainAmount(personalAmount),
         count: personalCount,
-        rankText: '— / —',  // Sprint Y: 销售团队排名 GROUP BY owner_user_id
+        rankText,
       },
       customersInProgress: { count: inProgressCount },
-      trialRate: { rate: '0', total: 0 },
+      trialRate,
     };
+  }
+
+  /**
+   * 单校区内本月签约额排名（SSOT §3.3① 2026-05-31 拍板）
+   *
+   * 口径：
+   *   - 同 campus_id 的销售线用户（role IN sales/sales_manager）按本月签约额降序
+   *   - 本月签约额 = contracts.signed_at 落当前自然月 + status ∉ {cancelled,refunded}
+   *     的 total_amount 合计，GROUP BY owner_user_id
+   *   - 1-based 名次 X / 参与人数 Y → "第 X / 共 Y"
+   *
+   * 安全：只返我的名次，不暴露任何他人金额；全 tenantSchema scoped。
+   * fail-open：聚合失败 → '— / —'（不破坏 home 渲染）。
+   *
+   * @param campusId 当前销售 JWT.campusId（null/空 → '— / —'）
+   */
+  private async computeSalesMonthlyRank(
+    tenantSchema: string,
+    salesUserId: string,
+    campusId: string | null,
+  ): Promise<string> {
+    if (!campusId) return '— / —';
+    try {
+      // 同校区销售线用户 → 本月签约额（无合同的销售 LEFT JOIN 计 0 也参与排名）
+      //   date_trunc('month', NOW()) 取当前自然月起点（与「本月」口径一致）
+      const rows = await this.pg.tenantQuery<{
+        owner_user_id: string;
+        amount: string | number;
+      }>(
+        tenantSchema,
+        `SELECT u.id AS owner_user_id,
+                COALESCE(SUM(c.total_amount), 0) AS amount
+           FROM users u
+           LEFT JOIN contracts c
+             ON c.owner_user_id = u.id
+            AND c.deleted_at IS NULL
+            AND c.signed_at >= date_trunc('month', NOW())
+            AND c.signed_at < date_trunc('month', NOW()) + INTERVAL '1 month'
+            AND c.status NOT IN ('cancelled','refunded')
+          WHERE u.campus_id = $1
+            AND u.role IN ('sales','sales_manager')
+            AND u.deleted_at IS NULL
+          GROUP BY u.id`,
+        [campusId],
+      );
+      const total = rows.length;
+      if (total < 1) return '— / —';
+      // 降序排名（金额相同按 owner_user_id 稳定排序，确保名次确定）
+      const sorted = rows
+        .map((r) => ({ id: r.owner_user_id, amount: Number(r.amount || 0) }))
+        .sort((a, b) => b.amount - a.amount || a.id.localeCompare(b.id));
+      const idx = sorted.findIndex((r) => r.id === salesUserId);
+      if (idx < 0) return '— / —'; // 我不在本校销售线（理论不该发生）
+      return `第 ${idx + 1} / 共 ${total}`;
+    } catch (e) {
+      this.logger.warn(
+        `[sales-home] rank compute failed for ${salesUserId}: ${(e as Error).message}`,
+      );
+      return '— / —';
+    }
+  }
+
+  /**
+   * 试听转化率（SSOT §3.3② 2026-05-31 拍板）
+   *
+   * 口径（owner = 当前销售；基于 opportunity stage 真实枚举）：
+   *   - 分母 total = stage IN ('已试听','已报名')（至少到过试听）
+   *   - 分子       = stage = '已报名'（已转化签约）
+   *   - rate = 分母>0 ? Math.round(分子/分母*100) 字符串 : '0'
+   *
+   * fail-open：聚合失败 → { rate:'0', total:0 }。
+   */
+  private async computeSalesTrialRate(
+    tenantSchema: string,
+    salesUserId: string,
+  ): Promise<{ rate: string; total: number }> {
+    try {
+      const rows = await this.pg.tenantQuery<{
+        denom: string | number;
+        numer: string | number;
+      }>(
+        tenantSchema,
+        `SELECT
+           COUNT(*) FILTER (WHERE stage IN ('已试听','已报名')) AS denom,
+           COUNT(*) FILTER (WHERE stage = '已报名') AS numer
+         FROM opportunities
+         WHERE owner_user_id = $1`,
+        [salesUserId],
+      );
+      const denom = Number(rows[0]?.denom || 0);
+      const numer = Number(rows[0]?.numer || 0);
+      if (denom <= 0) return { rate: '0', total: 0 };
+      return { rate: String(Math.round((numer / denom) * 100)), total: denom };
+    } catch (e) {
+      this.logger.warn(
+        `[sales-home] trialRate compute failed for ${salesUserId}: ${(e as Error).message}`,
+      );
+      return { rate: '0', total: 0 };
+    }
   }
 
   private emptySalesHome(): SalesHomeKpiResult {
