@@ -74,6 +74,23 @@ export class ParentService {
   constructor(@Optional() private readonly repo?: ParentRepository) {}
 
   /**
+   * #3a 修复 (2026-05-31)：32-char ULID 生成（项目全局约定）
+   *
+   * 背景：`ulid()` 返回标准 26-char ULID，但本项目所有主键列是 VARCHAR(32)，
+   *   且 registerParent / createBinding 等强校验 `id.length === 32`。
+   *   `createFromCustomerInDb` 历史用裸 `ulid()`（26 char）建 parent/binding id →
+   *   registerParent 立即抛 BadRequestException('parent id must be 32-char ULID') →
+   *   被 controller try-catch 吞成 parentAccountSet:false（销售「设为家长端账户」全失败）。
+   *
+   * 全库统一约定（teacher-change-request / user.controller / customer.repository /
+   *   parent-binding.controller 等 9+ 处）：`ulid().padEnd(32, '0').slice(0, 32)`。
+   *   本 helper 收口该约定，避免再有裸 `ulid()` 漏网。
+   */
+  private genId32(): string {
+    return ulid().padEnd(32, '0').slice(0, 32);
+  }
+
+  /**
    * 注册家长（小程序 OAuth 后调用）
    */
   registerParent(input: {
@@ -279,8 +296,9 @@ export class ParentService {
 
     if (!parent) {
       // 2. 不存在 → 新建
+      //   #3a 修复：必须用 genId32（32-char），裸 ulid()=26-char 会被 registerParent 拒
       const newParent = this.registerParent({
-        id: ulid(),
+        id: this.genId32(),
         phone: input.phone,
         name: input.name,
       });
@@ -310,9 +328,10 @@ export class ParentService {
     }
 
     // 4. 校验 + 5. INSERT
+    //   #3a 修复：binding id 同样必须 32-char（createBinding 强校验 id.length===32）
     const binding = this.createBinding(
       {
-        id: ulid(),
+        id: this.genId32(),
         parentId: parent.id,
         studentId: input.studentId,
         tenantId: input.tenantId,
