@@ -13,6 +13,7 @@ import {
   Query,
   Req,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { StudentRepository, StudentBrief, StudentDetail, StudentTransferResult } from './student.repository';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
@@ -35,6 +36,12 @@ import { ContractRepository, Contract, OrderType } from './contract.repository';
 //   - create / transferSales / transferTeacher / createContract 写 audit_log
 //   - student 表无 phone/PII（仅 studentName 等 brief 字段），snapshot 直接入
 import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.repository';
+// #15 (2026-05-31): 合同创建幂等保护（防「建 1 出 2」重复 INSERT）
+//   - IdempotencyInterceptor 已 APP_INTERCEPTOR 全局注册（idempotency.module.ts），
+//     覆盖所有 POST/PUT/PATCH/DELETE — 本端点本已被拦截
+//   - 显式 @UseInterceptors 仅语义标注（与 parent-binding/teacher-showcase 写端点一致约定）
+//   - 前端 onLoad 生成稳定 contractId + 复用同一 Idempotency-Key → 命中缓存返首次结果，不重复落库
+import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 
 /**
  * StudentController — V28 学生归属转移 HTTP 暴露
@@ -417,6 +424,7 @@ export class StudentController {
    */
   @Post(':studentId/contracts')
   @UseGuards(RbacGuard)
+  @UseInterceptors(IdempotencyInterceptor) // #15: 防重复签约（同 Idempotency-Key 返首次结果，不重复 INSERT）
   @Roles('sales', 'sales_manager', 'boss', 'admin')
   @HttpCode(HttpStatus.CREATED)
   async createContract(

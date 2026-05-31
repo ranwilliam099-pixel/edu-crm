@@ -421,4 +421,60 @@ describe('CustomerRepository (V25 + V34 字段加密双写双读 + V41 customers
       ).rejects.toThrow(NotFoundException);
     });
   });
+
+  // =====================================================================
+  // #12 (2026-05-31): listFollowLog JOIN users 取操作销售实时名 → FollowEntry.salesName
+  //   替代旧 byLabel「销售 sqmefd」(ULID slice) 退化文案
+  // =====================================================================
+  describe('#12 listFollowLog salesName（JOIN users.name by by_user_id）', () => {
+    const followRow = (overrides: Record<string, unknown> = {}) => ({
+      id: 'flw00000000000000000000000F0001',
+      opportunity_id: OPPORTUNITY_ID,
+      follow_type: 'remark',
+      label: '电话沟通，意向强',
+      by_user_id: SALES_A,
+      by_label: `销售 ${SALES_A.slice(0, 6)}`, // 旧退化文案
+      by_user_name: '陈销售', // JOIN users.name 结果
+      occurred_at: new Date('2026-05-31T08:00:00Z'),
+      extra_json: null,
+      ...overrides,
+    });
+
+    it('SQL LEFT JOIN users + 返回 salesName=真实姓名', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([followRow()]);
+      const items = await repo.listFollowLog(TENANT, OPPORTUNITY_ID);
+      expect(items).toHaveLength(1);
+      expect(items[0].salesName).toBe('陈销售');
+      // byLabel 仍保留（前端 fallback 用）
+      expect(items[0].byLabel).toContain('销售');
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(sql).toContain('LEFT JOIN users u ON u.id = f.by_user_id');
+      expect(sql).toContain('u.name AS by_user_name');
+      expect(sql).toContain('f.opportunity_id = $1');
+      expect(params[0]).toBe(OPPORTUNITY_ID);
+    });
+
+    it('by_user_id NULL（系统操作）→ salesName=null', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        followRow({ by_user_id: null, by_user_name: null, by_label: '系统' }),
+      ]);
+      const items = await repo.listFollowLog(TENANT, OPPORTUNITY_ID);
+      expect(items[0].salesName).toBeNull();
+      expect(items[0].byLabel).toBe('系统');
+    });
+
+    it('mapFollowRow 无 by_user_name 字段（无 JOIN 的查询）→ salesName=null', () => {
+      const r = CustomerRepository.mapFollowRow({
+        id: 'x',
+        opportunity_id: OPPORTUNITY_ID,
+        follow_type: 'remark',
+        label: 'l',
+        by_user_id: SALES_A,
+        by_label: '销售 abc',
+        occurred_at: new Date('2026-05-31T08:00:00Z'),
+        extra_json: null,
+      });
+      expect(r.salesName).toBeNull();
+    });
+  });
 });

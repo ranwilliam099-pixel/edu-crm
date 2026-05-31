@@ -18,10 +18,16 @@ export type OrderType = '新签' | '续费' | '扩科' | '升班' | '转班';
 export interface Contract {
   id: string;
   studentId: string;
+  studentName?: string | null;
   // V29 NULLABLE — 销售可自填 courseProductName 而不绑既有 course_products
   courseProductId: string | null;
   courseProductName: string | null;
   ownerUserId: string | null;
+  // #10a (2026-05-31): 签约销售显示名（JOIN users.name by owner_user_id）
+  //   - 前端读 salesName 显示「签约销售」，替代原始 ULID（ownerUserId.slice(0,6)）
+  //   - 同租户 schema 内 JOIN，无跨租户面；姓名非一级 PII（手机/身份证才是），可返回
+  //   - owner 为 null（无归属/池）或 users 行不存在 → salesName=null（前端显「—」）
+  salesName?: string | null;
   opportunityId: string | null;
   campusId: string | null;
   classType: string | null;
@@ -54,9 +60,13 @@ export class ContractRepository {
     return {
       id: r.id,
       studentId: r.student_id,
+      studentName: r.student_name ?? null,
       courseProductId: r.course_product_id,
       courseProductName: r.course_product_name,
       ownerUserId: r.owner_user_id,
+      // #10a (2026-05-31): owner_name 来自 LEFT JOIN users.name（仅查询带 JOIN 时有值）
+      //   plain SELECT *（无 JOIN）→ r.owner_name undefined → salesName=null（前端显「—」）
+      salesName: r.owner_name ?? null,
       opportunityId: r.opportunity_id,
       campusId: r.campus_id,
       classType: r.class_type,
@@ -85,9 +95,17 @@ export class ContractRepository {
     if (options.status) {
       const rows = await this.pg.tenantQuery<PgRow>(
         tenantSchema,
-        `SELECT * FROM contracts
-           WHERE owner_user_id = $1 AND status = $2 AND deleted_at IS NULL
-           ORDER BY COALESCE(signed_at, created_at) DESC
+        // #10a (2026-05-31): JOIN users 取签约销售名（owner_name）→ Contract.salesName
+        `SELECT c.*,
+                s.student_name AS student_name,
+                u.name AS owner_name,
+                COALESCE(c.course_product_name, cp.product_name) AS course_product_name
+           FROM contracts c
+           LEFT JOIN students s ON s.id = c.student_id AND s.deleted_at IS NULL
+           LEFT JOIN course_products cp ON cp.id = c.course_product_id
+           LEFT JOIN users u ON u.id = c.owner_user_id AND u.deleted_at IS NULL
+          WHERE c.owner_user_id = $1 AND c.status = $2 AND c.deleted_at IS NULL
+          ORDER BY COALESCE(c.signed_at, c.created_at) DESC
            LIMIT $3 OFFSET $4`,
         [ownerUserId, options.status, limit, offset],
       );
@@ -95,9 +113,17 @@ export class ContractRepository {
     }
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT * FROM contracts
-         WHERE owner_user_id = $1 AND deleted_at IS NULL
-         ORDER BY COALESCE(signed_at, created_at) DESC
+      // #10a (2026-05-31): JOIN users 取签约销售名（owner_name）→ Contract.salesName
+      `SELECT c.*,
+              s.student_name AS student_name,
+              u.name AS owner_name,
+              COALESCE(c.course_product_name, cp.product_name) AS course_product_name
+         FROM contracts c
+         LEFT JOIN students s ON s.id = c.student_id AND s.deleted_at IS NULL
+         LEFT JOIN course_products cp ON cp.id = c.course_product_id
+         LEFT JOIN users u ON u.id = c.owner_user_id AND u.deleted_at IS NULL
+        WHERE c.owner_user_id = $1 AND c.deleted_at IS NULL
+        ORDER BY COALESCE(c.signed_at, c.created_at) DESC
          LIMIT $2 OFFSET $3`,
       [ownerUserId, limit, offset],
     );
@@ -349,21 +375,37 @@ export class ContractRepository {
   ): Promise<Contract[]> {
     const limit = options.limit ?? 50;
     const offset = options.offset ?? 0;
+    // #10a + #10c (2026-05-31): 与 listByOwner 一致 — JOIN users 取销售名（owner_name）
+    //   + COALESCE(course_product_name, cp.product_name) 回填课程名
+    //   旧 plain SELECT * 缺 owner_name → 前端显原始 ULID；缺 product fallback → 旧空快照行显「未命名课程」
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT * FROM contracts
-         WHERE student_id = $1 AND deleted_at IS NULL
-         ORDER BY signed_at DESC NULLS LAST, created_at DESC
-         LIMIT $2 OFFSET $3`,
+      `SELECT c.*,
+              u.name AS owner_name,
+              COALESCE(c.course_product_name, cp.product_name) AS course_product_name
+         FROM contracts c
+         LEFT JOIN course_products cp ON cp.id = c.course_product_id
+         LEFT JOIN users u ON u.id = c.owner_user_id AND u.deleted_at IS NULL
+        WHERE c.student_id = $1 AND c.deleted_at IS NULL
+        ORDER BY c.signed_at DESC NULLS LAST, c.created_at DESC
+        LIMIT $2 OFFSET $3`,
       [studentId, limit, offset],
     );
     return rows.map((r) => ContractRepository.mapRow(r));
   }
 
   async findById(tenantSchema: string, id: string): Promise<Contract | null> {
+    // #10a + #10c (2026-05-31): 详情同样 JOIN users 取销售名 + COALESCE 课程名回填
+    //   旧 plain SELECT * → 详情页「签约销售」显原始 ULID + 空快照显「未命名课程」
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT * FROM contracts WHERE id = $1 AND deleted_at IS NULL`,
+      `SELECT c.*,
+              u.name AS owner_name,
+              COALESCE(c.course_product_name, cp.product_name) AS course_product_name
+         FROM contracts c
+         LEFT JOIN course_products cp ON cp.id = c.course_product_id
+         LEFT JOIN users u ON u.id = c.owner_user_id AND u.deleted_at IS NULL
+        WHERE c.id = $1 AND c.deleted_at IS NULL`,
       [id],
     );
     return rows.length === 0 ? null : ContractRepository.mapRow(rows[0]);

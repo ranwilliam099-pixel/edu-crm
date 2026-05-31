@@ -90,6 +90,11 @@ export interface FollowEntry {
   label: string;
   byUserId: string | null;
   byLabel: string;
+  // #12 (2026-05-31): 操作销售实时显示名（JOIN users.name by by_user_id）
+  //   - 前端读 salesName 显示「销售」操作人，替代旧 byLabel 的「销售 sqmefd」(ULID slice 退化文案)
+  //   - by_user_id 为 null（系统操作）或 users 行不存在/已删 → salesName=null（前端 fallback byLabel/「系统」）
+  //   - 同租户 schema 内 JOIN，姓名非一级 PII，可返回
+  salesName: string | null;
   occurredAt: string;
   extra: Record<string, unknown> | null;
 }
@@ -430,6 +435,9 @@ export class CustomerRepository {
       label: r.label,
       byUserId: r.by_user_id,
       byLabel: r.by_label,
+      // #12 (2026-05-31): by_user_name 来自 LEFT JOIN users.name（仅 listFollowLog 带 JOIN 时有值）
+      //   无 JOIN 的查询 → r.by_user_name undefined → salesName=null
+      salesName: r.by_user_name ?? null,
       occurredAt: new Date(r.occurred_at).toISOString(),
       extra: r.extra_json || null,
     };
@@ -812,11 +820,15 @@ export class CustomerRepository {
     customerId: string,
     limit = 100,
   ): Promise<FollowEntry[]> {
+    // #12 (2026-05-31): LEFT JOIN users 取操作销售实时名（by_user_name）→ FollowEntry.salesName
+    //   替代旧「销售 sqmefd」(ULID slice) 退化文案；by_user_id NULL（系统）→ name 也 NULL
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT * FROM customer_follow_log
-         WHERE opportunity_id = $1
-         ORDER BY occurred_at DESC LIMIT $2`,
+      `SELECT f.*, u.name AS by_user_name
+         FROM customer_follow_log f
+         LEFT JOIN users u ON u.id = f.by_user_id AND u.deleted_at IS NULL
+        WHERE f.opportunity_id = $1
+        ORDER BY f.occurred_at DESC LIMIT $2`,
       [customerId, limit],
     );
     return rows.map((r) => CustomerRepository.mapFollowRow(r));

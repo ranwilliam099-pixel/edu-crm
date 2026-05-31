@@ -259,6 +259,17 @@ describe('ContractRepository', () => {
       const r = ContractRepository.mapRow({ ...ROW, campus_id: null });
       expect(r.campusId).toBeNull();
     });
+
+    // #10a (2026-05-31): owner_name → salesName 映射
+    it('#10a: maps owner_name → salesName', () => {
+      const r = ContractRepository.mapRow({ ...ROW, owner_name: '李销售' });
+      expect(r.salesName).toBe('李销售');
+    });
+
+    it('#10a: plain SELECT *（无 JOIN，owner_name undefined）→ salesName=null', () => {
+      const r = ContractRepository.mapRow(ROW); // ROW 无 owner_name 字段
+      expect(r.salesName).toBeNull();
+    });
   });
 
   describe('getTeamPerformance', () => {
@@ -285,10 +296,41 @@ describe('ContractRepository', () => {
       const r = await repo.listByStudent(TENANT, STUDENT_ID);
       expect(r).toHaveLength(2);
       const [, sql, params] = pg.tenantQuery.mock.calls[0];
-      expect(sql).toContain('student_id = $1');
+      expect(sql).toContain('c.student_id = $1');
       expect(sql).toContain('deleted_at IS NULL');
-      expect(sql).toContain('ORDER BY signed_at DESC NULLS LAST');
+      // #10a + #10c (2026-05-31): 加表别名 c. + JOIN users/course_products
+      expect(sql).toContain('ORDER BY c.signed_at DESC NULLS LAST');
       expect(params[0]).toBe(STUDENT_ID);
+    });
+
+    // #10a (2026-05-31): listByStudent JOIN users 取销售名 → salesName
+    it('#10a: JOIN users 取签约销售名 → salesName', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...ROW, owner_name: '张销售' },
+      ]);
+      const r = await repo.listByStudent(TENANT, STUDENT_ID);
+      expect(r[0].salesName).toBe('张销售');
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('LEFT JOIN users u ON u.id = c.owner_user_id');
+      expect(sql).toContain('u.name AS owner_name');
+    });
+
+    // #10c (2026-05-31): listByStudent COALESCE 课程名回填（空快照行显产品名而非「未命名课程」）
+    it('#10c: COALESCE(course_product_name, cp.product_name) 课程名回填', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...ROW, course_product_name: '英语 1v1 30 课时' },
+      ]);
+      const r = await repo.listByStudent(TENANT, STUDENT_ID);
+      expect(r[0].courseProductName).toBe('英语 1v1 30 课时');
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('COALESCE(c.course_product_name, cp.product_name)');
+      expect(sql).toContain('LEFT JOIN course_products cp ON cp.id = c.course_product_id');
+    });
+
+    it('#10a: owner_name 缺失（owner=null 或 users 不存在）→ salesName=null', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ ...ROW, owner_name: null }]);
+      const r = await repo.listByStudent(TENANT, STUDENT_ID);
+      expect(r[0].salesName).toBeNull();
     });
 
     it('limit/offset 默认 50/0', async () => {
@@ -327,11 +369,57 @@ describe('ContractRepository', () => {
     });
 
     it('without status filter', async () => {
-      pg.tenantQuery.mockResolvedValueOnce([ROW]);
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...ROW, student_name: '王同学', course_product_name: '英语 1v1 30 课时', owner_name: '赵销售' },
+      ]);
       const r = await repo.listByOwner(TENANT, OWNER_ID);
       expect(r).toHaveLength(1);
+      expect(r[0].studentName).toBe('王同学');
+      expect(r[0].courseProductName).toBe('英语 1v1 30 课时');
+      // #10a (2026-05-31): owner_name → salesName
+      expect(r[0].salesName).toBe('赵销售');
       const sql = pg.tenantQuery.mock.calls[0][1] as string;
       expect(sql).not.toMatch(/status\s*=\s*\$/);
+      expect(sql).toContain('LEFT JOIN students');
+      expect(sql).toContain('LEFT JOIN course_products');
+      expect(sql).toContain('LEFT JOIN users u ON u.id = c.owner_user_id');
+    });
+
+    // #10a (2026-05-31): with status filter 分支也 JOIN users
+    it('#10a: with status filter 分支也含 LEFT JOIN users', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ ...ROW, owner_name: '钱销售' }]);
+      const r = await repo.listByOwner(TENANT, OWNER_ID, { status: 'active' });
+      expect(r[0].salesName).toBe('钱销售');
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('LEFT JOIN users u ON u.id = c.owner_user_id');
+    });
+  });
+
+  // #10a + #10c (2026-05-31): findById JOIN users 取销售名 + COALESCE 课程名回填
+  describe('findById', () => {
+    it('#10a: JOIN users 取签约销售名 → salesName', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ ...ROW, owner_name: '孙销售' }]);
+      const r = await repo.findById(TENANT, CONTRACT_ID);
+      expect(r?.salesName).toBe('孙销售');
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('LEFT JOIN users u ON u.id = c.owner_user_id');
+      expect(sql).toContain('u.name AS owner_name');
+    });
+
+    it('#10c: COALESCE 课程名回填（空快照 → 产品名）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...ROW, course_product_name: '数学 1v1' },
+      ]);
+      const r = await repo.findById(TENANT, CONTRACT_ID);
+      expect(r?.courseProductName).toBe('数学 1v1');
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('COALESCE(c.course_product_name, cp.product_name)');
+    });
+
+    it('not found → null', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      const r = await repo.findById(TENANT, CONTRACT_ID);
+      expect(r).toBeNull();
     });
   });
 
