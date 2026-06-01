@@ -462,8 +462,24 @@ export class ScheduleController {
   /**
    * GET /api/schedules/db/my-calendar
    *
-   * 老师端「我的课」周日历数据源。
-   * 由 JWT.sub 反查 teachers.user_id，避免前端自报 teacherId，也避免日历继续使用 mock lesson id。
+   * 排课周日历数据源（role-aware，2026-06-01 修复 🔴 教务点日历 403）。
+   *
+   * 历史（5/22）：硬限 role==='teacher'，其余全 403 →
+   *   教务（排课主责）/校长/admin 点排课日历全部「无权查看老师本人课表」，
+   *   且教务无任何「本校课表」数据源。前端 calendar.js 对所有角色都调此端点。
+   *
+   * 修复后按 role 返不同范围（同一 ScheduleCalendarItem[] 结构，均含 teacherName）：
+   *   - teacher                    → 本人课（JWT.sub 反查 teachers.user_id，逻辑不变）
+   *   - academic / academic_admin  → 本校全部课（campus_id = JWT.campusId，含他人老师的课）
+   *                                  教务是单校 role，campusId 必填，缺 → 403
+   *                                  （参照 deriveSchedulableTeachers 的 campusId 必填模式）
+   *   - boss                       → 本校全部课（campus_id = JWT.campusId）
+   *   - admin                      → 全租户（不限 campus）
+   *   - 其他（sales/finance/hr/marketing/parent…） → 403（不在课表 read scope）
+   *
+   * 安全：campusId 一律取 JWT.campusId（禁信前端传参），academic/boss 严格本校；
+   *   TenantScopeGuard 已做租户隔离，此处只做租户内 campus 范围收敛。
+   *   academic_admin 归 academic group 同权（SSOT §5.3 + actorGroupOf）。
    */
   @Get('db/my-calendar')
   @HttpCode(HttpStatus.OK)
@@ -475,19 +491,54 @@ export class ScheduleController {
   ): Promise<ScheduleCalendarItem[]> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
     if (!fromIso || !toIso) throw new BadRequestException('fromIso/toIso required');
-    if (req.user?.role !== 'teacher') {
-      throw new ForbiddenException('当前角色无权查看老师本人课表');
-    }
     const fromDate = new Date(fromIso);
     const toDate = new Date(toIso);
     if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
       throw new BadRequestException('fromIso/toIso invalid');
     }
-    return this.service.listCurrentTeacherCalendarInDb(
-      tenantSchema,
-      req.user.sub,
-      fromDate,
-      toDate,
+
+    const role = req.user?.role;
+    const jwtCampusId = req.user?.campusId ?? null;
+
+    // teacher → 本人课（现有逻辑保持不变：JWT.sub 反查 teachers.user_id）
+    if (role === 'teacher') {
+      return this.service.listCurrentTeacherCalendarInDb(
+        tenantSchema,
+        req.user!.sub,
+        fromDate,
+        toDate,
+      );
+    }
+
+    // academic / academic_admin / boss → 本校全部课（campusId 必填，禁信前端传参）
+    if (role === 'academic' || role === 'academic_admin' || role === 'boss') {
+      if (!jwtCampusId) {
+        // 单校 role 必须归属单一校区（jwt.strategy 已校验，此处兜底防 token 篡改）
+        throw new ForbiddenException(
+          'CALENDAR_CAMPUS_REQUIRED: 教务/校长必须归属单一校区',
+        );
+      }
+      return this.service.listCampusCalendarInDb(
+        tenantSchema,
+        jwtCampusId,
+        fromDate,
+        toDate,
+      );
+    }
+
+    // admin → 全租户（不限 campus）
+    if (role === 'admin') {
+      return this.service.listCampusCalendarInDb(
+        tenantSchema,
+        null,
+        fromDate,
+        toDate,
+      );
+    }
+
+    // 其他角色（sales/finance/hr/marketing/parent…）不在课表 read scope
+    throw new ForbiddenException(
+      `SCHEDULE_CALENDAR_ROLE_NOT_ALLOWED: role=${role}`,
     );
   }
 

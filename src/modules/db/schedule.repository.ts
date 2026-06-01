@@ -518,6 +518,60 @@ export class ScheduleRepository {
     }));
   }
 
+  /**
+   * 2026-06-01 教务/老板/admin 周课表（本校或全校）数据源
+   *
+   * 与 listByTeacherUserIdWithSummary 同一 ScheduleCalendarItem 结构（含 teacherName），
+   * 但范围按校区过滤（教务/校长本校），admin 全租户（campusId 传 null 不加过滤）。
+   *
+   * 安全：campusId 由 controller 从 JWT.campusId 取（禁信前端传参）；
+   *   TenantScopeGuard 已保证租户隔离，此处只做租户内 campus 范围收敛。
+   *
+   * 已取消课（status='已取消'）排除，与老师本人课表口径一致。
+   */
+  async listCampusCalendarInDb(
+    tenantSchema: string,
+    campusId: string | null,
+    fromDate: Date,
+    toDate: Date,
+  ): Promise<ScheduleCalendarItem[]> {
+    // campusId 为 null → admin 全租户视图（不加 campus 过滤）；否则严格本校
+    const campusClause = campusId ? 'AND s.campus_id = $3' : '';
+    const params: unknown[] = campusId
+      ? [fromDate, toDate, campusId]
+      : [fromDate, toDate];
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT s.id, s.course_product_id, s.teacher_id, s.start_at, s.duration_min, s.end_at,
+              s.status, s.source, s.recurring_schedule_id, s.created_by_user_id, s.created_by_role,
+              s.notes, s.class_type, s.max_students,
+              t.name AS teacher_name,
+              cp.product_name AS course_product_name,
+              COALESCE(s.class_type, cp.class_type) AS display_class_type,
+              COUNT(ss.student_id)::int AS student_count
+       FROM schedules s
+       JOIN teachers t ON t.id = s.teacher_id
+       LEFT JOIN course_products cp ON cp.id = s.course_product_id
+       LEFT JOIN schedule_students ss ON ss.schedule_id = s.id
+       WHERE s.start_at >= $1
+         AND s.start_at < $2
+         AND s.status != '已取消'
+         ${campusClause}
+       GROUP BY s.id, t.name, cp.product_name, cp.class_type
+       ORDER BY s.start_at ASC`,
+      params,
+    );
+
+    return rows.map((r) => ({
+      ...this.mapRow(r),
+      classType: r.display_class_type || r.class_type || undefined,
+      maxStudents: r.max_students || undefined,
+      teacherName: r.teacher_name || undefined,
+      courseProductName: r.course_product_name || undefined,
+      studentCount: Number(r.student_count || 0),
+    }));
+  }
+
   async markAttendance(
     tenantSchema: string,
     scheduleId: string,

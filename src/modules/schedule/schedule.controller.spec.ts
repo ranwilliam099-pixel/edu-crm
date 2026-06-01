@@ -27,6 +27,7 @@ import {
   ScheduleService,
   Schedule,
   ScheduleStudent,
+  ScheduleCalendarItem,
   CreateScheduleInput,
   AttendanceStatus,
 } from './schedule.service';
@@ -44,6 +45,8 @@ describe('ScheduleController — Wave 11 academic 唯一创建', () => {
     completeSchedule: jest.Mock;
     listByTeacherInDb: jest.Mock;
     markAttendance: jest.Mock;
+    listCurrentTeacherCalendarInDb: jest.Mock;
+    listCampusCalendarInDb: jest.Mock;
   };
   let teacherRepo: { findByUserId: jest.Mock; listActiveInTenant: jest.Mock };
   let studentRepo: { findBrief: jest.Mock };
@@ -126,6 +129,8 @@ describe('ScheduleController — Wave 11 academic 唯一创建', () => {
       completeSchedule: jest.fn(),
       listByTeacherInDb: jest.fn(),
       markAttendance: jest.fn(),
+      listCurrentTeacherCalendarInDb: jest.fn(),
+      listCampusCalendarInDb: jest.fn(),
     };
     teacherRepo = { findByUserId: jest.fn(), listActiveInTenant: jest.fn() };
     studentRepo = { findBrief: jest.fn() };
@@ -869,6 +874,199 @@ describe('ScheduleController — Wave 11 academic 唯一创建', () => {
           }),
         ),
       ).rejects.toThrow(/SCHEDULE_READ_ROLE_NOT_ALLOWED/);
+    });
+  });
+
+  // =================================================================
+  // GET /api/schedules/db/my-calendar — role-aware 周课表
+  // （2026-06-01 修复 🔴 教务点排课日历 403）
+  // =================================================================
+  describe('listCurrentTeacherCalendarInDb (my-calendar) — role-aware 范围', () => {
+    const FROM = '2026-05-25T00:00:00Z';
+    const TO = '2026-06-01T00:00:00Z';
+
+    const calItem = (overrides: Partial<ScheduleCalendarItem> = {}): ScheduleCalendarItem =>
+      ({
+        id: SCHEDULE_ID,
+        teacherId: TEACHER_T1,
+        startAt: new Date(FROM),
+        durationMin: 60,
+        endAt: new Date('2026-05-25T01:00:00Z'),
+        status: '待上课',
+        source: 'manual',
+        createdByUserId: USER_ACADEMIC,
+        createdByRole: 'academic',
+        teacherName: 'T1',
+        studentCount: 1,
+        ...overrides,
+      }) as ScheduleCalendarItem;
+
+    it('role=teacher → 调 listCurrentTeacherCalendarInDb（本人课，JWT.sub 反查）', async () => {
+      svc.listCurrentTeacherCalendarInDb.mockResolvedValueOnce([calItem()]);
+      const res = await controller.listCurrentTeacherCalendarInDb(
+        TENANT,
+        FROM,
+        TO,
+        mkReq({
+          user: { sub: USER_TEACHER, role: 'teacher', tenantId: 'tenant-x', campusId: CAMPUS_X },
+        }),
+      );
+      expect(svc.listCurrentTeacherCalendarInDb).toHaveBeenCalledWith(
+        TENANT,
+        USER_TEACHER,
+        new Date(FROM),
+        new Date(TO),
+      );
+      expect(svc.listCampusCalendarInDb).not.toHaveBeenCalled();
+      expect(res[0].teacherName).toBe('T1');
+    });
+
+    it('role=academic → 调 listCampusCalendarInDb 本校（含他人老师的课，带 teacherName）', async () => {
+      // 本校课含 T1（自己）+ T2（他人老师）
+      svc.listCampusCalendarInDb.mockResolvedValueOnce([
+        calItem({ teacherId: TEACHER_T1, teacherName: 'T1' }),
+        calItem({ id: 'sch00000000000000000000000000S002', teacherId: TEACHER_T2, teacherName: 'T2' }),
+      ]);
+      const res = await controller.listCurrentTeacherCalendarInDb(TENANT, FROM, TO, mkReq());
+      // campusId 从 JWT 取（CAMPUS_X），禁信前端
+      expect(svc.listCampusCalendarInDb).toHaveBeenCalledWith(
+        TENANT,
+        CAMPUS_X,
+        new Date(FROM),
+        new Date(TO),
+      );
+      expect(svc.listCurrentTeacherCalendarInDb).not.toHaveBeenCalled();
+      // 教务视角必须看到每节课是哪个老师（含他人老师的课）
+      expect(res.map((r) => r.teacherName).sort()).toEqual(['T1', 'T2']);
+    });
+
+    it('role=academic_admin → 调 listCampusCalendarInDb 本校（同 academic group）', async () => {
+      svc.listCampusCalendarInDb.mockResolvedValueOnce([calItem()]);
+      await controller.listCurrentTeacherCalendarInDb(
+        TENANT,
+        FROM,
+        TO,
+        mkReq({
+          user: {
+            sub: 'usr_acad_admin_0000000000000000U05',
+            role: 'academic_admin',
+            tenantId: 'tenant-x',
+            campusId: CAMPUS_X,
+          },
+        }),
+      );
+      expect(svc.listCampusCalendarInDb).toHaveBeenCalledWith(
+        TENANT,
+        CAMPUS_X,
+        new Date(FROM),
+        new Date(TO),
+      );
+    });
+
+    it('role=academic 但 JWT 缺 campusId → 403 CALENDAR_CAMPUS_REQUIRED（防 token 篡改）', async () => {
+      await expect(
+        controller.listCurrentTeacherCalendarInDb(
+          TENANT,
+          FROM,
+          TO,
+          mkReq({
+            user: { sub: USER_ACADEMIC, role: 'academic', tenantId: 'tenant-x', campusId: null },
+          }),
+        ),
+      ).rejects.toThrow(/CALENDAR_CAMPUS_REQUIRED/);
+      expect(svc.listCampusCalendarInDb).not.toHaveBeenCalled();
+      expect(svc.listCurrentTeacherCalendarInDb).not.toHaveBeenCalled();
+    });
+
+    it('role=boss → 调 listCampusCalendarInDb 本校（campus_id = JWT.campusId）', async () => {
+      svc.listCampusCalendarInDb.mockResolvedValueOnce([calItem()]);
+      await controller.listCurrentTeacherCalendarInDb(
+        TENANT,
+        FROM,
+        TO,
+        mkReq({
+          user: {
+            sub: 'boss_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1',
+            role: 'boss',
+            tenantId: 'tenant-x',
+            campusId: CAMPUS_X,
+          },
+        }),
+      );
+      expect(svc.listCampusCalendarInDb).toHaveBeenCalledWith(
+        TENANT,
+        CAMPUS_X,
+        new Date(FROM),
+        new Date(TO),
+      );
+    });
+
+    it('role=admin → 调 listCampusCalendarInDb 全租户（campusId 传 null，不限 campus）', async () => {
+      svc.listCampusCalendarInDb.mockResolvedValueOnce([calItem(), calItem({ teacherName: 'T3' })]);
+      await controller.listCurrentTeacherCalendarInDb(
+        TENANT,
+        FROM,
+        TO,
+        mkReq({
+          user: {
+            sub: 'admin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1',
+            role: 'admin',
+            tenantId: null,
+            campusId: null,
+          },
+        }),
+      );
+      expect(svc.listCampusCalendarInDb).toHaveBeenCalledWith(
+        TENANT,
+        null, // admin 全租户：不加 campus 过滤
+        new Date(FROM),
+        new Date(TO),
+      );
+    });
+
+    it('role=sales → 403 SCHEDULE_CALENDAR_ROLE_NOT_ALLOWED（不在课表 read scope）', async () => {
+      await expect(
+        controller.listCurrentTeacherCalendarInDb(
+          TENANT,
+          FROM,
+          TO,
+          mkReq({
+            user: { sub: USER_SALES, role: 'sales', tenantId: 'tenant-x', campusId: CAMPUS_X },
+          }),
+        ),
+      ).rejects.toThrow(/SCHEDULE_CALENDAR_ROLE_NOT_ALLOWED/);
+      expect(svc.listCampusCalendarInDb).not.toHaveBeenCalled();
+      expect(svc.listCurrentTeacherCalendarInDb).not.toHaveBeenCalled();
+    });
+
+    it('role=finance → 403 SCHEDULE_CALENDAR_ROLE_NOT_ALLOWED', async () => {
+      await expect(
+        controller.listCurrentTeacherCalendarInDb(
+          TENANT,
+          FROM,
+          TO,
+          mkReq({
+            user: {
+              sub: 'finance_ffffffffffffffffffffffffffffff1',
+              role: 'finance',
+              tenantId: 'tenant-x',
+              campusId: CAMPUS_X,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/SCHEDULE_CALENDAR_ROLE_NOT_ALLOWED/);
+    });
+
+    it('tenantSchema 缺 → 400（角色分支之前先校验）', async () => {
+      await expect(
+        controller.listCurrentTeacherCalendarInDb('', FROM, TO, mkReq()),
+      ).rejects.toThrow(/tenantSchema required/);
+    });
+
+    it('fromIso/toIso 非法 → 400', async () => {
+      await expect(
+        controller.listCurrentTeacherCalendarInDb(TENANT, 'not-a-date', TO, mkReq()),
+      ).rejects.toThrow(/fromIso\/toIso invalid/);
     });
   });
 

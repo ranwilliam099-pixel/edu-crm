@@ -321,6 +321,24 @@ export class ScheduleService {
   }
 
   /**
+   * 2026-06-01 教务/校长/admin 周课表（本校全部课 / admin 全租户）
+   *
+   * - 教务（academic / academic_admin）+ 校长（boss）→ 本校（campusId 必填，含他人老师的课）
+   * - admin → 全租户（campusId 传 null）
+   *
+   * controller 负责 role 分支 + campusId 从 JWT 派生（禁信前端传参）。
+   */
+  async listCampusCalendarInDb(
+    tenantSchema: string,
+    campusId: string | null,
+    fromDate: Date,
+    toDate: Date,
+  ): Promise<ScheduleCalendarItem[]> {
+    if (!this.repo) throw new BadRequestException('ScheduleRepository not available');
+    return this.repo.listCampusCalendarInDb(tenantSchema, campusId, fromDate, toDate);
+  }
+
+  /**
    * 2026-05-22 业务事件 Step 2 真持久化:
    *   老师上完课 → 同事务更新 schedule + INSERT N pending_feedback consumption
    *   这是消课业务事件唯一合法触发路径 (替代 seed 直接 INSERT 终态行)
