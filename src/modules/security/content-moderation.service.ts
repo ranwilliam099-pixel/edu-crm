@@ -114,8 +114,16 @@ export class ContentModerationService {
     action: string,
     after: Record<string, unknown>,
   ): Promise<void> {
+    if (!this.audit) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防内容安全审计静默丢失（不含明文 content）
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${action} (target=${ctx.targetId ?? null})`,
+      );
+      return;
+    }
     try {
-      await this.audit?.log(tenantSchema, {
+      await this.audit.log(tenantSchema, {
         actorUserId: ctx.actorUserId ?? ctx.req?.user?.sub ?? null,
         actorRole: normalizeActorRole(ctx.actorRole ?? ctx.req?.user?.role),
         action,

@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Optional,
   Param,
   Post,
@@ -60,6 +61,8 @@ import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.r
 @Controller('db/contracts')
 @UseGuards(TenantScopeGuard, RbacGuard)
 export class ContractController {
+  private readonly logger = new Logger(ContractController.name);
+
   constructor(
     private readonly repo: ContractRepository,
     // Sprint B.3 复审: by-student scope filter 需查 student 归属
@@ -106,8 +109,16 @@ export class ContractController {
       requestId: string | null;
     },
   ): Promise<void> {
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防合同写/激活审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${entry.action} (target=${entry.targetId})`,
+      );
+      return;
+    }
     try {
-      await this.auditLog?.log(tenantSchema, entry);
+      await this.auditLog.log(tenantSchema, entry);
     } catch {
       // fail-open
     }

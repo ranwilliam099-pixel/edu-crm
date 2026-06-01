@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   NotFoundException,
   Optional,
   Param,
@@ -61,6 +62,8 @@ import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.int
 @Controller('db/students')
 @UseGuards(TenantScopeGuard)
 export class StudentController {
+  private readonly logger = new Logger(StudentController.name);
+
   constructor(
     private readonly repo: StudentRepository,
     // Sprint B.3：teacher role 范围过滤需要把 req.user.sub (users.id) 映射回 teachers.id
@@ -109,8 +112,16 @@ export class StudentController {
       requestId: string | null;
     },
   ): Promise<void> {
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防学员写审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${entry.action} (target=${entry.targetId})`,
+      );
+      return;
+    }
     try {
-      await this.auditLog?.log(tenantSchema, entry);
+      await this.auditLog.log(tenantSchema, entry);
     } catch {
       // fail-open
     }

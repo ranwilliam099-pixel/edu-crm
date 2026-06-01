@@ -421,16 +421,14 @@ export class FeedbackController {
    * Sprint B RBAC (2026-05-11 复审补): 读反馈
    *   - 老师 ✅ / 教务（双层）👁 / 销售（自己客户的孩子）👁 / 老板校长 ✅
    *
-   * 2026-06-01 parent IDOR 复审结论（端点 A，不可被 parent 利用，**无代码改动**）：
-   *   - middleware isParentDbPath 白名单含 `lesson-feedbacks/:id/find`（tenant.middleware L455-456）
-   *     → parent JWT 命中此 path 时会被 requireParentDbUser/attachParentUser 处理（req.user.role='parent'）；
-   *   - 但随后 RbacGuard（method-level @UseGuards(RbacGuard) + @Roles 无 'parent'）对 user.role='parent'
+   * 2026-06-01 parent IDOR 复审结论（端点 A，不可被 parent 利用，本端点无资源绑定校验）：
+   *   - 本端点 @UseGuards(RbacGuard) + @Roles 无 'parent'：即便 parent 命中也被 RbacGuard
    *     **硬拒 ForbiddenException**（rbac.guard L58-64：role 不在列表即 403）→ handler 永远进不来。
-   *   - 故 A 实际不可达 parent，无 parent↔resource IDOR 风险，本端点不加资源绑定校验。
-   *   - ⚠ FOLLOW-UP（Sprint Y，不在本批改）：isParentDbPath 的 `lesson-feedbacks/:id/find` 白名单项
-   *     是**冗余/过宽配置**（让 middleware 误以为 parent 该走此端点，实被 RbacGuard 兜住，纯冗余）。
-   *     建议从 parentLessonFeedbackPath 正则收窄为仅 `parent-read`（parent 读反馈走
-   *     /api/db/students/:id/feedbacks by-student 端点，那条已有 parent 绑定校验）。
+   *   - 故 A 实际不可达 parent，无 parent↔resource IDOR 风险。
+   *   - ✅ Sprint Y 收窄（已做）：isParentDbPath 的 `lesson-feedbacks/:id/find` 白名单项原为冗余/过宽
+   *     （让 middleware 误以为 parent 该走此端点，实被 RbacGuard 兜住）→ 已收窄 parentLessonFeedbackPath
+   *     正则为仅 `parent-read`（tenant.middleware）。现 parent JWT 调 :id/find → 走 B 端 requireUser → 401
+   *     （纵深防御提前到 middleware）。parent 读反馈走 /api/c/messages、/api/c/students/:id/profile 聚合端点。
    */
   @Post('db/lesson-feedbacks/:feedbackId/find')
   @UseGuards(TenantScopeGuard, RbacGuard)

@@ -859,7 +859,14 @@ export class CSideController {
       req: ParentRequest;
     },
   ): Promise<void> {
-    if (!this.auditLog) return;
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository 由 @Global DbModule 提供，
+      // 生产恒注入；undefined 仅在错误配线/单测脱钩时出现 → warn 防静默丢失审计
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${entry.action} (target=${entry.targetId})`,
+      );
+      return;
+    }
     try {
       await this.auditLog.log(tenantSchema, {
         actorUserId: entry.actorUserId,

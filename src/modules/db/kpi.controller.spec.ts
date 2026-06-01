@@ -6,6 +6,7 @@ import {
   RenewalKpiResult,
   ConsumptionKpiResult,
   StudentActivityKpiResult,
+  SalesHomeKpiResult,
   TeacherHomeKpiResult,
   AcademicHomeKpiResult,
 } from './kpi.service';
@@ -627,6 +628,107 @@ describe('KpiController (P4-X 2026-05-20)', () => {
         req(jwt('teacher', TEACHER_SUB, CAMPUS_A)),
       );
       expect(r.todayLessons.count).toBe(3);
+    });
+  });
+
+  // ============================================================
+  // GET /db/kpi/sales-home (2026-06-01 Sprint Y: audit 一致性补齐)
+  // ============================================================
+  describe('salesHomeKpi GET /db/kpi/sales-home', () => {
+    const SALES_SUB = 'salesA00000000000000000000000S001';
+
+    function salesHomeFixture(): SalesHomeKpiResult {
+      return {
+        personalSigned: { amount: '12000', count: 3, rankText: '第 1 / 共 2' },
+        customersInProgress: { count: 7 },
+        trialRate: { rate: '50', total: 4 },
+      };
+    }
+
+    it('happy path: sales role + tenantSchema + sub + campusId(JWT) → service 收 userId+campusId', async () => {
+      kpi.getSalesHomeKpi.mockResolvedValueOnce(salesHomeFixture());
+      const r = await controller.salesHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('sales', SALES_SUB, CAMPUS_A)),
+      );
+      expect(r.personalSigned.count).toBe(3);
+      expect(r.trialRate.rate).toBe('50');
+      // campusId 必须从 JWT 透传（防 client 伪造 scope）
+      expect(kpi.getSalesHomeKpi).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        SALES_SUB,
+        CAMPUS_A,
+      );
+    });
+
+    it('audit_log 写入 kpi.sales_home.read.success（success 路径，与其他 home 一致）', async () => {
+      kpi.getSalesHomeKpi.mockResolvedValueOnce(salesHomeFixture());
+      await controller.salesHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('sales', SALES_SUB, CAMPUS_A)),
+      );
+      expect(auditLog.log).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({
+          action: 'kpi.sales_home.read.success',
+          actorUserId: SALES_SUB,
+          actorRole: 'sales',
+          targetType: 'kpi',
+          targetId: SALES_SUB,
+        }),
+      );
+    });
+
+    it('缺 tenantSchema → BadRequest + 不调 service + 不写 audit', async () => {
+      await expect(
+        controller.salesHomeKpi('', req(jwt('sales', SALES_SUB, CAMPUS_A))),
+      ).rejects.toThrow(BadRequestException);
+      expect(kpi.getSalesHomeKpi).not.toHaveBeenCalled();
+      expect(auditLog.log).not.toHaveBeenCalled();
+    });
+
+    it('user.sub 缺失 → BadRequest + 不调 service', async () => {
+      await expect(
+        controller.salesHomeKpi(TENANT_SCHEMA, req(undefined)),
+      ).rejects.toThrow(BadRequestException);
+      expect(kpi.getSalesHomeKpi).not.toHaveBeenCalled();
+    });
+
+    it('campusId 缺失（JWT 无 campusId）→ 透传 null，service 仍调用', async () => {
+      kpi.getSalesHomeKpi.mockResolvedValueOnce(salesHomeFixture());
+      await controller.salesHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('sales_manager', SALES_SUB, null)),
+      );
+      expect(kpi.getSalesHomeKpi).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        SALES_SUB,
+        null,
+      );
+    });
+
+    it('audit_log 写失败 → 不抛错（fail-open）+ KPI 仍返回', async () => {
+      kpi.getSalesHomeKpi.mockResolvedValueOnce(salesHomeFixture());
+      auditLog.log.mockRejectedValueOnce(new Error('db down'));
+      const r = await controller.salesHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('sales', SALES_SUB, CAMPUS_A)),
+      );
+      expect(r.personalSigned.count).toBe(3);
+      expect(auditLog.log).toHaveBeenCalled();
+    });
+
+    it('controller 无 auditLog (Optional)：spec 不传 → 仍跑通', async () => {
+      const ctrlNoAudit = new KpiController(
+        kpi as unknown as KpiService,
+        contentModeration as unknown as ContentModerationService,
+      );
+      kpi.getSalesHomeKpi.mockResolvedValueOnce(salesHomeFixture());
+      const r = await ctrlNoAudit.salesHomeKpi(
+        TENANT_SCHEMA,
+        req(jwt('sales', SALES_SUB, CAMPUS_A)),
+      );
+      expect(r.personalSigned.count).toBe(3);
     });
   });
 

@@ -12,12 +12,19 @@
  *   - parent 自己孩子 → totalAmount ✅ + discountAmount/giftHours 0
  */
 
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ExecutionContext,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { ContractController } from './contract.controller';
 import { Contract, ContractRepository } from './contract.repository';
 import { StudentRepository } from './student.repository';
 import { AuthenticatedRequest, JwtPayload, TenantRole } from '../auth/jwt-payload.interface';
 import { AuditLogRepository } from './audit-log.repository';
+import { RbacGuard } from '../../guards/rbac.guard';
 
 describe('ContractController (Sprint B.3 字段级权限)', () => {
   let controller: ContractController;
@@ -651,6 +658,51 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
       ]) {
         expect(roles).not.toContain(r);
       }
+    });
+
+    // 真跑 RbacGuard（不只断言元数据）：构造指向 activate handler 的 ExecutionContext，
+    // 用真实 Reflector 读 @Roles → 非 finance 调 → ForbiddenException（HTTP 层 403）。
+    // e2e 需 live Postgres 跑不了，故在单测层用真 guard 复现 RBAC 拒绝判定。
+    describe('RbacGuard.canActivate（真 guard 跑 activate 路由）', () => {
+      const guard = new RbacGuard(new Reflector());
+
+      function ctxForActivate(user?: Partial<JwtPayload>): ExecutionContext {
+        return {
+          getHandler: () => ContractController.prototype.activate,
+          getClass: () => ContractController,
+          switchToHttp: () => ({
+            getRequest: () => ({ user }),
+          }),
+        } as unknown as ExecutionContext;
+      }
+
+      it('finance → 放行（canActivate 返 true）', () => {
+        expect(guard.canActivate(ctxForActivate(jwt('finance', SALES_A)))).toBe(
+          true,
+        );
+      });
+
+      it.each([
+        'sales',
+        'sales_manager',
+        'boss',
+        'admin',
+        'academic',
+        'academic_admin',
+        'teacher',
+        'marketing',
+        'hr',
+      ] as const)('%s → ForbiddenException（非 finance 不能激活合同）', (role) => {
+        expect(() =>
+          guard.canActivate(ctxForActivate(jwt(role as TenantRole, SALES_A))),
+        ).toThrow(ForbiddenException);
+      });
+
+      it('无 user（未认证）→ UnauthorizedException', () => {
+        expect(() => guard.canActivate(ctxForActivate(undefined))).toThrow(
+          UnauthorizedException,
+        );
+      });
     });
 
     it('finance 激活 → setStatus(active) + audit contract.activate（before/after status）', async () => {

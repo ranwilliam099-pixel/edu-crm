@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Logger,
   Optional,
   Param,
   Post,
@@ -68,6 +69,8 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 @UseGuards(TenantScopeGuard)
 @Controller('recurring')
 export class RecurringScheduleController {
+  private readonly logger = new Logger(RecurringScheduleController.name);
+
   constructor(
     private readonly service: RecurringScheduleService,
     private readonly teacherRepo: TeacherRepository,
@@ -638,8 +641,16 @@ export class RecurringScheduleController {
       after: Record<string, unknown> | null;
     },
   ): Promise<void> {
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防周期排课/绑定写审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${entry.action} (target=${entry.targetId})`,
+      );
+      return;
+    }
     try {
-      await this.auditLog?.log(tenantSchema, {
+      await this.auditLog.log(tenantSchema, {
         actorUserId: req.user?.sub ?? null,
         actorRole: this.actorRole(req),
         action: entry.action,
@@ -664,8 +675,16 @@ export class RecurringScheduleController {
     targetId: string | null,
     after: Record<string, unknown>,
   ): Promise<void> {
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防周期排课拒绝路径审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${action} (target=${targetId})`,
+      );
+      return;
+    }
     try {
-      await this.auditLog?.log(tenantSchema, {
+      await this.auditLog.log(tenantSchema, {
         actorUserId: req.user?.sub ?? null,
         actorRole: this.actorRole(req),
         action,

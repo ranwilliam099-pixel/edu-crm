@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Optional,
   Param,
   Post,
@@ -47,6 +48,8 @@ import { AuditLogRepository, normalizeActorRole } from './audit-log.repository';
 @Controller('db/teacher-changes')
 @UseGuards(TenantScopeGuard, RbacGuard)
 export class TeacherChangeRequestController {
+  private readonly logger = new Logger(TeacherChangeRequestController.name);
+
   constructor(
     private readonly svc: TeacherChangeRequestService,
     @Optional() private readonly auditLog?: AuditLogRepository,
@@ -182,7 +185,14 @@ export class TeacherChangeRequestController {
     action: string,
     targetId: string,
   ): Promise<void> {
-    if (!this.auditLog) return;
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防换师审批审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${action} (target=${targetId})`,
+      );
+      return;
+    }
     try {
       await this.auditLog.log(tenantSchema, {
         actorUserId: req.user?.sub ?? null,

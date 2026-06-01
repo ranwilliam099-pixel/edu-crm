@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Logger,
   Optional,
   Param,
   Post,
@@ -41,6 +42,8 @@ import { ActorRole, AuditLogRepository, normalizeActorRole } from '../db/audit-l
 @UseGuards(TenantScopeGuard)
 @Controller('teachers')
 export class TeacherController {
+  private readonly logger = new Logger(TeacherController.name);
+
   constructor(
     private readonly service: TeacherService,
     private readonly repo: TeacherRepository,
@@ -96,8 +99,16 @@ export class TeacherController {
       requestId: string | null;
     },
   ): Promise<void> {
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防老师写审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${entry.action} (target=${entry.targetId})`,
+      );
+      return;
+    }
     try {
-      await this.auditLog?.log(tenantSchema, entry);
+      await this.auditLog.log(tenantSchema, entry);
     } catch {
       // fail-open
     }

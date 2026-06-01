@@ -738,6 +738,12 @@ export class KpiService {
     }
 
     // 1. personalSigned: 本月（30 天滚动）签约金额 + 笔数
+    //   2026-06-01 Sprint Y 口径修正：排除 status='cancelled'（已取消合同不计入本月新签额），
+    //   与 computeSalesMonthlyRank 排名口径一致（否则「我的金额」含取消单但排名分母不含 → 自相矛盾）。
+    //   contracts.status 枚举(V25 CHECK) = pending/active/expired/cancelled，无 'refunded'
+    //   （退款走 V59 refund_orders / payments.refund_status，不改 contracts.status）；
+    //   保留 'refunded' 字面与 rank 查询文本对齐 + 未来若加该态自然生效（当前永不命中、无副作用）。
+    //   expired（已到期）仍计入：合同曾有效签约，只是过期，属正常业绩。
     const signedRows = await this.pg.tenantQuery<{
       total_amount: string | number;
       cnt: string | number;
@@ -749,6 +755,7 @@ export class KpiService {
        FROM contracts
        WHERE owner_user_id = $1
          AND signed_at >= NOW() - INTERVAL '30 days'
+         AND status NOT IN ('cancelled','refunded')
          AND deleted_at IS NULL`,
       [salesUserId],
     );

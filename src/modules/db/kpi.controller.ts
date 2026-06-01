@@ -99,7 +99,14 @@ export class KpiController {
     action: string,
     targetId: string | null,
   ): Promise<void> {
-    if (!this.auditLog) return;
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防静默丢失（KPI 读路径低频，不会刷屏）
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${action} (target=${targetId})`,
+      );
+      return;
+    }
     try {
       await this.auditLog.log(tenantSchema, {
         actorUserId: req.user?.sub ?? null,
@@ -193,6 +200,11 @@ export class KpiController {
    *   GET /db/kpi/sales-home?tenantSchema=
    *   Auth: JWT.sub → salesUserId（不接受 client 传 userId 防伪造）
    *   RBAC: sales / sales_manager 可读自己 home 数据
+   *
+   *   audit_log（2026-06-01 Sprint Y 一致性补齐）:
+   *     - success: kpi.sales_home.read.success（与 teacher/academic/finance home 口径一致）
+   *     - forbidden (RbacGuard 拦): RbacGuard 自动写
+   *     - bad request: 不写（客户端参数错误）
    */
   @Get('sales-home')
   @Roles('sales', 'sales_manager')
@@ -206,7 +218,21 @@ export class KpiController {
     if (!salesUserId) throw new BadRequestException('user sub required');
     // 2026-05-31 §3.3① 单校区排名口径：campusId 从 JWT 拿（防 client 伪造 scope）
     const campusId = req.user?.campusId ?? null;
-    return this.kpi.getSalesHomeKpi(tenantSchema, salesUserId, campusId);
+    const result = await this.kpi.getSalesHomeKpi(
+      tenantSchema,
+      salesUserId,
+      campusId,
+    );
+
+    // audit_log fail-open（success 路径写一次；与其他 home 端点一致）
+    await this.tryAuditKpiRead(
+      tenantSchema,
+      req,
+      'kpi.sales_home.read.success',
+      salesUserId,
+    );
+
+    return result;
   }
 
   /**

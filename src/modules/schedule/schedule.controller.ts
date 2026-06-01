@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Logger,
   Optional,
   Param,
   Post,
@@ -82,6 +83,8 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 @UseGuards(TenantScopeGuard)
 @Controller('schedules')
 export class ScheduleController {
+  private readonly logger = new Logger(ScheduleController.name);
+
   constructor(
     private readonly service: ScheduleService,
     private readonly teacherRepo: TeacherRepository,
@@ -792,8 +795,16 @@ export class ScheduleController {
       after: Record<string, unknown> | null;
     },
   ): Promise<void> {
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防排课写审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${entry.action} (target=${entry.targetId})`,
+      );
+      return;
+    }
     try {
-      await this.auditLog?.log(tenantSchema, {
+      await this.auditLog.log(tenantSchema, {
         actorUserId: req.user?.sub ?? null,
         actorRole: this.actorRole(req),
         action: entry.action,
@@ -827,8 +838,16 @@ export class ScheduleController {
     targetId: string | null,
     after: Record<string, unknown>,
   ): Promise<void> {
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防排课拒绝路径审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${action} (target=${targetId})`,
+      );
+      return;
+    }
     try {
-      await this.auditLog?.log(tenantSchema, {
+      await this.auditLog.log(tenantSchema, {
         actorUserId: req.user?.sub ?? null,
         actorRole: this.actorRole(req),
         action,

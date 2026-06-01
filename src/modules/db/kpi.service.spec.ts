@@ -722,6 +722,20 @@ describe('KpiService (P4-X 2026-05-20)', () => {
       expect(pg.tenantQuery).not.toHaveBeenCalled();
     });
 
+    it('personalSigned SQL：本月新签金额排除 cancelled/refunded（与排名口径一致）', async () => {
+      mockBaseSigned();
+      pg.tenantQuery.mockResolvedValueOnce([]); // rank 空
+      pg.tenantQuery.mockResolvedValueOnce([{ denom: '0', numer: '0' }]); // trialRate
+
+      await svc.getSalesHomeKpi(TENANT, SALES_1, CAMPUS_A);
+      // 第 1 次 query = personalSigned（SUM total_amount + COUNT）
+      const signedSql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(signedSql).toContain('FROM contracts');
+      expect(signedSql).toContain(`status NOT IN ('cancelled','refunded')`);
+      expect(signedSql).toContain('owner_user_id = $1');
+      expect(signedSql).toContain(`signed_at >= NOW() - INTERVAL '30 days'`);
+    });
+
     it('rankText: 同校区 3 销售按本月签约额降序 → 我第 2 / 共 3', async () => {
       mockBaseSigned();
       // 3=rank：SALES_1=30000, me(SALES_2)=20000, SALES_other=5000 → 降序 me 第 2

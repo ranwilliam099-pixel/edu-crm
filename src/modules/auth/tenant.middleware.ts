@@ -449,11 +449,17 @@ export class TenantMiddleware implements NestMiddleware {
       /^\/api\/db\/monthly-reports\/[^/]+\/(find|parent-read)$/.test(path);
 
     // Sprint B 复审：lesson-feedbacks 精确正则（仅 parent 实际访问的 endpoint）
-    //   - /:id/find        — c 端家长读反馈
-    //   - /:id/parent-read — c 端家长打"已读"标记
-    // 不含：POST / :id/update — 老师写反馈（走 B 端 TenantJwt）
+    //   - /:id/parent-read — c 端家长打"已读"标记（parent 唯一合法 lesson-feedbacks 资源端点）
+    // 2026-06-01 Sprint Y 收窄：移除 /:id/find —— 该端点 @UseGuards(RbacGuard)+@Roles 无 'parent'
+    //   （feedback.controller findFeedbackInDb），parent 命中即被 RbacGuard 硬拒 403 → 永进不来 handler，
+    //   把它列在 parent 白名单是冗余/过宽配置（让 middleware 误以为 parent 该走此端点）。收窄后：
+    //   - parent JWT 调 :id/find → 不再走 parent 分支 → 落 requireUser（B 端 TenantJwt parse）→ 401
+    //     （401/403 都是拒绝；parent 读反馈本就走 /api/c/messages、/api/c/students/:id/profile 聚合端点）
+    //   - B 端角色（teacher/academic/sales…）调 :id/find → 同 :id/update：本不匹配 parent 路径，
+    //     直接走 requireUser → RbacGuard 放行（行为不变）
+    // 不含：POST / :id/update / :id/find — 老师写/B 端读反馈（走 B 端 TenantJwt）
     const parentLessonFeedbackPath =
-      /^\/api\/db\/lesson-feedbacks\/[^/]+\/(find|parent-read)$/.test(path);
+      /^\/api\/db\/lesson-feedbacks\/[^/]+\/parent-read$/.test(path);
 
     // Sprint B 复审：leaves 精确正则
     //   - POST /api/db/leaves                 — 家长提交请假（c 端主入口）

@@ -349,6 +349,14 @@ export class CronJobsService {
       );
       this.logger.log(`[trial-expiry] expired ${result.length} tenant(s)`);
 
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入；
+      // undefined 仅错误配线/单测脱钩 → warn 一次（不在 loop 内 warn 防 N 条刷屏）
+      if (!this.auditLogRepo && result.length > 0) {
+        this.logger.warn(
+          `audit log repo not injected, skipping tenant.subscription.expired audit for ${result.length} tenant(s)`,
+        );
+      }
+
       // 每条独立 try 写 audit_log；单条失败不中断后续
       for (const row of result) {
         if (!this.auditLogRepo) continue;

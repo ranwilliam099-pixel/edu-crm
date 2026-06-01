@@ -382,7 +382,14 @@ export class InvoiceService {
       requestId: string | null;
     },
   ): Promise<void> {
-    if (!this.auditLog) return;
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防开票/激活审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${entry.action} (target=${entry.targetId})`,
+      );
+      return;
+    }
     try {
       await this.auditLog.log(tenantSchema, entry);
     } catch {

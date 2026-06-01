@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   NotFoundException,
   Optional,
   Param,
@@ -56,6 +57,8 @@ import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.r
 @Controller('db/course-products')
 @UseGuards(TenantScopeGuard)
 export class CourseProductController {
+  private readonly logger = new Logger(CourseProductController.name);
+
   constructor(
     private readonly repo: CourseProductRepository,
     // 5/15：拒绝路径 + 404 路径 audit_log
@@ -100,8 +103,16 @@ export class CourseProductController {
       requestId: string | null;
     },
   ): Promise<void> {
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防课程产品写审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${entry.action} (target=${entry.targetId})`,
+      );
+      return;
+    }
     try {
-      await this.auditLog?.log(tenantSchema, entry);
+      await this.auditLog.log(tenantSchema, entry);
     } catch {
       // fail-open
     }

@@ -1,4 +1,4 @@
-import { Injectable, Optional, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, Optional, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PgPoolService, PgRow } from './pg-pool.service';
 import { AuditLogRepository, normalizeActorRole } from './audit-log.repository';
 import { ParentRepository } from './parent.repository';
@@ -100,6 +100,8 @@ export interface StudentSoftDeleteResult {
 
 @Injectable()
 export class StudentRepository {
+  private readonly logger = new Logger(StudentRepository.name);
+
   constructor(
     private readonly pg: PgPoolService,
     private readonly parentRepo: ParentRepository,
@@ -603,15 +605,26 @@ export class StudentRepository {
 
     // 3. audit_log（事务外，V33 fail-open；audit-log.repository.ts L34
     //   "主业务流应在事务外调用 log()，避免 audit_log 失败回滚业务"）
-    await this.auditLog?.log(tenantSchema, {
-      actorUserId: operator.userId,
-      actorRole: normalizeActorRole(operator.role),
-      action: 'student.soft-delete',
-      targetType: 'student',
-      targetId: studentId,
-      before: { deletedAt: null },
-      after: { deletedAt: result.deletedAt, bindingsExpired: result.bindingsExpired },
-    });
+    if (this.auditLog) {
+      await this.auditLog.log(tenantSchema, {
+        actorUserId: operator.userId,
+        actorRole: normalizeActorRole(operator.role),
+        action: 'student.soft-delete',
+        targetType: 'student',
+        targetId: studentId,
+        before: { deletedAt: null },
+        after: {
+          deletedAt: result.deletedAt,
+          bindingsExpired: result.bindingsExpired,
+        },
+      });
+    } else {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防学员软删审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for student.soft-delete (target=${studentId})`,
+      );
+    }
 
     return result;
   }

@@ -508,35 +508,23 @@ describe('TenantMiddleware A01-CRIT P0 Parent x Tenant 绑定校验', () => {
   // 旧 path.startsWith('/api/db/lesson-feedbacks/') 会让未来新增的
   // /api/db/lesson-feedbacks/:id/update (B 端老师写) 误走 parent 分支
   // 新精确正则：仅 /:id/find 和 /:id/parent-read 走 parent 分支
-  it('Sprint B 二轮: parent JWT 调 /api/db/lesson-feedbacks/:id/find → 走 parent 分支（合法）', async () => {
-    parentRepo.findChildrenByParent.mockResolvedValueOnce([
-      {
-        id: 'bind000000000000000000000000A1',
-        parentId: PARENT_ID,
-        studentId: STUDENT_ID,
-        tenantId: TENANT_A,
-        isPrimary: true,
-        relationship: 'mother',
-        bindingStatus: 'active',
-        boundAt: new Date(),
-      },
-    ]);
-
+  // 2026-06-01 Sprint Y 收窄：lesson-feedbacks/:id/find 从 parent 白名单移除
+  //   （该端点 @Roles 无 'parent'，parent 命中即被 RbacGuard 硬拒；列白名单纯冗余）。
+  //   收窄后 parent JWT 调 :id/find → 不走 parent 分支 → requireUser（B 端 parse）→ 401。
+  //   parent 读反馈走 /api/c/messages、/api/c/students/:id/profile 聚合端点，不受影响。
+  it('Sprint Y 收窄: parent JWT 调 /api/db/lesson-feedbacks/:id/find → 走 B 端分支（401，不再 parent）', async () => {
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([]);
     const token = parentJwt.sign({ parentId: PARENT_ID });
     const req = makeParentReq(
       `/api/db/lesson-feedbacks/fb00000000000000000000000000F01/find`,
       token,
       { tenantSchema: `tenant_${TENANT_A}` },
     );
-
-    await new Promise<void>((resolve, reject) => {
-      middleware.use(req, {} as any, (err?: unknown) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-    expect(parentRepo.findChildrenByParent).toHaveBeenCalledWith(PARENT_ID);
-    expect(req.user.role).toBe('parent');
+    await expect(
+      middleware.use(req, {} as any, () => {}),
+    ).rejects.toThrow(UnauthorizedException);
+    // 不走 parent 分支 → 不查 binding（与 :id/update 同款）
+    expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
   });
 
   it('Sprint B 二轮: parent JWT 调 /api/db/lesson-feedbacks/:id/parent-read → 走 parent 分支（合法）', async () => {

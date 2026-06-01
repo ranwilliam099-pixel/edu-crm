@@ -812,7 +812,14 @@ export class WxPayController {
       after: Record<string, unknown> | null;
     },
   ): Promise<void> {
-    if (!this.auditLog) return;
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防支付路径审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${entry.action} (target=${entry.targetId})`,
+      );
+      return;
+    }
 
     // tenant schema：优先 body.tenantSchema → user.tenantId 推导
     const bodySchema = (req.body as { tenantSchema?: string } | undefined)

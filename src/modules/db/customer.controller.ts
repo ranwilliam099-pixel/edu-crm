@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Optional,
   Param,
   Patch,
@@ -77,6 +78,8 @@ const MAX_BULK_POOL_IMPORT_ROWS = 200;
 @Controller('db/customers')
 @UseGuards(TenantScopeGuard, RbacGuard)
 export class CustomerController {
+  private readonly logger = new Logger(CustomerController.name);
+
   constructor(
     private readonly repo: CustomerRepository,
     // #24 (2026-05-30): B 端自由文本内容安全统一收口（@Global SecurityModule 注入，生产必有）
@@ -149,8 +152,16 @@ export class CustomerController {
       requestId: string | null;
     },
   ): Promise<void> {
+    if (!this.auditLog) {
+      // 2026-06-01 Sprint Y 可观测性：AuditLogRepository @Global 恒注入，
+      // undefined 仅错误配线/单测脱钩 → warn 防客户写审计静默丢失
+      this.logger.warn(
+        `audit log repo not injected, skipping audit for ${entry.action} (target=${entry.targetId})`,
+      );
+      return;
+    }
     try {
-      await this.auditLog?.log(tenantSchema, entry);
+      await this.auditLog.log(tenantSchema, entry);
     } catch {
       // fail-open: audit 写失败不阻塞主业务（AuditLogRepository.log 内部已 catch，再加一层兜底）
     }
