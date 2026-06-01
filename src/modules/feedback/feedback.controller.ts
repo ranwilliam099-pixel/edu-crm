@@ -12,6 +12,7 @@ import {
   UseInterceptors,
   BadRequestException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import {
   LessonFeedbackService,
@@ -41,6 +42,7 @@ import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 import { ActorRole, AuditLogRepository, normalizeActorRole } from '../db/audit-log.repository';
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
+import { ParentRepository } from '../db/parent.repository';
 import { ContentModerationService } from '../security/content-moderation.service';
 // 2026-06-01 同租户 by-student IDOR 修复：listByStudent 缺 owner-scope（teacher 可读非自己班、
 //   sales 可读非自己客户学员反馈）→ 复用 contract by-student 同款 scope（抽成共享 helper）。
@@ -83,7 +85,18 @@ export class FeedbackController {
     //   new FeedbackController(...) 6 参不破坏（第 7 参 undefined）；由 @Global DbModule 注入，
     //   生产 / e2e 必有。
     @Optional() private readonly studentRepo?: StudentRepository,
+    // 2026-06-01 parent↔student 绑定 IDOR 修复：parent c 端流校验 studentId ∈ 该 parent active 绑定。
+    //   middleware 仅验 parent↔租户，本 helper 补 parent↔student。@Optional + 构造末尾不破坏现有 spec
+    //   （第 8 参 undefined）；由 @Global DbModule 注入，生产 / e2e 必有。
+    @Optional() private readonly parentRepo?: ParentRepository,
   ) {}
+
+  /**
+   * 2026-06-01 parent↔resource IDOR scope 拒绝日志。
+   *   detailed reason（含该 parent 自己孩子的 studentId 列表）只落服务端日志，不回 client
+   *   （ForbiddenException 抛固定不透明 message，防 IDOR 侧信道，与 student-by-student-scope 一致）。
+   */
+  private readonly feedbackScopeLogger = new Logger('feedback-parent-resource-scope');
 
   // ==================== LessonFeedback ====================
 
@@ -407,11 +420,17 @@ export class FeedbackController {
   /**
    * Sprint B RBAC (2026-05-11 复审补): 读反馈
    *   - 老师 ✅ / 教务（双层）👁 / 销售（自己客户的孩子）👁 / 老板校长 ✅
-   *   - 家长走 c 端独立 endpoint（parent JWT 流），middleware isParentDbPath 已含 lesson-feedbacks
-   *     parent JWT 进入时 req.user.role='parent'，RbacGuard 不在 @Roles 列表 → 拒绝
-   *     但 isParentDbPath 分流前已用 requireParentDbUser 校验，parent 实际访问的是同 controller 但走 parent 视角
-   *     ⚠ 风险：parent role 不在 @Roles → RbacGuard 拦截 parent → 路由失效
-   *     → 解决：parent 走独立 controller 路径（c 端独立 endpoint）；本 endpoint 仅 B 端 role 访问
+   *
+   * 2026-06-01 parent IDOR 复审结论（端点 A，不可被 parent 利用，**无代码改动**）：
+   *   - middleware isParentDbPath 白名单含 `lesson-feedbacks/:id/find`（tenant.middleware L455-456）
+   *     → parent JWT 命中此 path 时会被 requireParentDbUser/attachParentUser 处理（req.user.role='parent'）；
+   *   - 但随后 RbacGuard（method-level @UseGuards(RbacGuard) + @Roles 无 'parent'）对 user.role='parent'
+   *     **硬拒 ForbiddenException**（rbac.guard L58-64：role 不在列表即 403）→ handler 永远进不来。
+   *   - 故 A 实际不可达 parent，无 parent↔resource IDOR 风险，本端点不加资源绑定校验。
+   *   - ⚠ FOLLOW-UP（Sprint Y，不在本批改）：isParentDbPath 的 `lesson-feedbacks/:id/find` 白名单项
+   *     是**冗余/过宽配置**（让 middleware 误以为 parent 该走此端点，实被 RbacGuard 兜住，纯冗余）。
+   *     建议从 parentLessonFeedbackPath 正则收窄为仅 `parent-read`（parent 读反馈走
+   *     /api/db/students/:id/feedbacks by-student 端点，那条已有 parent 绑定校验）。
    */
   @Post('db/lesson-feedbacks/:feedbackId/find')
   @UseGuards(TenantScopeGuard, RbacGuard)
@@ -458,7 +477,9 @@ export class FeedbackController {
   ): Promise<LessonFeedback[]> {
     // 2026-06-01 同租户 by-student IDOR 修复：owner-scope 收口
     //   - sales 只看 student.ownerSalesId === 自己 的学员；teacher 只看自己班（assignedTeacherId）
-    //   - academic/academic_admin/marketing/admin/boss/finance 本校放行；parent c 端 bypass
+    //   - academic/academic_admin/marketing/admin/boss 本校放行；finance/hr 拒
+    //   - parent c 端流：middleware 仅验 parent↔租户，本 helper 经 resolveParentChildIds 补
+    //     parent↔student 绑定校验（studentId ∈ active 绑定才放行，非 bypass）
     //   - 越权（传他人学员 studentId）→ ForbiddenException
     //   注：scope 是「可见范围」收口，正常流各角色本就只导航到自己范围的学员，不误伤。
     await this.assertByStudentScope(studentId, body.tenantSchema, req, 'feedbacks');
@@ -479,7 +500,8 @@ export class FeedbackController {
    *
    * 先 studentRepo.findBrief 拿 ownerSalesId / assignedTeacherId，再按 actorGroup 判定：
    *   - sales → ownerSalesId===me；teacher → 反查 teachers.id===assignedTeacherId；
-   *   - admin/academic/finance group → 本校放行；parent c 端 bypass。
+   *   - admin/academic group → 本校放行；
+   *   - parent c 端流 → studentId 必须 ∈ 该 parent 本租户 active 绑定（2026-06-01 parent IDOR 修复）。
    *
    * fail-open 兜底：studentRepo 未注入（isolated module unit spec）→ 跳过 scope（仅 @Roles 兜底）。
    * 学员不存在 → 放行（service 返空，避免 enumeration 侧信道，与 contract by-student 一致语义）。
@@ -502,7 +524,88 @@ export class FeedbackController {
           .findByUserId(schema, userId)
           .then((t) => t?.id ?? null),
       { endpoint, studentId },
+      this.buildParentChildIdsResolver(req, tenantSchema),
     );
+  }
+
+  /**
+   * 2026-06-01 parent↔student 绑定 IDOR 修复：返回 parent c 端流时反查闭包。
+   *   非 parent 流（无 req.parent）→ undefined（helper parent 分支不触发，省 DB IO）。
+   *   parent 流但 parentRepo 未注入（isolated unit spec）→ undefined → helper 保守拒绝。
+   *
+   * 闭包查 parentRepo.findChildrenByParent（SQL 已过滤 binding_status='active'），再按
+   *   当前 tenantSchema 派生的 tenantId 过滤（跨机构家长可能绑多租户），映射出 student id 列表。
+   */
+  private buildParentChildIdsResolver(
+    req: AuthenticatedRequest,
+    tenantSchema: string,
+  ): (() => Promise<string[]>) | undefined {
+    if (!req.parent || !this.parentRepo) return undefined;
+    const parentRepo = this.parentRepo;
+    const parentId = req.parent.parentId ?? req.parent.sub;
+    const tenantId = tenantSchema.replace(/^tenant_/, '').toLowerCase();
+    return async () => {
+      if (!parentId) return [];
+      const bindings = await parentRepo.findChildrenByParent(parentId);
+      return bindings
+        .filter(
+          (b) =>
+            b.bindingStatus === 'active' &&
+            b.tenantId.toLowerCase() === tenantId,
+        )
+        .map((b) => b.studentId);
+    };
+  }
+
+  /**
+   * 2026-06-01 parent↔child 单资源 IDOR 收口（by-student 列表端点之外的残留）
+   *
+   * 背景：feedback / monthly-report 还有 4 个「按 resourceId（feedbackId/reportId）读写单条记录」
+   *   的 parent 可达端点，middleware（requireParentDbUser）仅验 parent↔租户、不验 parent↔具体资源 →
+   *   同租户家长传他人孩子的 feedbackId/reportId 可读月报（C）/打"已读"写他人数据（B/D）。
+   *   （A=lesson-feedbacks/:id/find 实际被 RbacGuard @Roles 无 parent 硬挡，不可达，详见该端点注释）
+   *
+   * 与 by-student 列表的差异：列表端点参数本就是 studentId（直接交 assertStudentByStudentScope）；
+   *   单资源端点参数是 feedbackId/reportId → 需先拿到该资源行的 student_id（resourceStudentId），
+   *   再校验 resourceStudentId ∈ 该 parent 本租户 active 绑定列表。
+   *
+   * 仅 parent c 端流（req.parent 存在）触发；B 端角色（无 req.parent）→ no-op（保持既有 @Roles 行为）。
+   * fail-safe：
+   *   - req.parent 但 parentRepo 缺失（buildParentChildIdsResolver 返 undefined）→ 拒绝；
+   *   - req.parent 但 resourceStudentId 取不到（资源不存在/字段缺失）→ 拒绝（不让无归属资源溜过）。
+   *
+   * 不透明 message：与 assertStudentByStudentScope 一致——只回调用方自己传入的 resource 上下文，
+   *   不回显该 parent 其他孩子的 studentId（防 IDOR 侧信道）。detailed reason 落服务端日志。
+   *
+   * 无额外 binding 查询之外的 DB IO：resourceStudentId 由调用方从「读路径本就要查的资源行」复用
+   *   （C 复用 findInDb 返回的 row.studentId；B/D 写前先 findInDb 拿 studentId 再写，仅 parent 流）。
+   */
+  private async assertParentOwnsResourceStudent(
+    req: AuthenticatedRequest,
+    tenantSchema: string,
+    resourceStudentId: string | null | undefined,
+    endpoint: string,
+  ): Promise<void> {
+    if (!req.parent) return; // 非 parent c 端流 → B 端 @Roles 已管，no-op
+    const resolveChildIds = this.buildParentChildIdsResolver(req, tenantSchema);
+    if (!resolveChildIds || !resourceStudentId) {
+      // fail-safe：parentRepo 缺失 或 资源无 student_id → 无法验绑定 → 保守拒绝
+      this.feedbackScopeLogger.warn(
+        `[parent-resource-scope deny] endpoint=${endpoint} ` +
+          `reason=${!resolveChildIds ? 'parentRepo missing' : 'resourceStudentId missing'} ` +
+          `(parent=${req.parent.parentId ?? req.parent.sub ?? 'unknown'})`,
+      );
+      throw new ForbiddenException(`PARENT_RESOURCE_ACCESS_DENIED[${endpoint}]`);
+    }
+    const childIds = await resolveChildIds();
+    if (childIds.includes(resourceStudentId)) return; // 自己孩子的资源 → 放行
+    // 越权：他人孩子的 feedbackId/reportId。detailed（含 childIds）只落日志，不回 client。
+    this.feedbackScopeLogger.warn(
+      `[parent-resource-scope deny] endpoint=${endpoint} ` +
+        `resourceStudent=${resourceStudentId} not in active bindings [${childIds.join(',')}] ` +
+        `(parent=${req.parent.parentId ?? req.parent.sub ?? 'unknown'})`,
+    );
+    throw new ForbiddenException(`PARENT_RESOURCE_ACCESS_DENIED[${endpoint}]`);
   }
 
   /**
@@ -572,6 +675,12 @@ export class FeedbackController {
    * Sprint B: parent-read 由家长 c 端打"已读"，但 endpoint 仍可被 admin / boss 调（运营回放）
    *   - 走 middleware isParentDbPath 分支（/api/db/lesson-feedbacks/ 前缀），parent JWT 也能调
    *   - RbacGuard 这道闸默认放行无 @Roles 路由（含 parent role 走 parent JWT 流时 req.user.role='parent'）
+   *
+   * 2026-06-01 parent↔resource IDOR 收口（端点 B，写操作）：
+   *   middleware 仅验 parent↔租户 → 家长传他人孩子的 feedbackId 可把他人反馈打"已读"（写他人数据）。
+   *   修法：**parent c 端流**写前先 findInDb 拿该反馈的 studentId，校验 ∈ 自己 active 绑定才放行；
+   *   不在 → 403 且**不写**。B 端角色（admin/boss，无 req.parent）保持原有可达性（不做绑定校验，
+   *   不增 pre-fetch IO）——只在 parent 流多 1 次 findInDb 读。
    */
   @Post('db/lesson-feedbacks/:feedbackId/parent-read')
   @HttpCode(HttpStatus.OK)
@@ -580,6 +689,16 @@ export class FeedbackController {
     @Body() body: { tenantSchema: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<LessonFeedback> {
+    // parent c 端流：写前校验 feedbackId 归属（防同租户跨家庭打"已读"）。B 端角色 → 跳过（无 pre-fetch）。
+    if (req.parent) {
+      const fb = await this.feedback.findInDb(feedbackId, body.tenantSchema, req.user?.role);
+      await this.assertParentOwnsResourceStudent(
+        req,
+        body.tenantSchema,
+        fb.studentId,
+        'lesson-feedbacks/parent-read',
+      );
+    }
     // 2026-05-31 安全审残留路径修复：透传 caller role，service 剥离 teacherInternalNote
     return this.feedback.markParentReadInDb(feedbackId, body.tenantSchema, req.user?.role);
   }
@@ -903,6 +1022,13 @@ export class FeedbackController {
    *
    * 双轨硬红线：parent role JWT 强制 audience='parent'（自动遮蔽不抛 403，UX 友好）
    * 其他 role 默认 audience='teacher'（除非 body 显式传 audience）
+   *
+   * 2026-06-01 parent↔resource IDOR 收口（端点 C，读操作）：
+   *   本端点仅 @UseGuards(TenantScopeGuard) 无 @Roles，parent JWT 经 isParentDbPath
+   *   （monthly-reports/:id/find 白名单）可达；resolveAudience 只遮蔽字段不拦访问 →
+   *   家长传他人孩子 reportId 仍能读到他人月报（家长视角字段=孩子教学隐私）。
+   *   修法：**parent c 端流**用 service 已返回的 row.studentId（复用读路径，无额外 DB IO）
+   *   校验 ∈ 自己 active 绑定，不在 → 403（响应体不返出）。B 端角色（无 req.parent）→ 不校验。
    */
   @Post('db/monthly-reports/:reportId/find')
   @UseGuards(TenantScopeGuard)
@@ -913,13 +1039,29 @@ export class FeedbackController {
     @Req() req: AuthenticatedRequest,
   ): Promise<MonthlyReport> {
     const audience = this.resolveAudience(req, body.audience);
-    return this.report.findInDb(reportId, body.tenantSchema, audience);
+    const report = await this.report.findInDb(reportId, body.tenantSchema, audience);
+    // parent c 端流：校验该月报归属（复用 report.studentId，不额外查库）。不在自己绑定 → 403 不返出。
+    await this.assertParentOwnsResourceStudent(
+      req,
+      body.tenantSchema,
+      report.studentId,
+      'monthly-reports/find',
+    );
+    return report;
   }
 
   /**
    * V36 拓展 — listByStudent 按 audience 切换 SELECT
    *
    * 同 find：parent role JWT 强制 audience='parent'
+   *
+   * 2026-06-01 安全审 MEDIUM-2（同租户 by-student IDOR）：本端点在 middleware isParentDbPath
+   *   白名单（monthly-reports）覆盖内，但原缺 owner-scope → 家长可传同租户任意孩子 studentId
+   *   读他人月报（含孩子教学数据=隐私；2026-05-11 修复只堵跨租户没堵同租户跨家庭）。
+   *   修法：复刻 listFeedbacksByStudentInDb 的 assertByStudentScope（sales own-customer /
+   *   teacher own-class / parent own-binding / academic+admin 本校 / finance+hr 拒）。
+   *   注：scope 校验在前，resolveAudience parent 视角遮蔽在后，两者并存（前者限「可访问哪个学员」，
+   *   后者限「parent 只看家长版字段」）。
    */
   @Post('db/students/:studentId/monthly-reports')
   @UseGuards(TenantScopeGuard)
@@ -929,6 +1071,12 @@ export class FeedbackController {
     @Body() body: { tenantSchema: string; audience?: ReportAudience },
     @Req() req: AuthenticatedRequest,
   ): Promise<MonthlyReport[]> {
+    // 2026-06-01 同租户 by-student IDOR 修复：owner-scope 收口（与 feedbacks by-student 同款）
+    //   - sales 只看 ownerSalesId===自己；teacher 只看自己班；parent c 端只看自己绑定的孩子
+    //   - academic/academic_admin/marketing/admin/boss 本校放行；finance/hr 拒
+    //   - 越权（传他人学员 studentId）→ ForbiddenException
+    await this.assertByStudentScope(studentId, body.tenantSchema, req, 'monthly-reports');
+
     const audience = this.resolveAudience(req, body.audience);
     return this.report.listByStudentInDb(studentId, body.tenantSchema, audience);
   }
@@ -1016,6 +1164,11 @@ export class FeedbackController {
    *   - TenantScopeGuard 兜底: 即便 parent role 也走 body.tenantId/x-tenant-schema 校验
    *   - 不加 @Roles: parent role 是合法调用者 (RbacGuard 默认放行无 @Roles 路由)
    *   - Idempotency: parent 双击「已读」防重复写 parent_read_at (虽然 COALESCE 幂等, 加一层稳)
+   *
+   * 2026-06-01 parent↔resource IDOR 收口（端点 D，写操作）：
+   *   原无 @Req、middleware 仅验 parent↔租户 → 家长传他人孩子 reportId 可把他人月报打"已读"。
+   *   修法：加 @Req；**parent c 端流**写前先 findInDb 拿该月报 studentId，校验 ∈ 自己 active 绑定
+   *   才放行，不在 → 403 且**不写**。B 端角色（无 req.parent）保持原有可达性（不校验、不增 pre-fetch）。
    */
   @Post('db/monthly-reports/:reportId/parent-read')
   @UseGuards(TenantScopeGuard)
@@ -1024,7 +1177,19 @@ export class FeedbackController {
   async markParentReadReportInDb(
     @Param('reportId') reportId: string,
     @Body() body: { tenantSchema: string },
+    @Req() req: AuthenticatedRequest,
   ): Promise<MonthlyReport> {
+    // parent c 端流：写前校验 reportId 归属（防同租户跨家庭打"已读"）。B 端角色 → 跳过（无 pre-fetch）。
+    if (req.parent) {
+      // parent 视角读（findInDb 默认 audience 不影响 studentId），仅用于拿归属做绑定校验。
+      const report = await this.report.findInDb(reportId, body.tenantSchema, 'parent');
+      await this.assertParentOwnsResourceStudent(
+        req,
+        body.tenantSchema,
+        report.studentId,
+        'monthly-reports/parent-read',
+      );
+    }
     return this.report.markParentReadInDb(reportId, body.tenantSchema);
   }
 

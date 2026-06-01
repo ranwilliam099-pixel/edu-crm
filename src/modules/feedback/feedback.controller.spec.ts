@@ -16,6 +16,7 @@ import { CourseConsumptionService } from './course-consumption.service';
 import { MonthlyReportService } from './monthly-report.service';
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
+import { ParentRepository } from '../db/parent.repository';
 import { AuditLogRepository } from '../db/audit-log.repository';
 import { ContentModerationService } from '../security/content-moderation.service';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
@@ -27,6 +28,7 @@ describe('FeedbackController — Sprint B self-check', () => {
     submitInDb: jest.Mock;
     updateInDb: jest.Mock;
     listByStudentInDb: jest.Mock;
+    markParentReadInDb: jest.Mock;
   };
   let consumptionSvc: Record<string, jest.Mock>;
   let reportSvc: {
@@ -34,9 +36,12 @@ describe('FeedbackController — Sprint B self-check', () => {
     finalizeInDb: jest.Mock;
     finalizeParentInDb: jest.Mock;
     listPendingFinalizeInDb: jest.Mock;
+    listByStudentInDb: jest.Mock;
+    markParentReadInDb: jest.Mock;
   };
   let teacherRepo: { findById: jest.Mock; findByUserId: jest.Mock };
   let studentRepo: { findBrief: jest.Mock };
+  let parentRepo: { findChildrenByParent: jest.Mock };
   let auditLog: { log: jest.Mock };
   let contentModeration: { enforceStaffText: jest.Mock };
 
@@ -86,6 +91,7 @@ describe('FeedbackController — Sprint B self-check', () => {
       submitInDb: jest.fn(),
       updateInDb: jest.fn(),
       listByStudentInDb: jest.fn().mockResolvedValue([]),
+      markParentReadInDb: jest.fn(),
     };
     consumptionSvc = {};
     reportSvc = {
@@ -93,9 +99,12 @@ describe('FeedbackController — Sprint B self-check', () => {
       finalizeInDb: jest.fn(),
       finalizeParentInDb: jest.fn(),
       listPendingFinalizeInDb: jest.fn(),
+      listByStudentInDb: jest.fn().mockResolvedValue([]),
+      markParentReadInDb: jest.fn(),
     };
     teacherRepo = { findById: jest.fn(), findByUserId: jest.fn() };
     studentRepo = { findBrief: jest.fn() };
+    parentRepo = { findChildrenByParent: jest.fn() };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     contentModeration = { enforceStaffText: jest.fn().mockResolvedValue(undefined) };
 
@@ -107,6 +116,7 @@ describe('FeedbackController — Sprint B self-check', () => {
       contentModeration as unknown as ContentModerationService,
       auditLog as unknown as AuditLogRepository,
       studentRepo as unknown as StudentRepository,
+      parentRepo as unknown as ParentRepository,
     );
   });
 
@@ -780,20 +790,54 @@ describe('FeedbackController — Sprint B self-check', () => {
       expect(feedbackSvc.listByStudentInDb).toHaveBeenCalledTimes(1);
     });
 
-    it('parent c 端流（req.parent）→ bypass（绑定已 middleware 校验）', async () => {
+    // 2026-06-01 parent↔student 绑定 IDOR 修复：parent c 端流不再无条件 bypass
+    //   TENANT = 'tenant_teacher_self_check_xxxxxxxx' → 派生 tenantId = 'teacher_self_check_xxxxxxxx'
+    const PARENT_ID = 'parent000000000000000000000P001';
+    const TENANT_ID_RAW = 'teacher_self_check_xxxxxxxx';
+    const parentReqOpts = {
+      user: { sub: PARENT_ID, role: 'parent' as any, tenantId: 't', campusId: null },
+      parent: { sub: PARENT_ID, parentId: PARENT_ID, role: 'parent' as const },
+    };
+
+    it('parent c 端流 自己孩子（studentId ∈ active 绑定）→ 放行（service 按 role 剥离）', async () => {
       mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
-      await controller.listFeedbacksByStudentInDb(
-        STUDENT,
-        body,
-        mkReq({
-          user: { sub: 'parent000000000000000000000P001', role: 'parent' as any, tenantId: 't', campusId: null },
-          parent: { sub: 'parent000000000000000000000P001', parentId: 'parent000000000000000000000P001', role: 'parent' },
-        }),
-      );
-      // bypass：仍走 service（service 层按 role='parent' 剥离 teacherInternalNote）
+      parentRepo.findChildrenByParent.mockResolvedValueOnce([
+        { studentId: STUDENT, tenantId: TENANT_ID_RAW, bindingStatus: 'active' },
+      ]);
+      await controller.listFeedbacksByStudentInDb(STUDENT, body, mkReq(parentReqOpts));
+      expect(parentRepo.findChildrenByParent).toHaveBeenCalledWith(PARENT_ID);
       expect(feedbackSvc.listByStudentInDb).toHaveBeenCalledTimes(1);
-      // parent bypass：不做 teacher own-class 反查（findBrief 仍读但 verdict 直接放行）
+      // parent 自己孩子：不做 teacher own-class 反查
       expect(teacherRepo.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it('parent c 端流 他人孩子（studentId ∉ active 绑定）→ 403，不查反馈（同租户 IDOR 拦截）', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      parentRepo.findChildrenByParent.mockResolvedValueOnce([
+        { studentId: 'otherChild00000000000000000O001', tenantId: TENANT_ID_RAW, bindingStatus: 'active' },
+      ]);
+      await expect(
+        controller.listFeedbacksByStudentInDb(STUDENT, body, mkReq(parentReqOpts)),
+      ).rejects.toThrow(ForbiddenException);
+      expect(feedbackSvc.listByStudentInDb).not.toHaveBeenCalled();
+    });
+
+    it('parent 流但 parentRepo 未注入 → 保守拒绝（fail-safe）', async () => {
+      const c = new FeedbackController(
+        feedbackSvc as unknown as LessonFeedbackService,
+        consumptionSvc as unknown as CourseConsumptionService,
+        reportSvc as unknown as MonthlyReportService,
+        teacherRepo as unknown as TeacherRepository,
+        contentModeration as unknown as ContentModerationService,
+        auditLog as unknown as AuditLogRepository,
+        studentRepo as unknown as StudentRepository,
+        // parentRepo 缺失
+      );
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      await expect(
+        c.listFeedbacksByStudentInDb(STUDENT, body, mkReq(parentReqOpts)),
+      ).rejects.toThrow(ForbiddenException);
+      expect(feedbackSvc.listByStudentInDb).not.toHaveBeenCalled();
     });
 
     it('学员不存在（findBrief=null）→ 放行（避免 enumeration 侧信道，service 返空）', async () => {
@@ -805,6 +849,275 @@ describe('FeedbackController — Sprint B self-check', () => {
       );
       expect(r).toEqual([]);
       expect(feedbackSvc.listByStudentInDb).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ============================================================
+  // 2026-06-01 安全审 MEDIUM-2：listReportsByStudentInDb owner-scope（同租户 by-student IDOR）
+  //   月报含孩子教学数据=隐私；本端点在 middleware isParentDbPath 白名单内但原缺 owner-scope →
+  //   家长可读同租户任意孩子月报。复刻 feedbacks by-student scope（scope 在前 / audience 遮蔽在后）。
+  // ============================================================
+  describe('listReportsByStudentInDb — by-student owner-scope（IDOR 修复）', () => {
+    const STUDENT = 'stu00000000000000000000000000S001';
+    const SALES_A = 'salesA0000000000000000000000A001';
+    const SALES_B = 'salesB0000000000000000000000B001';
+
+    function mockStudent(
+      overrides: Partial<{ ownerSalesId: string | null; assignedTeacherId: string | null }> = {},
+    ) {
+      studentRepo.findBrief.mockResolvedValueOnce({
+        id: STUDENT,
+        studentName: '小明',
+        customerId: 'cust00000000000000000000000000A1',
+        ownerSalesId: SALES_A,
+        assignedTeacherId: TEACHER_T1,
+        ownerChangedAt: null,
+        ownerChangeReason: null,
+        gradeOrAge: null,
+        currentGrade: null,
+        gradeBaseYear: null,
+        intendedSubject: null,
+        ...overrides,
+      });
+    }
+
+    const body = { tenantSchema: TENANT };
+
+    it('teacher 自己班学员 → 放行（service 收口 audience=teacher）', async () => {
+      mockStudent({ assignedTeacherId: TEACHER_T1 });
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1); // U1 → T1
+      const r = await controller.listReportsByStudentInDb(STUDENT, body, mkReq());
+      expect(r).toEqual([]);
+      // scope 在前，resolveAudience 在后：teacher role 默认 audience='teacher'
+      expect(reportSvc.listByStudentInDb).toHaveBeenCalledWith(STUDENT, TENANT, 'teacher');
+    });
+
+    it('teacher 非自己班学员 → 403，不查月报', async () => {
+      mockStudent({ assignedTeacherId: TEACHER_T2 }); // 学员归 T2
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1); // 调用者反查得 T1
+      await expect(
+        controller.listReportsByStudentInDb(STUDENT, body, mkReq()),
+      ).rejects.toThrow(ForbiddenException);
+      expect(reportSvc.listByStudentInDb).not.toHaveBeenCalled();
+    });
+
+    it('sales 自己客户学员（ownerSalesId === me）→ 放行', async () => {
+      mockStudent({ ownerSalesId: SALES_A });
+      const r = await controller.listReportsByStudentInDb(
+        STUDENT,
+        body,
+        mkReq({ user: { sub: SALES_A, role: 'sales', tenantId: 't', campusId: 'c' } }),
+      );
+      expect(r).toEqual([]);
+      expect(reportSvc.listByStudentInDb).toHaveBeenCalledTimes(1);
+      expect(teacherRepo.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it('sales 他人客户学员（ownerSalesId !== me）→ 403，不查月报', async () => {
+      mockStudent({ ownerSalesId: SALES_B });
+      await expect(
+        controller.listReportsByStudentInDb(
+          STUDENT,
+          body,
+          mkReq({ user: { sub: SALES_A, role: 'sales', tenantId: 't', campusId: 'c' } }),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(reportSvc.listByStudentInDb).not.toHaveBeenCalled();
+    });
+
+    it('academic 本校任意学员 → 放行（不 owner 收口）', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      await controller.listReportsByStudentInDb(
+        STUDENT,
+        body,
+        mkReq({ user: { sub: 'acd000000000000000000000000A001', role: 'academic', tenantId: 't', campusId: 'c' } }),
+      );
+      expect(reportSvc.listByStudentInDb).toHaveBeenCalledTimes(1);
+    });
+
+    // parent c 端流：scope 校验在前（绑定校验），audience='parent' 遮蔽在后，两者并存
+    //   TENANT = 'tenant_teacher_self_check_xxxxxxxx' → 派生 tenantId = 'teacher_self_check_xxxxxxxx'
+    const PARENT_ID = 'parent000000000000000000000P001';
+    const TENANT_ID_RAW = 'teacher_self_check_xxxxxxxx';
+    const parentReqOpts = {
+      user: { sub: PARENT_ID, role: 'parent' as any, tenantId: 't', campusId: null },
+      parent: { sub: PARENT_ID, parentId: PARENT_ID, role: 'parent' as const },
+    };
+
+    it('parent c 端流 自己孩子（studentId ∈ active 绑定）→ 放行 + audience 强制 parent', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      parentRepo.findChildrenByParent.mockResolvedValueOnce([
+        { studentId: STUDENT, tenantId: TENANT_ID_RAW, bindingStatus: 'active' },
+      ]);
+      await controller.listReportsByStudentInDb(STUDENT, body, mkReq(parentReqOpts));
+      expect(parentRepo.findChildrenByParent).toHaveBeenCalledWith(PARENT_ID);
+      // scope 通过后 resolveAudience(req.parent) 强制 'parent'（家长视角遮蔽仍生效）
+      expect(reportSvc.listByStudentInDb).toHaveBeenCalledWith(STUDENT, TENANT, 'parent');
+    });
+
+    it('parent c 端流 他人孩子（studentId ∉ active 绑定）→ 403，不查月报（同租户 IDOR 拦截）', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      parentRepo.findChildrenByParent.mockResolvedValueOnce([
+        { studentId: 'otherChild00000000000000000O001', tenantId: TENANT_ID_RAW, bindingStatus: 'active' },
+      ]);
+      await expect(
+        controller.listReportsByStudentInDb(STUDENT, body, mkReq(parentReqOpts)),
+      ).rejects.toThrow(ForbiddenException);
+      expect(reportSvc.listByStudentInDb).not.toHaveBeenCalled();
+    });
+
+    it('学员不存在（findBrief=null）→ 放行（避免 enumeration 侧信道，service 返空）', async () => {
+      studentRepo.findBrief.mockResolvedValueOnce(null);
+      const r = await controller.listReportsByStudentInDb(
+        STUDENT,
+        body,
+        mkReq({ user: { sub: SALES_A, role: 'sales', tenantId: 't', campusId: 'c' } }),
+      );
+      expect(r).toEqual([]);
+      expect(reportSvc.listByStudentInDb).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ============================================================
+  // 2026-06-01 parent↔resource 单资源 IDOR 收口（by-student 列表之外的残留）
+  //   B markParentReadFeedbackInDb / C findReportInDb / D markParentReadReportInDb
+  //   middleware 仅验 parent↔租户，单资源端点（feedbackId/reportId）原缺 parent↔child 绑定校验。
+  //   TENANT = 'tenant_teacher_self_check_xxxxxxxx' → 派生 tenantId = 'teacher_self_check_xxxxxxxx'
+  // ============================================================
+  describe('parent↔resource 单资源 IDOR（B/C/D）', () => {
+    const STUDENT_MINE = 'stu00000000000000000000000mine01'; // 家长自己孩子
+    const STUDENT_OTHER = 'stu0000000000000000000000other01'; // 他人孩子
+    const FEEDBACK_ID = 'fbk00000000000000000000000000F001';
+    const PARENT_ID = 'parent000000000000000000000P001';
+    const TENANT_ID_RAW = 'teacher_self_check_xxxxxxxx';
+    const body = { tenantSchema: TENANT };
+
+    const parentReq = () =>
+      mkReq({
+        user: { sub: PARENT_ID, role: 'parent' as any, tenantId: 't', campusId: null },
+        parent: { sub: PARENT_ID, parentId: PARENT_ID, role: 'parent' as const },
+      });
+
+    // B 端运营回放角色（admin）：无 req.parent → 不做绑定校验、不 pre-fetch
+    const adminReq = () =>
+      mkReq({ user: { sub: 'adm000000000000000000000000A001', role: 'admin', tenantId: null, campusId: null } });
+
+    const bindMine = () =>
+      parentRepo.findChildrenByParent.mockResolvedValueOnce([
+        { studentId: STUDENT_MINE, tenantId: TENANT_ID_RAW, bindingStatus: 'active' },
+      ]);
+
+    // ---------- B: lesson-feedbacks/:id/parent-read（写） ----------
+    describe('B markParentReadFeedbackInDb', () => {
+      it('parent 自己孩子的反馈 → 校验通过后写"已读"', async () => {
+        feedbackSvc.findInDb.mockResolvedValueOnce({ id: FEEDBACK_ID, studentId: STUDENT_MINE });
+        feedbackSvc.markParentReadInDb.mockResolvedValueOnce({ id: FEEDBACK_ID, studentId: STUDENT_MINE });
+        bindMine();
+        const r = await controller.markParentReadFeedbackInDb(FEEDBACK_ID, body, parentReq());
+        expect(r).toEqual({ id: FEEDBACK_ID, studentId: STUDENT_MINE });
+        // 写前先 findInDb 拿 studentId 校验归属，再写
+        expect(feedbackSvc.findInDb).toHaveBeenCalledWith(FEEDBACK_ID, TENANT, 'parent');
+        expect(feedbackSvc.markParentReadInDb).toHaveBeenCalledTimes(1);
+      });
+
+      it('parent 他人孩子的 feedbackId → 403，且不写"已读"（同租户跨家庭拦截）', async () => {
+        feedbackSvc.findInDb.mockResolvedValueOnce({ id: FEEDBACK_ID, studentId: STUDENT_OTHER });
+        bindMine(); // 绑定只含 STUDENT_MINE
+        await expect(
+          controller.markParentReadFeedbackInDb(FEEDBACK_ID, body, parentReq()),
+        ).rejects.toThrow(ForbiddenException);
+        expect(feedbackSvc.markParentReadInDb).not.toHaveBeenCalled();
+      });
+
+      it('parent 流但 parentRepo 未注入 → 保守拒绝（fail-safe），不写', async () => {
+        const c = new FeedbackController(
+          feedbackSvc as unknown as LessonFeedbackService,
+          consumptionSvc as unknown as CourseConsumptionService,
+          reportSvc as unknown as MonthlyReportService,
+          teacherRepo as unknown as TeacherRepository,
+          contentModeration as unknown as ContentModerationService,
+          auditLog as unknown as AuditLogRepository,
+          studentRepo as unknown as StudentRepository,
+          // parentRepo 缺失
+        );
+        feedbackSvc.findInDb.mockResolvedValueOnce({ id: FEEDBACK_ID, studentId: STUDENT_MINE });
+        await expect(
+          c.markParentReadFeedbackInDb(FEEDBACK_ID, body, parentReq()),
+        ).rejects.toThrow(ForbiddenException);
+        expect(feedbackSvc.markParentReadInDb).not.toHaveBeenCalled();
+      });
+
+      it('B 端 admin（无 req.parent）→ 不做绑定校验、不 pre-fetch，直接写', async () => {
+        feedbackSvc.markParentReadInDb.mockResolvedValueOnce({ id: FEEDBACK_ID, studentId: STUDENT_OTHER });
+        await controller.markParentReadFeedbackInDb(FEEDBACK_ID, body, adminReq());
+        // admin 运营回放保持既有可达性：不预读、不查绑定
+        expect(feedbackSvc.findInDb).not.toHaveBeenCalled();
+        expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
+        expect(feedbackSvc.markParentReadInDb).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    // ---------- C: monthly-reports/:id/find（读） ----------
+    describe('C findReportInDb', () => {
+      const REPORT_ID2 = 'rep00000000000000000000000000R002';
+
+      it('parent 自己孩子的月报 → 放行（复用返回 row.studentId 校验，无额外查库）', async () => {
+        reportSvc.findInDb.mockResolvedValueOnce({ id: REPORT_ID2, studentId: STUDENT_MINE });
+        bindMine();
+        const r = await controller.findReportInDb(REPORT_ID2, body, parentReq());
+        expect(r).toEqual({ id: REPORT_ID2, studentId: STUDENT_MINE });
+        // parent JWT 强制 audience='parent'
+        expect(reportSvc.findInDb).toHaveBeenCalledWith(REPORT_ID2, TENANT, 'parent');
+        expect(parentRepo.findChildrenByParent).toHaveBeenCalledWith(PARENT_ID);
+      });
+
+      it('parent 他人孩子的 reportId → 403（响应体不返出）', async () => {
+        reportSvc.findInDb.mockResolvedValueOnce({ id: REPORT_ID2, studentId: STUDENT_OTHER });
+        bindMine();
+        await expect(
+          controller.findReportInDb(REPORT_ID2, body, parentReq()),
+        ).rejects.toThrow(ForbiddenException);
+      });
+
+      it('B 端 teacher（无 req.parent）→ 不校验绑定，按 audience=teacher 返回', async () => {
+        reportSvc.findInDb.mockResolvedValueOnce({ id: REPORT_ID2, studentId: STUDENT_OTHER });
+        const r = await controller.findReportInDb(REPORT_ID2, body, mkReq());
+        expect(r).toEqual({ id: REPORT_ID2, studentId: STUDENT_OTHER });
+        expect(reportSvc.findInDb).toHaveBeenCalledWith(REPORT_ID2, TENANT, 'teacher');
+        expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
+      });
+    });
+
+    // ---------- D: monthly-reports/:id/parent-read（写） ----------
+    describe('D markParentReadReportInDb', () => {
+      const REPORT_ID3 = 'rep00000000000000000000000000R003';
+
+      it('parent 自己孩子的月报 → 校验通过后写"已读"', async () => {
+        reportSvc.findInDb.mockResolvedValueOnce({ id: REPORT_ID3, studentId: STUDENT_MINE });
+        reportSvc.markParentReadInDb.mockResolvedValueOnce({ id: REPORT_ID3, studentId: STUDENT_MINE });
+        bindMine();
+        const r = await controller.markParentReadReportInDb(REPORT_ID3, body, parentReq());
+        expect(r).toEqual({ id: REPORT_ID3, studentId: STUDENT_MINE });
+        expect(reportSvc.findInDb).toHaveBeenCalledWith(REPORT_ID3, TENANT, 'parent');
+        expect(reportSvc.markParentReadInDb).toHaveBeenCalledTimes(1);
+      });
+
+      it('parent 他人孩子的 reportId → 403，且不写"已读"', async () => {
+        reportSvc.findInDb.mockResolvedValueOnce({ id: REPORT_ID3, studentId: STUDENT_OTHER });
+        bindMine();
+        await expect(
+          controller.markParentReadReportInDb(REPORT_ID3, body, parentReq()),
+        ).rejects.toThrow(ForbiddenException);
+        expect(reportSvc.markParentReadInDb).not.toHaveBeenCalled();
+      });
+
+      it('B 端 admin（无 req.parent）→ 不校验绑定、不 pre-fetch，直接写', async () => {
+        reportSvc.markParentReadInDb.mockResolvedValueOnce({ id: REPORT_ID3, studentId: STUDENT_OTHER });
+        await controller.markParentReadReportInDb(REPORT_ID3, body, adminReq());
+        expect(reportSvc.findInDb).not.toHaveBeenCalled();
+        expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
+        expect(reportSvc.markParentReadInDb).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });

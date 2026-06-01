@@ -24,6 +24,7 @@ import { Roles } from '../../guards/rbac.decorator';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
+import { ParentRepository } from '../db/parent.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 // 2026-06-01 同租户 by-student IDOR 修复：listAssignmentsByStudentInDb 缺 owner-scope
 //   （teacher 可读非自己班、sales 可读非自己客户学员作业）→ 复用 contract by-student 同款 scope。
@@ -55,6 +56,9 @@ export class HomeworkController {
     // 2026-06-01 by-student IDOR 修复：listAssignmentsByStudentInDb owner-scope 需查 student 归属。
     //   @Optional + 构造末尾：不破坏现有测试位置参数（由 @Global DbModule 注入，生产 / e2e 必有）。
     @Optional() private readonly studentRepo?: StudentRepository,
+    // 2026-06-01 parent↔student 绑定 IDOR 修复：parent c 端流校验 studentId ∈ 该 parent active 绑定。
+    //   middleware 仅验 parent↔租户，本 helper 补 parent↔student。@Optional + 构造末尾不破坏现有 spec。
+    @Optional() private readonly parentRepo?: ParentRepository,
   ) {}
 
   @Post('assignments')
@@ -393,7 +397,9 @@ export class HomeworkController {
   ): Promise<HomeworkAssignment[]> {
     // 2026-06-01 同租户 by-student IDOR 修复：owner-scope 收口
     //   - sales 只看自己客户学员作业；teacher 只看自己班（assignedTeacherId）
-    //   - academic/academic_admin/marketing/admin/boss 本校放行；parent c 端 bypass
+    //   - academic/academic_admin/marketing/admin/boss 本校放行；finance/hr 拒
+    //   - parent c 端流：middleware 仅验 parent↔租户，本 helper 经 resolveParentChildIds 补
+    //     parent↔student 绑定校验（studentId ∈ active 绑定才放行，非 bypass）
     //   - 越权（传他人学员 studentId）→ ForbiddenException
     await this.assertByStudentScope(studentId, body.tenantSchema, req, 'homework-assignments');
     return this.service.listAssignmentsByStudentInDb(studentId, body.tenantSchema);
@@ -404,7 +410,8 @@ export class HomeworkController {
    *
    * 先 studentRepo.findBrief 拿 ownerSalesId / assignedTeacherId，按 actorGroup 判定：
    *   - sales → ownerSalesId===me；teacher → 反查 teachers.id===assignedTeacherId；
-   *   - admin/academic/finance group → 本校放行；parent c 端 bypass。
+   *   - admin/academic group → 本校放行；
+   *   - parent c 端流 → studentId 必须 ∈ 该 parent 本租户 active 绑定（2026-06-01 parent IDOR 修复）。
    *
    * fail-open 兜底：studentRepo 未注入（isolated module test）→ 跳过 scope（仅 @Roles 兜底）。
    * 学员不存在 → 放行（service 返空，避免 enumeration 侧信道）。
@@ -427,7 +434,37 @@ export class HomeworkController {
           .findByUserId(schema, userId)
           .then((t) => t?.id ?? null),
       { endpoint, studentId },
+      this.buildParentChildIdsResolver(req, tenantSchema),
     );
+  }
+
+  /**
+   * 2026-06-01 parent↔student 绑定 IDOR 修复：返回 parent c 端流时反查闭包。
+   *   非 parent 流（无 req.parent）→ undefined（helper parent 分支不触发，省 DB IO）。
+   *   parent 流但 parentRepo 未注入（isolated unit test）→ undefined → helper 保守拒绝。
+   *
+   * 闭包查 parentRepo.findChildrenByParent（SQL 已过滤 binding_status='active'），再按
+   *   当前 tenantSchema 派生的 tenantId 过滤（跨机构家长可能绑多租户），映射出 student id 列表。
+   */
+  private buildParentChildIdsResolver(
+    req: AuthenticatedRequest,
+    tenantSchema: string,
+  ): (() => Promise<string[]>) | undefined {
+    if (!req.parent || !this.parentRepo) return undefined;
+    const parentRepo = this.parentRepo;
+    const parentId = req.parent.parentId ?? req.parent.sub;
+    const tenantId = tenantSchema.replace(/^tenant_/, '').toLowerCase();
+    return async () => {
+      if (!parentId) return [];
+      const bindings = await parentRepo.findChildrenByParent(parentId);
+      return bindings
+        .filter(
+          (b) =>
+            b.bindingStatus === 'active' &&
+            b.tenantId.toLowerCase() === tenantId,
+        )
+        .map((b) => b.studentId);
+    };
   }
 
   /**

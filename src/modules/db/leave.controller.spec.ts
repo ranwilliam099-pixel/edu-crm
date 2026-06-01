@@ -45,6 +45,7 @@ import { LeaveController } from './leave.controller';
 import { LeaveRepository, Leave, LeaveType } from './leave.repository';
 import { StudentRepository } from './student.repository';
 import { TeacherRepository } from './teacher.repository';
+import { ParentRepository } from './parent.repository';
 import { ContentModerationService } from '../security/content-moderation.service';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
@@ -59,6 +60,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
   let contentModeration: { enforceStaffText: jest.Mock };
   let studentRepo: { findBrief: jest.Mock };
   let teacherRepo: { findByUserId: jest.Mock };
+  let parentRepo: { findChildrenByParent: jest.Mock };
 
   // 32-char ULID 固定值
   const TENANT_SCHEMA = 'tenant_leave000000000000000000ab01';
@@ -99,11 +101,13 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
     };
     studentRepo = { findBrief: jest.fn() };
     teacherRepo = { findByUserId: jest.fn() };
+    parentRepo = { findChildrenByParent: jest.fn() };
     controller = new LeaveController(
       leaveRepo as unknown as LeaveRepository,
       contentModeration as unknown as ContentModerationService,
       studentRepo as unknown as StudentRepository,
       teacherRepo as unknown as TeacherRepository,
+      parentRepo as unknown as ParentRepository,
     );
 
     jest.spyOn(Date, 'now').mockReturnValue(NOW_MS);
@@ -466,7 +470,7 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
   // ============================================================
   // 2026-06-01 同租户 by-student IDOR 修复：listByStudent owner-scope
   //   请假记录含家长/学员请假理由（隐私）→ teacher 只看自己班、sales 只看自己客户学员，
-  //   academic group / admin / finance 本校放行，parent c 端 bypass，越权 → 403。
+  //   academic group / admin 本校放行（finance 由 helper 拒绝），parent c 端绑定校验，越权 → 403。
   // ============================================================
   describe('listByStudent() — by-student owner-scope（IDOR 修复）', () => {
     const SALES_A = 'salesA0000000000000000000000A001';
@@ -578,20 +582,86 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
       expect(leaveRepo.findByStudent).toHaveBeenCalledTimes(1);
     });
 
-    it('parent c 端流（req.parent）→ bypass（绑定已 middleware 校验）', async () => {
+    // 2026-06-01 parent↔student 绑定 IDOR 修复：parent c 端流不再无条件 bypass
+    //   tenantId = TENANT_SCHEMA 去 'tenant_' 前缀 = 'leave000000000000000000ab01'
+    const PARENT_ID = 'parent000000000000000000000P001';
+    const TENANT_ID_RAW = 'leave000000000000000000ab01';
+    const parentReq = () =>
+      scReq({
+        user: { sub: PARENT_ID, role: 'parent' as any, tenantId: 't', campusId: null },
+        parent: { sub: PARENT_ID, parentId: PARENT_ID, role: 'parent' },
+      });
+
+    it('parent c 端流（req.parent）自己孩子（studentId ∈ active 绑定）→ 放行', async () => {
       mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      parentRepo.findChildrenByParent.mockResolvedValueOnce([
+        { studentId: STUDENT_ID, tenantId: TENANT_ID_RAW, bindingStatus: 'active' },
+      ]);
       leaveRepo.findByStudent.mockResolvedValueOnce([]);
-      await controller.listByStudent(
-        STUDENT_ID,
-        TENANT_SCHEMA,
-        {},
-        scReq({
-          user: { sub: 'parent000000000000000000000P001', role: 'parent' as any, tenantId: 't', campusId: null },
-          parent: { sub: 'parent000000000000000000000P001', parentId: 'parent000000000000000000000P001', role: 'parent' },
-        }),
-      );
+      await controller.listByStudent(STUDENT_ID, TENANT_SCHEMA, {}, parentReq());
+      expect(parentRepo.findChildrenByParent).toHaveBeenCalledWith(PARENT_ID);
       expect(leaveRepo.findByStudent).toHaveBeenCalledTimes(1);
       expect(teacherRepo.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it('parent c 端流 他人孩子（studentId ∉ active 绑定）→ 403，不查请假（同租户 IDOR 拦截）', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      parentRepo.findChildrenByParent.mockResolvedValueOnce([
+        { studentId: 'otherChild00000000000000000O001', tenantId: TENANT_ID_RAW, bindingStatus: 'active' },
+      ]);
+      await expect(
+        controller.listByStudent(STUDENT_ID, TENANT_SCHEMA, {}, parentReq()),
+      ).rejects.toThrow(ForbiddenException);
+      expect(leaveRepo.findByStudent).not.toHaveBeenCalled();
+    });
+
+    it('parent c 端流 绑定属其他租户（tenant 不匹配）→ 403（跨租户绑定不算数）', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      parentRepo.findChildrenByParent.mockResolvedValueOnce([
+        { studentId: STUDENT_ID, tenantId: 'othertenant0000000000000000X9', bindingStatus: 'active' },
+      ]);
+      await expect(
+        controller.listByStudent(STUDENT_ID, TENANT_SCHEMA, {}, parentReq()),
+      ).rejects.toThrow(ForbiddenException);
+      expect(leaveRepo.findByStudent).not.toHaveBeenCalled();
+    });
+
+    it('parent c 端流 绑定非 active（已解绑）→ 403', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      parentRepo.findChildrenByParent.mockResolvedValueOnce([
+        { studentId: STUDENT_ID, tenantId: TENANT_ID_RAW, bindingStatus: 'unbound' },
+      ]);
+      await expect(
+        controller.listByStudent(STUDENT_ID, TENANT_SCHEMA, {}, parentReq()),
+      ).rejects.toThrow(ForbiddenException);
+      expect(leaveRepo.findByStudent).not.toHaveBeenCalled();
+    });
+
+    it('parent 流但 parentRepo 未注入 → 保守拒绝（fail-safe）', async () => {
+      const c = new LeaveController(
+        leaveRepo as unknown as LeaveRepository,
+        contentModeration as unknown as ContentModerationService,
+        studentRepo as unknown as StudentRepository,
+        teacherRepo as unknown as TeacherRepository,
+        // parentRepo 缺失
+      );
+      studentRepo.findBrief.mockResolvedValueOnce({
+        id: STUDENT_ID,
+        studentName: '小刚',
+        customerId: 'cust00000000000000000000000000L1',
+        ownerSalesId: SALES_A,
+        assignedTeacherId: TEACHER_T1,
+        ownerChangedAt: null,
+        ownerChangeReason: null,
+        gradeOrAge: null,
+        currentGrade: null,
+        gradeBaseYear: null,
+        intendedSubject: null,
+      });
+      await expect(
+        c.listByStudent(STUDENT_ID, TENANT_SCHEMA, {}, parentReq()),
+      ).rejects.toThrow(ForbiddenException);
+      expect(leaveRepo.findByStudent).not.toHaveBeenCalled();
     });
 
     it('学员不存在（findBrief=null）→ 放行（避免 enumeration 侧信道）', async () => {

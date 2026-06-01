@@ -13,6 +13,7 @@ import { HomeworkController } from './homework.controller';
 import { HomeworkService, HomeworkAssignment } from './homework.service';
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
+import { ParentRepository } from '../db/parent.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 describe('HomeworkController — by-student owner-scope（2026-06-01 IDOR 修复）', () => {
@@ -20,6 +21,7 @@ describe('HomeworkController — by-student owner-scope（2026-06-01 IDOR 修复
   let service: { listAssignmentsByStudentInDb: jest.Mock };
   let teacherRepo: { findByUserId: jest.Mock };
   let studentRepo: { findBrief: jest.Mock };
+  let parentRepo: { findChildrenByParent: jest.Mock };
 
   const TENANT = 'tenant_homework_idor_scope_xxxxx1';
   const STUDENT = 'stu00000000000000000000000000H001';
@@ -54,10 +56,12 @@ describe('HomeworkController — by-student owner-scope（2026-06-01 IDOR 修复
     service = { listAssignmentsByStudentInDb: jest.fn().mockResolvedValue(fixtureAssignments) };
     teacherRepo = { findByUserId: jest.fn() };
     studentRepo = { findBrief: jest.fn() };
+    parentRepo = { findChildrenByParent: jest.fn() };
     controller = new HomeworkController(
       service as unknown as HomeworkService,
       teacherRepo as unknown as TeacherRepository,
       studentRepo as unknown as StudentRepository,
+      parentRepo as unknown as ParentRepository,
     );
   });
 
@@ -170,19 +174,50 @@ describe('HomeworkController — by-student owner-scope（2026-06-01 IDOR 修复
     expect(service.listAssignmentsByStudentInDb).toHaveBeenCalledTimes(1);
   });
 
-  it('parent c 端流（req.parent）→ bypass（绑定已 middleware 校验）', async () => {
+  // 2026-06-01 parent↔student 绑定 IDOR 修复：parent c 端流不再无条件 bypass
+  //   TENANT = 'tenant_homework_idor_scope_xxxxx1' → 派生 tenantId = 'homework_idor_scope_xxxxx1'
+  const PARENT_ID = 'parent000000000000000000000P001';
+  const TENANT_ID_RAW = 'homework_idor_scope_xxxxx1';
+  const parentReqOpts = {
+    user: { sub: PARENT_ID, role: 'parent' as any, tenantId: 't', campusId: null },
+    parent: { sub: PARENT_ID, parentId: PARENT_ID, role: 'parent' as const },
+  };
+
+  it('parent c 端流 自己孩子（studentId ∈ active 绑定）→ 放行', async () => {
     mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
-    await controller.listAssignmentsByStudentInDb(
-      STUDENT,
-      body,
-      mkReq({
-        user: { sub: 'parent000000000000000000000P001', role: 'parent' as any, tenantId: 't', campusId: null },
-        parent: { sub: 'parent000000000000000000000P001', parentId: 'parent000000000000000000000P001', role: 'parent' },
-      }),
-    );
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([
+      { studentId: STUDENT, tenantId: TENANT_ID_RAW, bindingStatus: 'active' },
+    ]);
+    await controller.listAssignmentsByStudentInDb(STUDENT, body, mkReq(parentReqOpts));
+    expect(parentRepo.findChildrenByParent).toHaveBeenCalledWith(PARENT_ID);
     expect(service.listAssignmentsByStudentInDb).toHaveBeenCalledTimes(1);
-    // parent bypass：不做 teacher own-class 反查
+    // parent 自己孩子：不做 teacher own-class 反查
     expect(teacherRepo.findByUserId).not.toHaveBeenCalled();
+  });
+
+  it('parent c 端流 他人孩子（studentId ∉ active 绑定）→ 403，不查作业（同租户 IDOR 拦截）', async () => {
+    mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+    parentRepo.findChildrenByParent.mockResolvedValueOnce([
+      { studentId: 'otherChild00000000000000000O001', tenantId: TENANT_ID_RAW, bindingStatus: 'active' },
+    ]);
+    await expect(
+      controller.listAssignmentsByStudentInDb(STUDENT, body, mkReq(parentReqOpts)),
+    ).rejects.toThrow(ForbiddenException);
+    expect(service.listAssignmentsByStudentInDb).not.toHaveBeenCalled();
+  });
+
+  it('parent 流但 parentRepo 未注入 → 保守拒绝（fail-safe）', async () => {
+    const c = new HomeworkController(
+      service as unknown as HomeworkService,
+      teacherRepo as unknown as TeacherRepository,
+      studentRepo as unknown as StudentRepository,
+      // parentRepo 缺失
+    );
+    mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+    await expect(
+      c.listAssignmentsByStudentInDb(STUDENT, body, mkReq(parentReqOpts)),
+    ).rejects.toThrow(ForbiddenException);
+    expect(service.listAssignmentsByStudentInDb).not.toHaveBeenCalled();
   });
 
   it('学员不存在（findBrief=null）→ 放行（避免 enumeration 侧信道）', async () => {

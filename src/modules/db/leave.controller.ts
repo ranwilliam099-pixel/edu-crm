@@ -14,6 +14,7 @@ import {
 import { LeaveRepository, Leave, LeaveType } from './leave.repository';
 import { StudentRepository } from './student.repository';
 import { TeacherRepository } from './teacher.repository';
+import { ParentRepository } from './parent.repository';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
@@ -51,6 +52,9 @@ export class LeaveController {
     //   （由 @Global DbModule 注入；生产 / e2e 必有）。
     @Optional() private readonly studentRepo?: StudentRepository,
     @Optional() private readonly teacherRepo?: TeacherRepository,
+    // 2026-06-01 parent↔student 绑定 IDOR 修复：parent c 端流校验 studentId ∈ 该 parent active 绑定。
+    //   middleware 仅验 parent↔租户，本 helper 补 parent↔student。@Optional + 构造末尾不破坏现有 spec。
+    @Optional() private readonly parentRepo?: ParentRepository,
   ) {}
 
   @Post('leaves')
@@ -137,8 +141,10 @@ export class LeaveController {
     }
     // 2026-06-01 同租户 by-student IDOR 修复：请假记录含家长/学员请假理由（隐私）。
     //   - sales 只看自己客户学员；teacher 只看自己班（assignedTeacherId）
-    //   - academic/academic_admin/marketing/admin/boss/finance 本校放行
-    //   - parent c 端流（req.parent）bypass：绑定关系已由 middleware.requireParentDbUser 校验
+    //   - academic/academic_admin/marketing/admin/boss 本校放行（finance 由 helper 拒绝：
+    //     财务作账走合同/发票，不读请假隐私理由 §6.4/§5.2）
+    //   - parent c 端流：middleware 仅验 parent↔租户，本 helper 经 resolveParentChildIds 补
+    //     parent↔student 绑定校验（studentId ∈ active 绑定才放行，非 bypass）
     //   - 越权（传他人学员 studentId）→ ForbiddenException
     await this.assertByStudentScope(studentId, tenantSchema, req);
     return this.leaveRepo.findByStudent(tenantSchema, studentId, body.limit ?? 50);
@@ -149,7 +155,8 @@ export class LeaveController {
    *
    * 先 studentRepo.findBrief 拿 ownerSalesId / assignedTeacherId，按 actorGroup 判定：
    *   - sales → ownerSalesId===me；teacher → 反查 teachers.id===assignedTeacherId；
-   *   - admin/academic/finance group → 本校放行；parent c 端 bypass。
+   *   - admin/academic group → 本校放行；
+   *   - parent c 端流 → studentId 必须 ∈ 该 parent 本租户 active 绑定（2026-06-01 parent IDOR 修复）。
    *
    * fail-open 兜底：studentRepo / teacherRepo 未注入（isolated 5/20 stryker 修补 spec 仅 2 参）
    *   → 跳过 scope（保持现有测试行为；生产 @Global 必注入两 repo）。
@@ -170,7 +177,37 @@ export class LeaveController {
       tenantSchema,
       (schema, userId) => teacherRepo.findByUserId(schema, userId).then((t) => t?.id ?? null),
       { endpoint: 'leaves-list', studentId },
+      this.buildParentChildIdsResolver(req, tenantSchema),
     );
+  }
+
+  /**
+   * 2026-06-01 parent↔student 绑定 IDOR 修复：返回 parent c 端流时反查闭包。
+   *   非 parent 流（无 req.parent）→ undefined（helper parent 分支不触发，省 DB IO）。
+   *   parent 流但 parentRepo 未注入（isolated unit spec）→ undefined → helper 保守拒绝。
+   *
+   * 闭包查 parentRepo.findChildrenByParent（SQL 已过滤 binding_status='active'），再按
+   *   当前 tenantSchema 派生的 tenantId 过滤（跨机构家长可能绑多租户），映射出 student id 列表。
+   */
+  private buildParentChildIdsResolver(
+    req: AuthenticatedRequest | undefined,
+    tenantSchema: string,
+  ): (() => Promise<string[]>) | undefined {
+    if (!req?.parent || !this.parentRepo) return undefined;
+    const parentRepo = this.parentRepo;
+    const parentId = req.parent.parentId ?? req.parent.sub;
+    const tenantId = tenantSchema.replace(/^tenant_/, '').toLowerCase();
+    return async () => {
+      if (!parentId) return [];
+      const bindings = await parentRepo.findChildrenByParent(parentId);
+      return bindings
+        .filter(
+          (b) =>
+            b.bindingStatus === 'active' &&
+            b.tenantId.toLowerCase() === tenantId,
+        )
+        .map((b) => b.studentId);
+    };
   }
 
   @Post('leaves/:leaveId/approve')
