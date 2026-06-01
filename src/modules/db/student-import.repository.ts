@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PgPoolService } from './pg-pool.service';
 import { FieldEncryptor } from '../../common/crypto/field-encryptor';
 import { HmacHasher } from '../../common/crypto/hmac-hasher';
+import { gradeBaseYearForWrite } from '../../common/grade-ladder';
 
 /**
  * StudentImportRepository — V18 学员批量导入持久化层（tenant schema）
@@ -159,13 +160,14 @@ export class StudentImportRepository {
             const studentId = this.generateUlid();
             await client.query(
               `INSERT INTO students (
-                 id, student_name, grade_or_age, school_name, intended_subject,
+                 id, student_name, grade_or_age, grade_base_year, school_name, intended_subject,
                  customer_id, created_by, updated_by
-               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
+               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
               [
                 studentId,
                 row.name.trim(),
                 row.grade || null,
+                gradeBaseYearForWrite(),    // SSOT §4.1.1 录入学年
                 row.school || null,
                 row.subjects || null,
                 customerId,

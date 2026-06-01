@@ -501,4 +501,182 @@ describe('StudentRepository (V28 + V44 软删除)', () => {
       expect(auditLog.log.mock.calls[0][1].actorRole).toBe('system');
     });
   });
+
+  // ============================================================
+  // SSOT §4.1.1 学员年级自动升级（computed-on-read）— 读返 currentGrade + 写 grade_base_year
+  // ============================================================
+  describe('grade computed-on-read (SSOT §4.1.1)', () => {
+    // 固定时钟到 2026-09（学年 2026），用 try/finally 还原避免污染其他用例
+    const FIXED_NOW = new Date(2026, 8, 1); // 2026-09-01 → academicYear=2026
+    const origNow = StudentRepository.now;
+    beforeEach(() => {
+      StudentRepository.now = () => FIXED_NOW;
+    });
+    afterEach(() => {
+      StudentRepository.now = origNow;
+    });
+
+    it('mapBrief 读返推算 currentGrade：录入小学一年级@2024 → 2026学年进 2 级 → 小学三年级', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: STUDENT_ID,
+          student_name: '小明',
+          customer_id: 'cust00000000000000000000000A001C',
+          owner_sales_id: SALES_A,
+          assigned_teacher_id: TEACHER_A,
+          owner_changed_at: null,
+          owner_change_reason: null,
+          grade_or_age: '小学一年级',
+          grade_base_year: 2024,
+          intended_subject: '英语',
+          created_at: '2024-09-01T00:00:00Z',
+        },
+      ]);
+      const r = await repo.findBrief(TENANT, STUDENT_ID);
+      expect(r?.gradeOrAge).toBe('小学一年级'); // 原值保留
+      expect(r?.currentGrade).toBe('小学三年级'); // 推算
+      expect(r?.gradeBaseYear).toBe(2024);
+    });
+
+    it('mapBrief 封顶高三：初三@2023 → 2026学年进 3 级越过末位 → 高三', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: STUDENT_ID,
+          student_name: '小红',
+          customer_id: 'cust00000000000000000000000A001C',
+          owner_sales_id: SALES_A,
+          assigned_teacher_id: null,
+          owner_changed_at: null,
+          owner_change_reason: null,
+          grade_or_age: '初三',
+          grade_base_year: 2023,
+          intended_subject: '数学',
+          created_at: '2023-09-01T00:00:00Z',
+        },
+      ]);
+      const r = await repo.findBrief(TENANT, STUDENT_ID);
+      expect(r?.currentGrade).toBe('高三');
+    });
+
+    it('mapBrief 非阶梯豁免：「5 岁」原样返回，不进级', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: STUDENT_ID,
+          student_name: '宝宝',
+          customer_id: 'cust00000000000000000000000A001C',
+          owner_sales_id: SALES_A,
+          assigned_teacher_id: null,
+          owner_changed_at: null,
+          owner_change_reason: null,
+          grade_or_age: '5 岁',
+          grade_base_year: 2022,
+          intended_subject: null,
+          created_at: '2022-09-01T00:00:00Z',
+        },
+      ]);
+      const r = await repo.findBrief(TENANT, STUDENT_ID);
+      expect(r?.currentGrade).toBe('5 岁');
+    });
+
+    it('mapBrief grade_base_year 为 null → 用 created_at 学年兜底推算', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: STUDENT_ID,
+          student_name: '小刚',
+          customer_id: 'cust00000000000000000000000A001C',
+          owner_sales_id: SALES_A,
+          assigned_teacher_id: null,
+          owner_changed_at: null,
+          owner_change_reason: null,
+          grade_or_age: '小学一年级',
+          grade_base_year: null, // 老数据未 backfill
+          intended_subject: null,
+          created_at: '2024-09-01T00:00:00Z', // 学年 2024 → 兜底基准 → 进 2 级
+        },
+      ]);
+      const r = await repo.findBrief(TENANT, STUDENT_ID);
+      expect(r?.currentGrade).toBe('小学三年级');
+      expect(r?.gradeBaseYear).toBeNull(); // 暴露原始存储值（null），不被兜底值覆盖
+    });
+
+    it('findFullDetail 读返 currentGrade（推算）+ 保留 gradeOrAge 原值', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: STUDENT_ID,
+          student_name: '小明',
+          grade_or_age: '初一',
+          grade_base_year: 2024,
+          intended_subject: '英语',
+          customer_id: 'cust00000000000000000000000A001C',
+          owner_sales_id: SALES_A,
+          assigned_teacher_id: null,
+          created_at: '2024-09-01T00:00:00Z',
+          gender: null,
+          school: null,
+          phone: null,
+          available_time: null,
+          parent_name: '小明妈妈',
+          primary_mobile: '13800138000',
+          parent_gender: '女',
+          campus_id: 'campusA000000000000000000000A001',
+          campus_name: '总校区',
+          owner_sales_name: '李雷',
+          assigned_teacher_name: null,
+          notes: null,
+        },
+      ]);
+      const r = await repo.findFullDetail(TENANT, STUDENT_ID);
+      expect(r?.gradeOrAge).toBe('初一'); // 原值
+      expect(r?.currentGrade).toBe('初三'); // 初一 +2 学年 → 初三
+      expect(r?.gradeBaseYear).toBe(2024);
+    });
+
+    it('create 写路径：INSERT 写 grade_base_year=当前学年 + RETURNING 含 grade_base_year/created_at', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: STUDENT_ID,
+          student_name: '王小明',
+          customer_id: 'cust00000000000000000000000A001C',
+          owner_sales_id: SALES_A,
+          assigned_teacher_id: null,
+          owner_changed_at: null,
+          owner_change_reason: null,
+          grade_or_age: '小学一年级',
+          grade_base_year: 2026,
+          intended_subject: null,
+          created_at: '2026-09-01T00:00:00Z',
+        },
+      ]);
+      await repo.create(TENANT, {
+        id: STUDENT_ID,
+        studentName: '王小明',
+        customerId: 'cust00000000000000000000000A001C',
+        gradeOrAge: '小学一年级',
+        ownerSalesId: SALES_A,
+        operatorUserId: SALES_A,
+      });
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(sql).toContain('grade_base_year');
+      expect(sql).toContain('RETURNING');
+      // grade_base_year 参数 = 当前学年 2026（params[4] 按新 INSERT 列序）
+      expect(params).toContain(2026);
+    });
+
+    it('update 写路径：patch.gradeOrAge 提供时同步写 grade_base_year', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.update(TENANT, STUDENT_ID, OPERATOR_ID, { gradeOrAge: '初一' });
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(sql).toContain('grade_or_age = $1');
+      expect(sql).toContain('grade_base_year = $2');
+      expect(params[0]).toBe('初一');
+      expect(params[1]).toBe(2026); // 当前学年
+    });
+
+    it('update 写路径：未传 gradeOrAge → 不写 grade_base_year', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.update(TENANT, STUDENT_ID, OPERATOR_ID, { studentName: '改名' });
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).not.toContain('grade_base_year');
+    });
+  });
 });

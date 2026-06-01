@@ -9,6 +9,7 @@ import { ulid } from 'ulid';
 import { PgPoolService, PgRow } from './pg-pool.service';
 import { FieldEncryptor } from '../../common/crypto/field-encryptor';
 import { HmacHasher } from '../../common/crypto/hmac-hasher';
+import { gradeBaseYearForWrite } from '../../common/grade-ladder';
 
 /**
  * CustomerRepository — V25 销售客户管理（基于 V2 opportunities + V25 ALTER）
@@ -295,15 +296,16 @@ export class CustomerRepository {
         if (payload.studentName && payload.studentId) {
           await client.query(
             `INSERT INTO students
-               (id, student_name, customer_id, grade_or_age, intended_subject,
+               (id, student_name, customer_id, grade_or_age, grade_base_year, intended_subject,
                 gender, school, phone, available_time,
                 owner_sales_id, created_by, updated_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $10)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $11)`,
             [
               payload.studentId,
               payload.studentName,
               payload.customerId,
               payload.gradeOrAge || null,
+              gradeBaseYearForWrite(),                                // SSOT §4.1.1 录入学年
               payload.intendedSubject || null,
               payload.studentGender || null,                          // V55
               payload.school || null,                                 // V55
@@ -538,14 +540,15 @@ export class CustomerRepository {
           const studentId = this.genId();
           await client.query(
             `INSERT INTO students
-               (id, student_name, customer_id, grade_or_age, intended_subject,
+               (id, student_name, customer_id, grade_or_age, grade_base_year, intended_subject,
                 owner_sales_id, created_by, updated_by)
-             VALUES ($1, $2, $3, $4, $5, NULL, $6, $6)`,
+             VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $7)`,
             [
               studentId,
               studentName,
               customerId,
               row.gradeOrAge || null,
+              gradeBaseYearForWrite(),                  // SSOT §4.1.1 录入学年
               row.intendedSubject || null,
               options.operatorUserId,
             ],
@@ -1352,14 +1355,15 @@ export class CustomerRepository {
         const studentId = ulid().padEnd(32, '0').slice(0, 32);
         await client.query(
           `INSERT INTO students
-             (id, student_name, customer_id, grade_or_age, intended_subject,
+             (id, student_name, customer_id, grade_or_age, grade_base_year, intended_subject,
               gender, assigned_teacher_id, owner_sales_id, created_by, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
           [
             studentId,
             payload.childName.trim(),
             customerId,
             payload.childAgeOrGrade || null,
+            gradeBaseYearForWrite(),             // SSOT §4.1.1 录入学年
             payload.intendedSubject || null,
             payload.childGender || null,
             payload.preferredTeacherId || null,  // §6.5 销售可选指定老师

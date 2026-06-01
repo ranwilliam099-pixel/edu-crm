@@ -2,6 +2,11 @@ import { Injectable, Optional, BadRequestException, NotFoundException } from '@n
 import { PgPoolService, PgRow } from './pg-pool.service';
 import { AuditLogRepository, normalizeActorRole } from './audit-log.repository';
 import { ParentRepository } from './parent.repository';
+import {
+  academicYear,
+  computeCurrentGrade,
+  gradeBaseYearForWrite,
+} from '../../common/grade-ladder';
 
 /**
  * StudentRepository — V28 学生归属字段读写 + 单条学生归属转移
@@ -30,6 +35,11 @@ export interface StudentBrief {
   ownerChangeReason: string | null;
   // V29 R12 追加常用展示字段（OOUX 老师/销售排课时学生卡需要）
   gradeOrAge: string | null;
+  // SSOT §4.1.1 学员年级自动升级（computed-on-read）：
+  //   gradeOrAge = 录入原值（库存不改）；currentGrade = 按当前学年推算（封顶高三，非阶梯豁免）
+  //   gradeBaseYear = V62 录入时学年（null=老数据未 backfill，读时用 createdAt 学年兜底）
+  currentGrade: string | null;
+  gradeBaseYear: number | null;
   intendedSubject: string | null;
   // V29 R14.4 学员最新 active 合同的班型（用于排课时一致性校验）
   contractClassType?: string | null;
@@ -48,6 +58,9 @@ export interface StudentDetail {
   id: string;
   studentName: string;
   gradeOrAge: string | null;
+  // SSOT §4.1.1 computed-on-read 推算年级（封顶高三，非阶梯豁免；gradeOrAge 保留原值）
+  currentGrade: string | null;
+  gradeBaseYear: number | null;
   intendedSubject: string | null;
   customerId: string;
   parentName: string | null;       // customer.parent_name
@@ -93,7 +106,49 @@ export class StudentRepository {
     @Optional() private readonly auditLog?: AuditLogRepository,
   ) {}
 
+  /**
+   * SSOT §4.1.1 computed-on-read 时钟（可注入测试）。
+   *   生产 = () => new Date()（服务器本地 = 北京时间）。
+   *   单测可临时覆盖 StudentRepository.now = () => new Date(2026, 8, 1) 模拟当前学年。
+   *   static 不影响 DI；mapBrief 是 static 工具方法，故 clock 也设 static。
+   */
+  static now: () => Date = () => new Date();
+
+  /**
+   * SSOT §4.1.1：把 grade_or_age 录入原值 + grade_base_year 按当前学年推算 currentGrade。
+   *   - grade_base_year 缺失（老数据未 backfill）→ 用 created_at 学年兜底。
+   *   - 缺 created_at 且缺 grade_base_year → computeCurrentGrade 内保守原样返回。
+   * 纯 helper，供 mapBrief / findFullDetail 复用，保证两路口径一致。
+   */
+  private static computeGrade(
+    gradeOrAge: string | null,
+    gradeBaseYearRaw: unknown,
+    createdAtRaw: unknown,
+  ): { currentGrade: string | null; gradeBaseYear: number | null } {
+    let gradeBaseYear: number | null =
+      gradeBaseYearRaw === null || gradeBaseYearRaw === undefined
+        ? null
+        : Number(gradeBaseYearRaw);
+    if (gradeBaseYear !== null && !Number.isFinite(gradeBaseYear)) gradeBaseYear = null;
+    // 兜底：grade_base_year 为 null 时用 created_at 学年（老数据未 backfill 路径）
+    const effectiveBaseYear =
+      gradeBaseYear ??
+      (createdAtRaw ? academicYear(new Date(createdAtRaw as string | number | Date)) : null);
+    const currentGrade =
+      (computeCurrentGrade(gradeOrAge, effectiveBaseYear, StudentRepository.now()) as
+        | string
+        | null) ?? null;
+    return { currentGrade, gradeBaseYear };
+  }
+
   static mapBrief(r: PgRow): StudentBrief {
+    const gradeOrAge = r.grade_or_age || null;
+    // SSOT §4.1.1 computed-on-read：SELECT 需带 grade_base_year（+ created_at 兜底）
+    const { currentGrade, gradeBaseYear } = StudentRepository.computeGrade(
+      gradeOrAge,
+      r.grade_base_year,
+      r.created_at,
+    );
     return {
       id: r.id,
       studentName: r.student_name,
@@ -102,7 +157,9 @@ export class StudentRepository {
       assignedTeacherId: r.assigned_teacher_id,
       ownerChangedAt: r.owner_changed_at ? new Date(r.owner_changed_at).toISOString() : null,
       ownerChangeReason: r.owner_change_reason,
-      gradeOrAge: r.grade_or_age || null,
+      gradeOrAge,
+      currentGrade,
+      gradeBaseYear,
       intendedSubject: r.intended_subject || null,
       // V29 R14.4 contract_class_type 来自 join 子查询（仅 listByTeacher 用，其他 SELECT 没 join 时为 null）
       contractClassType: r.contract_class_type || null,
@@ -143,19 +200,23 @@ export class StudentRepository {
     if (!payload.customerId || payload.customerId.length !== 32) {
       throw new BadRequestException('customerId must be 32-char ULID');
     }
+    // SSOT §4.1.1 写路径：录入年级时同步写 grade_base_year = 当前学年
+    const baseYear = gradeBaseYearForWrite(StudentRepository.now());
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `INSERT INTO students
-         (id, student_name, customer_id, grade_or_age, intended_subject, school_name, gender,
+         (id, student_name, customer_id, grade_or_age, grade_base_year, intended_subject, school_name, gender,
           owner_sales_id, assigned_teacher_id, created_by, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
        RETURNING id, student_name, customer_id, owner_sales_id, assigned_teacher_id,
-                 owner_changed_at, owner_change_reason, grade_or_age, intended_subject`,
+                 owner_changed_at, owner_change_reason, grade_or_age, grade_base_year,
+                 intended_subject, created_at`,
       [
         payload.id,
         payload.studentName,
         payload.customerId,
         payload.gradeOrAge || null,
+        baseYear,
         payload.intendedSubject || null,
         payload.schoolName || null,
         payload.gender || null,
@@ -184,7 +245,8 @@ export class StudentRepository {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `SELECT s.id, s.student_name, s.customer_id, s.owner_sales_id, s.assigned_teacher_id,
-              s.owner_changed_at, s.owner_change_reason, s.grade_or_age, s.intended_subject,
+              s.owner_changed_at, s.owner_change_reason, s.grade_or_age, s.grade_base_year,
+              s.intended_subject, s.created_at,
               (SELECT c.class_type FROM contracts c
                  WHERE c.student_id = s.id
                    AND c.status IN ('pending', 'active')
@@ -242,7 +304,8 @@ export class StudentRepository {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `SELECT s.id, s.student_name, s.customer_id, s.owner_sales_id, s.assigned_teacher_id,
-              s.owner_changed_at, s.owner_change_reason, s.grade_or_age, s.intended_subject,
+              s.owner_changed_at, s.owner_change_reason, s.grade_or_age, s.grade_base_year,
+              s.intended_subject, s.created_at,
               cu.campus_id,
               (SELECT c.class_type FROM contracts c
                  WHERE c.student_id = s.id
@@ -287,7 +350,12 @@ export class StudentRepository {
       sets.push(`${col} = $${params.length}`);
     };
     if (patch.studentName !== undefined) push('student_name', patch.studentName);
-    if (patch.gradeOrAge !== undefined) push('grade_or_age', patch.gradeOrAge);
+    if (patch.gradeOrAge !== undefined) {
+      push('grade_or_age', patch.gradeOrAge);
+      // SSOT §4.1.1 写路径：编辑年级时同步重置 grade_base_year = 当前学年
+      //   （编辑年级 = 重新录入基准；前端回显的是推算 currentGrade，用户改后即新基准）
+      push('grade_base_year', gradeBaseYearForWrite(StudentRepository.now()));
+    }
     if (patch.intendedSubject !== undefined) push('intended_subject', patch.intendedSubject);
     if (patch.gender !== undefined) push('gender', patch.gender);
     if (patch.school !== undefined) push('school', patch.school);
@@ -315,7 +383,8 @@ export class StudentRepository {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `SELECT id, student_name, customer_id, owner_sales_id, assigned_teacher_id,
-              owner_changed_at, owner_change_reason, grade_or_age, intended_subject
+              owner_changed_at, owner_change_reason, grade_or_age, grade_base_year,
+              intended_subject, created_at
          FROM students WHERE id = $1 AND deleted_at IS NULL`,
       [id],
     );
@@ -332,7 +401,7 @@ export class StudentRepository {
   async findFullDetail(tenantSchema: string, id: string): Promise<StudentDetail | null> {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT s.id, s.student_name, s.grade_or_age, s.intended_subject,
+      `SELECT s.id, s.student_name, s.grade_or_age, s.grade_base_year, s.intended_subject,
               s.customer_id, s.owner_sales_id, s.assigned_teacher_id, s.created_at,
               s.gender, s.school, s.phone, s.available_time,
               c.parent_name, c.primary_mobile, c.parent_gender,
@@ -352,10 +421,18 @@ export class StudentRepository {
     );
     if (rows.length === 0) return null;
     const r = rows[0];
+    // SSOT §4.1.1 computed-on-read：推算 currentGrade（gradeOrAge 保留原值；缺 base_year 用 created_at 兜底）
+    const { currentGrade, gradeBaseYear } = StudentRepository.computeGrade(
+      r.grade_or_age ?? null,
+      r.grade_base_year,
+      r.created_at,
+    );
     return {
       id: r.id,
       studentName: r.student_name,
       gradeOrAge: r.grade_or_age,
+      currentGrade,
+      gradeBaseYear,
       intendedSubject: r.intended_subject,
       customerId: r.customer_id,
       parentName: r.parent_name,

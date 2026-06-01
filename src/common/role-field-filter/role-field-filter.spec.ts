@@ -126,6 +126,8 @@ function studentDetailFixture(overrides: Partial<StudentDetail> = {}): StudentDe
     id: 'student00000000000000000000A001',
     studentName: '小明',
     gradeOrAge: '三年级',
+    currentGrade: '三年级',
+    gradeBaseYear: 2026,
     intendedSubject: '英语',
     customerId: 'oppor000000000000000000000000A01',
     parentName: '小明妈妈',
