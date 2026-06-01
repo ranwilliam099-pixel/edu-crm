@@ -114,6 +114,11 @@ import { KpiService } from './kpi.service';
 import { TeacherChangeRequestController } from './teacher-change-request.controller';
 import { TeacherChangeRequestService } from './teacher-change-request.service';
 
+// ===== V63 (2026-06-01) — Phase 3 学员→教务分配机制（#8）=====
+import { CampusAssignmentConfigRepository } from './campus-assignment-config.repository';
+import { StudentAssignmentService } from './student-assignment.service';
+import { CampusAssignmentController } from './campus-assignment.controller';
+
 // ===== V33 审计日志（生产架构 P0 第 1 项）=====
 import { AuditLogRepository } from './audit-log.repository';
 
@@ -221,6 +226,8 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     TeacherChangeRequestController,
     // V59 (2026-05-23) — task #36 退费工单
     RefundController,
+    // V63 (2026-06-01) — Phase 3 学员→教务分配机制（校长配置 + 手动分配 + 待分配列表）
+    CampusAssignmentController,
   ],
   providers: [
     // 基础设施
@@ -278,6 +285,9 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     TeacherRatingRepository,
     // V58 (2026-05-22) — SSOT §6.5 改老师 = 家长同意
     TeacherChangeRequestService,
+    // V63 (2026-06-01) — Phase 3 学员→教务分配机制
+    CampusAssignmentConfigRepository,
+    StudentAssignmentService,
   ],
   exports: [
     PgPoolService,
@@ -323,6 +333,9 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     TeacherRatingRepository,
     // V58 (2026-05-22) — SSOT §6.5 改老师 = 家长同意 (c-side controller 用)
     TeacherChangeRequestService,
+    // V63 (2026-06-01) — Phase 3 学员→教务分配（contract.controller activate 触发用）
+    CampusAssignmentConfigRepository,
+    StudentAssignmentService,
   ],
 })
 export class DbModule {}

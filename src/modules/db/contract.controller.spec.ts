@@ -25,6 +25,7 @@ import { StudentRepository } from './student.repository';
 import { AuthenticatedRequest, JwtPayload, TenantRole } from '../auth/jwt-payload.interface';
 import { AuditLogRepository } from './audit-log.repository';
 import { RbacGuard } from '../../guards/rbac.guard';
+import { StudentAssignmentService } from './student-assignment.service';
 
 describe('ContractController (Sprint B.3 字段级权限)', () => {
   let controller: ContractController;
@@ -449,6 +450,8 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
   };
   let studentRepo: { findBrief: jest.Mock };
   let auditLog: { log: jest.Mock };
+  // Phase 3 (2026-06-01): 激活后触发学员→教务分配
+  let assignmentService: { assignStudentIfNeeded: jest.Mock };
 
   const TENANT_A = 'TENANTA00000000000000000000000A1';
   const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
@@ -512,10 +515,16 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
     } as any;
     studentRepo = { findBrief: jest.fn() };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
+    assignmentService = {
+      assignStudentIfNeeded: jest
+        .fn()
+        .mockResolvedValue({ assigned: true, academicId: 'acad0001' }),
+    };
     controller = new ContractController(
       repo as unknown as ContractRepository,
       studentRepo as unknown as StudentRepository,
       auditLog as unknown as AuditLogRepository,
+      assignmentService as unknown as StudentAssignmentService,
     );
   });
 
@@ -764,6 +773,62 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
         ),
       ).rejects.toThrow(BadRequestException);
       expect(repo.setStatus).not.toHaveBeenCalled();
+    });
+
+    // ----- Phase 3 (2026-06-01)：激活后触发学员→教务分配 -----
+    it('激活成功 → 触发 assignStudentIfNeeded(student, campus, finance)', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture({ status: 'pending' }));
+      repo.setStatus.mockResolvedValueOnce(
+        contractFixture({ status: 'active', studentId: STUDENT_ID, campusId: CAMPUS_A }),
+      );
+
+      await controller.activate(
+        CONTRACT_ID,
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA },
+        req(jwt('finance', SALES_A)),
+      );
+
+      expect(assignmentService.assignStudentIfNeeded).toHaveBeenCalledTimes(1);
+      expect(assignmentService.assignStudentIfNeeded).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        STUDENT_ID,
+        CAMPUS_A,
+        { userId: SALES_A, role: 'finance' },
+      );
+    });
+
+    it('分配 side-effect 抛错 → 不影响激活（fail-open，激活仍返 active）', async () => {
+      repo.findById.mockResolvedValueOnce(contractFixture({ status: 'pending' }));
+      repo.setStatus.mockResolvedValueOnce(contractFixture({ status: 'active' }));
+      assignmentService.assignStudentIfNeeded.mockRejectedValueOnce(
+        new Error('boom'),
+      );
+
+      const out = await controller.activate(
+        CONTRACT_ID,
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA },
+        req(jwt('finance', SALES_A)),
+      );
+      // 激活主流程不受影响
+      expect(out.status).toBe('active');
+      expect(auditLog.log).toHaveBeenCalledTimes(1); // contract.activate 仍写
+    });
+
+    it('assignmentService 未注入（@Optional 缺失）→ 激活仍成功，不抛', async () => {
+      const ctl = new ContractController(
+        repo as unknown as ContractRepository,
+        studentRepo as unknown as StudentRepository,
+        auditLog as unknown as AuditLogRepository,
+        // 不传 assignmentService
+      );
+      repo.findById.mockResolvedValueOnce(contractFixture({ status: 'pending' }));
+      repo.setStatus.mockResolvedValueOnce(contractFixture({ status: 'active' }));
+      const out = await ctl.activate(
+        CONTRACT_ID,
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA },
+        req(jwt('finance', SALES_A)),
+      );
+      expect(out.status).toBe('active');
     });
   });
 });

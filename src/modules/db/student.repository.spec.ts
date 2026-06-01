@@ -679,4 +679,85 @@ describe('StudentRepository (V28 + V44 软删除)', () => {
       expect(sql).not.toContain('grade_base_year');
     });
   });
+
+  // ============================================================
+  // V63 (Phase 3) 学员→教务分配
+  // ============================================================
+  describe('listPendingAssignmentByCampus (V63)', () => {
+    const CAMPUS = 'campus0000000000000000000000C001';
+
+    it('查本校 assigned_academic_id IS NULL + 按 customer.campus_id 过滤', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        {
+          id: STUDENT_ID,
+          student_name: '小明',
+          grade_or_age: '三年级',
+          intended_subject: '英语',
+          customer_id: 'cust00000000000000000000000A001',
+          parent_name: '王妈',
+          created_at: new Date('2026-06-01T00:00:00Z'),
+        },
+      ]);
+      const items = await repo.listPendingAssignmentByCampus(TENANT, CAMPUS);
+      expect(items[0].id).toBe(STUDENT_ID);
+      expect(items[0].parentName).toBe('王妈');
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(sql).toContain('assigned_academic_id IS NULL');
+      expect(sql).toContain('cu.campus_id = $1');
+      expect(sql).toContain('s.deleted_at IS NULL');
+      expect(params[0]).toBe(CAMPUS);
+    });
+
+    it('不返回一级 PII（无 primary_mobile / phone 投影）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listPendingAssignmentByCampus(TENANT, CAMPUS);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).not.toContain('primary_mobile');
+      expect(sql).not.toContain('s.phone');
+    });
+  });
+
+  describe('findAssignmentInfo (V63)', () => {
+    it('返回 assignedAcademicId + 家庭 campusId', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { assigned_academic_id: 'acad00000000000000000000000A01', campus_id: 'campus0000000000000000000000C001' },
+      ]);
+      const info = await repo.findAssignmentInfo(TENANT, STUDENT_ID);
+      expect(info?.assignedAcademicId).toBe('acad00000000000000000000000A01');
+      expect(info?.campusId).toBe('campus0000000000000000000000C001');
+    });
+
+    it('学员不存在 → null', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      const info = await repo.findAssignmentInfo(TENANT, STUDENT_ID);
+      expect(info).toBeNull();
+    });
+  });
+
+  describe('setAssignedAcademic (V63)', () => {
+    it('UPDATE assigned_academic_id + updated_by；返回行 → 不抛', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ id: STUDENT_ID }]);
+      await repo.setAssignedAcademic(
+        TENANT,
+        STUDENT_ID,
+        'acad00000000000000000000000A01',
+        OPERATOR_ID,
+      );
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(sql).toContain('SET assigned_academic_id = $1');
+      expect(sql).toContain('deleted_at IS NULL');
+      expect(params).toEqual([
+        'acad00000000000000000000000A01',
+        OPERATOR_ID,
+        STUDENT_ID,
+      ]);
+    });
+
+    it('学员不存在（0 行）→ NotFoundException', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await expect(
+        repo.setAssignedAcademic(TENANT, STUDENT_ID, 'acad00000000000000000000000A01', OPERATOR_ID),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
 });

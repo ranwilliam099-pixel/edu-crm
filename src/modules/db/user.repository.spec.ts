@@ -697,4 +697,64 @@ describe('UserRepository (V27)', () => {
       expect(sql).not.toContain('u.deleted_at IS NULL');
     });
   });
+
+  // ============================================================
+  // V63 (Phase 3) 教务池查询
+  // ============================================================
+  describe('listActiveAcademicsInCampus (V63)', () => {
+    it('默认仅 academic + status 启用 + 同校 + 未软删', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { id: 'acad000000000000000000000000A01', name: '李教务', role: 'academic' },
+      ]);
+      const items = await repo.listActiveAcademicsInCampus(TENANT, CAMPUS_A);
+      expect(items).toEqual([
+        { id: 'acad000000000000000000000000A01', name: '李教务', role: 'academic' },
+      ]);
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(sql).toContain('FROM users');
+      expect(sql).toContain("status = '启用'");
+      expect(sql).toContain('deleted_at IS NULL');
+      expect(params[0]).toEqual(['academic']);
+      expect(params[1]).toBe(CAMPUS_A);
+    });
+
+    it('可传 roles 扩池（如含 academic_admin）→ 透传到 ANY', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.listActiveAcademicsInCampus(TENANT, CAMPUS_A, [
+        'academic',
+        'academic_admin',
+      ]);
+      const params = pg.tenantQuery.mock.calls[0][2];
+      expect(params[0]).toEqual(['academic', 'academic_admin']);
+    });
+  });
+
+  describe('isActiveAcademicInCampus (V63)', () => {
+    it('存在 + 本校在职 academic → true', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ ok: 1 }]);
+      const ok = await repo.isActiveAcademicInCampus(
+        TENANT,
+        'acad000000000000000000000000A01',
+        CAMPUS_A,
+      );
+      expect(ok).toBe(true);
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(sql).toContain("status = '启用'");
+      expect(params).toEqual([
+        'acad000000000000000000000000A01',
+        ['academic'],
+        CAMPUS_A,
+      ]);
+    });
+
+    it('查无（非本校 / 已停用 / 非 academic）→ false', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      const ok = await repo.isActiveAcademicInCampus(
+        TENANT,
+        'acad000000000000000000000000A01',
+        CAMPUS_A,
+      );
+      expect(ok).toBe(false);
+    });
+  });
 });

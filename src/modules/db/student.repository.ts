@@ -394,6 +394,103 @@ export class StudentRepository {
   }
 
   /**
+   * V63 (Phase 3) 校长「待分配」列表：本校 assigned_academic_id IS NULL 的有效学员。
+   *   students 表无 campus_id 列 → 按家庭主档 customers.campus_id 过滤（与 listAll #18 一致）。
+   *   投影：id / studentName / gradeOrAge / intendedSubject / customerId / parentName / createdAt
+   *     （供校长手动分配选择；无一级 PII —— 不返手机号）。
+   *   排序：createdAt ASC（先签先分配）。
+   */
+  async listPendingAssignmentByCampus(
+    tenantSchema: string,
+    campusId: string,
+    options: { limit?: number; offset?: number } = {},
+  ): Promise<
+    Array<{
+      id: string;
+      studentName: string;
+      gradeOrAge: string | null;
+      intendedSubject: string | null;
+      customerId: string;
+      parentName: string | null;
+      createdAt: string;
+    }>
+  > {
+    const limit = options.limit ?? 100;
+    const offset = options.offset ?? 0;
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT s.id, s.student_name, s.grade_or_age, s.intended_subject,
+              s.customer_id, s.created_at,
+              cu.parent_name
+         FROM students s
+         LEFT JOIN customers cu ON cu.id = s.customer_id
+        WHERE s.deleted_at IS NULL
+          AND s.assigned_academic_id IS NULL
+          AND cu.campus_id = $1
+        ORDER BY s.created_at ASC
+        LIMIT $2 OFFSET $3`,
+      [campusId, limit, offset],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      studentName: r.student_name,
+      gradeOrAge: r.grade_or_age ?? null,
+      intendedSubject: r.intended_subject ?? null,
+      customerId: r.customer_id,
+      parentName: r.parent_name ?? null,
+      createdAt: new Date(r.created_at).toISOString(),
+    }));
+  }
+
+  /**
+   * V63 (Phase 3) 取学员当前归属教务 + 其家庭校区（手动分配前态 + 同校校验用）。
+   *   返回 null = 学员不存在/已软删。
+   */
+  async findAssignmentInfo(
+    tenantSchema: string,
+    studentId: string,
+  ): Promise<{ assignedAcademicId: string | null; campusId: string | null } | null> {
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT s.assigned_academic_id, cu.campus_id
+         FROM students s
+         LEFT JOIN customers cu ON cu.id = s.customer_id
+        WHERE s.id = $1 AND s.deleted_at IS NULL`,
+      [studentId],
+    );
+    if (rows.length === 0) return null;
+    return {
+      assignedAcademicId: rows[0].assigned_academic_id ?? null,
+      campusId: rows[0].campus_id ?? null,
+    };
+  }
+
+  /**
+   * V63 (Phase 3) 校长手动分配：set students.assigned_academic_id。
+   *   - academicId 校验（本校在职 academic）由 controller 层先做。
+   *   - 仅更新存在且未软删的学员；不存在 → NotFound。
+   *   - 不写 audit（controller 写 student.manual_assigned，含 before/after）。
+   */
+  async setAssignedAcademic(
+    tenantSchema: string,
+    studentId: string,
+    academicId: string | null,
+    operatorUserId: string,
+  ): Promise<void> {
+    const rows = await this.pg.tenantQuery<{ id: string }>(
+      tenantSchema,
+      `UPDATE students
+          SET assigned_academic_id = $1, updated_at = NOW(), updated_by = $2
+        WHERE id = $3 AND deleted_at IS NULL
+      RETURNING id`,
+      [academicId, operatorUserId, studentId],
+    );
+    if (rows.length === 0) {
+      throw new NotFoundException(`student ${studentId} not found`);
+    }
+  }
+
+  /**
    * 2026-05-21 新增：学员档案完整详情
    *   GET /db/students/:id endpoint 用，b/student/detail page 拿基础信息
    *   JOIN: customers / public.campuses / public.users (owner_sales) / teachers (assigned)

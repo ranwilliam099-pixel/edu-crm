@@ -190,6 +190,55 @@ export class UserRepository {
   }
 
   /**
+   * V63 (Phase 3) 列本校在职「教务」（academic）— 校长手动分配学员的教务选择器。
+   *   注：本地 listActive 的 TenantRole 是 7-enum（不含 academic），故单独裸 role 字符串查询。
+   *   status='启用'（V2 schema 中文枚举）+ deleted_at IS NULL = 真正可分配的在职教务。
+   *   ⚠️ 池角色（是否含 academic_admin）见 StudentAssignmentService.ASSIGNMENT_POOL_ROLES；
+   *      此选择器与发牌池保持一致（默认仅 academic）。
+   */
+  async listActiveAcademicsInCampus(
+    tenantSchema: string,
+    campusId: string,
+    roles: readonly string[] = ['academic'],
+  ): Promise<Array<{ id: string; name: string; role: string }>> {
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT id, name, role FROM users
+        WHERE role = ANY($1::varchar[])
+          AND campus_id = $2
+          AND status = '启用'
+          AND deleted_at IS NULL
+        ORDER BY id ASC`,
+      [roles as string[], campusId],
+    );
+    return rows.map((r) => ({ id: r.id, name: r.name, role: r.role }));
+  }
+
+  /**
+   * V63 (Phase 3) 校验某 user 是本校在职 academic（手动分配前校验目标教务合法）。
+   *   返回 true 仅当：存在 + role ∈ roles + campus_id=campusId + status='启用' + 未软删。
+   */
+  async isActiveAcademicInCampus(
+    tenantSchema: string,
+    userId: string,
+    campusId: string,
+    roles: readonly string[] = ['academic'],
+  ): Promise<boolean> {
+    const rows = await this.pg.tenantQuery<{ ok: number }>(
+      tenantSchema,
+      `SELECT 1 AS ok FROM users
+        WHERE id = $1
+          AND role = ANY($2::varchar[])
+          AND campus_id = $3
+          AND status = '启用'
+          AND deleted_at IS NULL
+        LIMIT 1`,
+      [userId, roles as string[], campusId],
+    );
+    return rows.length > 0;
+  }
+
+  /**
    * 列出 active 但名下有 opportunities/contracts 的用户（校长「主动转交」起点选择器）
    * V44: u.deleted_at IS NULL + s.deleted_at IS NULL（学员子查询同步排除软删）
    */

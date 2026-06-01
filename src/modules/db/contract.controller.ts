@@ -40,6 +40,9 @@ import { StudentRepository } from './student.repository';
 //   - create 写 audit_log（金额详情入 audit 用于变更溯源 — 不脱敏，财务/审计场景必需）
 //   - canAccessContract 失败前 audit 'contract.access-denied'
 import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.repository';
+// Phase 3 (2026-06-01): 合同激活后触发学员→教务分配（round-robin / 手动兜）。
+//   side-effect，失败不阻塞激活（try/catch fail-open）。
+import { StudentAssignmentService } from './student-assignment.service';
 
 /**
  * ContractController — V25 签约管理 HTTP 暴露（业绩数据源头）
@@ -71,6 +74,10 @@ export class ContractController {
     //   - @Optional：unit spec 直接 new 不传也能跑（兼容现有 spec 测试）
     //   - fail-open：log() 写失败仅 logger.warn 不抛主业务
     @Optional() private readonly auditLog?: AuditLogRepository,
+    // Phase 3 (2026-06-01): 激活后触发学员→教务分配（@Optional 兼容现有 spec new；
+    //   缺失时仅 logger.warn 跳过分配，不影响激活主流程）
+    @Optional()
+    private readonly assignmentService?: StudentAssignmentService,
   ) {}
 
   /**
@@ -439,6 +446,27 @@ export class ContractController {
       before: { status: before?.status ?? null },
       after: { status: result.status },
     });
+
+    // Phase 3 (2026-06-01): 激活成功 → 触发学员→教务分配（side-effect）。
+    //   - 校长开「自动分配」→ round-robin 发牌给本校在职 academic；关 → 学员留待分配（校长手动兜）。
+    //   - 幂等：assignStudentIfNeeded 内查 assigned_academic_id 非 NULL 直接跳过（重复激活不重分）。
+    //   - try/catch fail-open：分配失败仅 warn，绝不让激活回滚/失败（学员落待分配由校长手动补）。
+    if (this.assignmentService) {
+      try {
+        await this.assignmentService.assignStudentIfNeeded(
+          tenantSchema,
+          result.studentId,
+          result.campusId,
+          { userId, role: req.user?.role },
+        );
+      } catch (e) {
+        this.logger.warn(
+          `post-activate assignment failed (contract=${contractId}, student=${result.studentId}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
 
     return result;
   }
