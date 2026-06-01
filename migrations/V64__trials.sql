@@ -51,7 +51,6 @@
 -- 幂等：CREATE TABLE/INDEX IF NOT EXISTS（重跑无害）；无数据 backfill（trials 初始空）。
 --
 -- 可逆（回退）：DROP TABLE IF EXISTS __TENANT_SCHEMA__.trials;
---             ALTER TABLE __TENANT_SCHEMA__.campus_assignment_config DROP COLUMN IF EXISTS rr_last_trial_academic_id;
 --
 -- GRANT：新表须 ALTER OWNER TO eduapp（V56 教训：否则应用层 query permission denied）。
 -- ============================================================
@@ -105,18 +104,5 @@ CREATE INDEX IF NOT EXISTS idx_trials_teacher_scheduled
 
 -- V56 教训：ALTER OWNER TO eduapp 让应用层有权限 query（避免 permission denied）
 ALTER TABLE trials OWNER TO eduapp;
-
--- ----------------------------------------------------------------
--- 两线独立游标（2026-06-02 用户拍板，SSOT §5.3.2）
---   学员分配（V63）走 campus_assignment_config.rr_last_academic_id；
---   试听分配（本 Phase）走独立列 rr_last_trial_academic_id —— 两线各自轮转互不推进。
---   表 campus_assignment_config 由 V63 创建（版本序先于 V64，此处 ALTER 时已存在）；
---   ADD COLUMN IF NOT EXISTS 幂等（重跑无害）。OWNER 已由 V63 设 eduapp，无需重设。
--- ----------------------------------------------------------------
-ALTER TABLE campus_assignment_config
-  ADD COLUMN IF NOT EXISTS rr_last_trial_academic_id VARCHAR(32);
-
-COMMENT ON COLUMN campus_assignment_config.rr_last_trial_academic_id IS
-  'V64 (Phase 4) 试听 round-robin 独立游标（上次发到的 academic.id；NULL=从头）；与学员分配 rr_last_academic_id 独立，2026-06-02 拍板两线独立';
 
 COMMIT;
