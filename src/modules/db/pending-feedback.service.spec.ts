@@ -299,4 +299,41 @@ describe('PendingFeedbackService (V66 Phase 5)', () => {
       expect(r.items).toEqual([]);
     });
   });
+
+  // ============================================================
+  // listPendingForCampus（academic_admin 督导视图，2026-06-02 拍板）
+  // ============================================================
+  describe('listPendingForCampus', () => {
+    it('规则全关 → 空列表，不查库（短路，同 academic）', async () => {
+      ruleRepo.get.mockResolvedValueOnce(null);
+      const r = await service.listPendingForCampus(TENANT, CAMPUS);
+      expect(r.items).toEqual([]);
+      expect(pg.tenantQuery).not.toHaveBeenCalled();
+    });
+
+    it('campus-scope：SQL 用 campusId 作本校教务池子查询（不按单个 sub）', async () => {
+      ruleRepo.get.mockResolvedValueOnce(rule(7, null));
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await service.listPendingForCampus(TENANT, CAMPUS);
+      const [schema, sql, params] = pg.tenantQuery.mock.calls[0];
+      expect(schema).toBe(TENANT);
+      // 本校全部教务名下：assigned_academic_id IN (本校教务池子查询)，而非 = 单个 sub
+      expect(sql).toContain('assigned_academic_id IN');
+      expect(sql).toContain('u.campus_id = $1');
+      expect(sql).not.toContain('assigned_academic_id = $1');
+      expect(params[0]).toBe(CAMPUS);
+    });
+
+    it('命中筛选复用同一 OR 判定（assembleItems 共用）', async () => {
+      ruleRepo.get.mockResolvedValueOnce(rule(7, null));
+      pg.tenantQuery.mockResolvedValueOnce([
+        { id: 'stuA', student_name: '甲', last_fb: '2026-05-20T00:00:00.000Z', lessons_since_last: '1', days_since_last: '12' },
+        { id: 'stuB', student_name: '乙', last_fb: '2026-05-30T00:00:00.000Z', lessons_since_last: '0', days_since_last: '2' },
+      ]);
+      const r = await service.listPendingForCampus(TENANT, CAMPUS);
+      expect(r.items).toHaveLength(1);
+      expect(r.items[0].studentId).toBe('stuA');
+      expect(r.items[0].reasons).toEqual(['overdue_days']);
+    });
+  });
 });

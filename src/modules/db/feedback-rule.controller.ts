@@ -47,8 +47,11 @@ import {
  *   - admin / academic_admin = 跨校可能 null；本组「本校」语义 → 缺 campusId 同样 403
  *     （与 §5.3.1 CampusAssignmentController.requireCampusId 同纪律）。
  *
- * owner-scope：pending-students 严格 assigned_academic_id = JWT.sub（教务只看自己名下，
- *   academic_admin 也只看自己 sub 名下 caseload —— 与 §5.3.1 发牌池 academic 语义一致）。
+ * owner-scope（2026-06-02 用户拍板，范围分角色）：
+ *   - 普通教务 academic = 本人名下（严格 assigned_academic_id = JWT.sub）。
+ *   - 教务主管 academic_admin = 本校督导视图（listPendingForCampus，本校全部教务名下汇总；
+ *     因 §5.3.1 发牌池仅 academic、主管不接 caseload，按本人名下会恒空 → 改全校督导）。
+ *   两者 campusId 一律取 JWT（防伪造跨校）。
  *
  * 教务页性质 = 只读监控（§6「教务全只读老师线」红线不变，0 教务写反馈动作）。
  *
@@ -259,14 +262,21 @@ export class FeedbackRuleController {
       // JWT 异常（无 sub）→ 403（owner-scope 无法确定，不兜底）
       throw new ForbiddenException('FEEDBACK_PENDING_NO_SUBJECT: caller sub missing');
     }
+    // 2026-06-02 用户拍板：academic_admin（教务主管）= 本校督导视图（本校全部教务名下待反馈）；
+    //   普通 academic = 本人名下（assigned_academic_id=sub）。campusId 一律取 JWT（防伪造跨校）。
+    const opts = { limit: body.limit, offset: body.offset };
+    if (req.user?.role === 'academic_admin') {
+      return this.pendingService.listPendingForCampus(
+        body.tenantSchema,
+        campusId,
+        opts,
+      );
+    }
     return this.pendingService.listPendingForAcademic(
       body.tenantSchema,
       campusId,
       academicId,
-      {
-        limit: body.limit,
-        offset: body.offset,
-      },
+      opts,
     );
   }
 }

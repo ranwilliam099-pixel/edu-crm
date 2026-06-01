@@ -4,6 +4,7 @@ import {
   FeedbackRuleConfig,
   FeedbackRuleConfigRepository,
 } from './feedback-rule-config.repository';
+import { ASSIGNMENT_POOL_ROLES } from './student-assignment.service';
 
 /**
  * PendingFeedbackService — V66 (Phase 5) 教务待反馈学员计算
@@ -85,9 +86,39 @@ export class PendingFeedbackService {
       offset,
     );
 
+    return { items: PendingFeedbackService.assembleItems(aggs, rule!) };
+  }
+
+  /**
+   * 计算【本校全部教务名下】待反馈学员（教务主管 academic_admin 督导视图，2026-06-02 用户拍板）。
+   *   - 规则/OR 判定与 listPendingForAcademic 完全一致，唯 owner-scope = 本校
+   *     （assigned_academic_id ∈ 本校教务池，见 aggregateForCampus）而非单个教务 sub。
+   *   - 普通教务(academic) 仍走 listPendingForAcademic 本人名下；本方法仅 academic_admin 用。
+   *   - 规则全关 → 空列表（短路，不查库）。
+   */
+  async listPendingForCampus(
+    tenantSchema: string,
+    campusId: string,
+    options: { limit?: number; offset?: number } = {},
+  ): Promise<{ items: PendingFeedbackStudent[] }> {
+    const rule = await this.ruleRepo.get(tenantSchema, campusId);
+    if (!PendingFeedbackService.ruleHasAnyDimension(rule)) {
+      return { items: [] };
+    }
+    const limit = options.limit && options.limit > 0 ? Math.min(options.limit, 200) : 100;
+    const offset = options.offset && options.offset > 0 ? options.offset : 0;
+    const aggs = await this.aggregateForCampus(tenantSchema, campusId, limit, offset);
+    return { items: PendingFeedbackService.assembleItems(aggs, rule!) };
+  }
+
+  /** 聚合行 → 命中学员投影（OR 规则判定，仅 reasons 非空进列表）。academic/academic_admin 共用。 */
+  private static assembleItems(
+    aggs: StudentFeedbackAgg[],
+    rule: FeedbackRuleConfig,
+  ): PendingFeedbackStudent[] {
     const items: PendingFeedbackStudent[] = [];
     for (const agg of aggs) {
-      const reasons = PendingFeedbackService.evaluateReasons(agg, rule!);
+      const reasons = PendingFeedbackService.evaluateReasons(agg, rule);
       if (reasons.length > 0) {
         items.push({
           studentId: agg.studentId,
@@ -99,7 +130,7 @@ export class PendingFeedbackService {
         });
       }
     }
-    return { items };
+    return items;
   }
 
   /** 规则是否至少启用一个维度（null/无行 = 全关）。 */
@@ -179,6 +210,66 @@ export class PendingFeedbackService {
         ORDER BY days_since_last DESC NULLS LAST, s.id ASC
         LIMIT $2 OFFSET $3`,
       [academicId, limit, offset],
+    );
+
+    return rows.map((r) => ({
+      studentId: r.id,
+      studentName: r.student_name,
+      lastFeedbackAt: r.last_fb ? new Date(r.last_fb).toISOString() : null,
+      daysSinceLast:
+        r.days_since_last === null || r.days_since_last === undefined
+          ? null
+          : Number(r.days_since_last),
+      lessonsSinceLast: Number(r.lessons_since_last ?? 0),
+    }));
+  }
+
+  /**
+   * 本校全部教务名下学员的反馈聚合（academic_admin 督导视图，2026-06-02 拍板）。
+   *   owner-scope = assigned_academic_id ∈ 本校教务池（u.campus_id=$1 且 role∈ASSIGNMENT_POOL_ROLES 且未删）。
+   *   其余聚合/排序/分页与 aggregateForAcademic 完全一致；students 无 campus_id 列，经 assigned 教务的
+   *   campus 反查本校 caseload（assigned_academic_id 仅指向 academic，故等价本校全部教务名下）。
+   */
+  private async aggregateForCampus(
+    tenantSchema: string,
+    campusId: string,
+    limit: number,
+    offset: number,
+  ): Promise<StudentFeedbackAgg[]> {
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `WITH lf AS (
+         SELECT student_id, MAX(submitted_at) AS last_fb
+           FROM lesson_feedbacks
+          GROUP BY student_id
+       )
+       SELECT s.id,
+              s.student_name,
+              lf.last_fb,
+              COUNT(cc.created_at) FILTER (
+                WHERE lf.last_fb IS NULL OR cc.created_at > lf.last_fb
+              ) AS lessons_since_last,
+              CASE
+                WHEN lf.last_fb IS NOT NULL
+                  THEN FLOOR(EXTRACT(EPOCH FROM (NOW() - lf.last_fb)) / 86400)
+                WHEN MIN(cc.created_at) IS NOT NULL
+                  THEN FLOOR(EXTRACT(EPOCH FROM (NOW() - MIN(cc.created_at))) / 86400)
+                ELSE NULL
+              END AS days_since_last
+         FROM students s
+         LEFT JOIN lf ON lf.student_id = s.id
+         LEFT JOIN course_consumptions cc ON cc.student_id = s.id
+        WHERE s.deleted_at IS NULL
+          AND s.assigned_academic_id IN (
+            SELECT u.id FROM users u
+             WHERE u.campus_id = $1
+               AND u.role = ANY($2::varchar[])
+               AND u.deleted_at IS NULL
+          )
+        GROUP BY s.id, s.student_name, lf.last_fb
+        ORDER BY days_since_last DESC NULLS LAST, s.id ASC
+        LIMIT $3 OFFSET $4`,
+      [campusId, ASSIGNMENT_POOL_ROLES as string[], limit, offset],
     );
 
     return rows.map((r) => ({

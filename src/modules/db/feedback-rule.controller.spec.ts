@@ -19,7 +19,10 @@ import {
 describe('FeedbackRuleController (V66 Phase 5 反馈规则 + 待反馈学员)', () => {
   let controller: FeedbackRuleController;
   let ruleRepo: { get: jest.Mock; upsert: jest.Mock };
-  let pendingService: { listPendingForAcademic: jest.Mock };
+  let pendingService: {
+    listPendingForAcademic: jest.Mock;
+    listPendingForCampus: jest.Mock;
+  };
   let auditLog: { log: jest.Mock };
 
   const TENANT = 'tenant_073e69d6aa5ac5b7e38496d3f57e7cdb';
@@ -48,7 +51,10 @@ describe('FeedbackRuleController (V66 Phase 5 反馈规则 + 待反馈学员)', 
 
   beforeEach(() => {
     ruleRepo = { get: jest.fn(), upsert: jest.fn() };
-    pendingService = { listPendingForAcademic: jest.fn() };
+    pendingService = {
+      listPendingForAcademic: jest.fn(),
+      listPendingForCampus: jest.fn(),
+    };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = new FeedbackRuleController(
       ruleRepo as unknown as FeedbackRuleConfigRepository,
@@ -313,19 +319,21 @@ describe('FeedbackRuleController (V66 Phase 5 反馈规则 + 待反馈学员)', 
       );
     });
 
-    it('academic_admin 也只看自己 sub 名下（owner-scope 一致）', async () => {
-      pendingService.listPendingForAcademic.mockResolvedValueOnce({ items: [] });
+    it('academic_admin = 本校督导视图（2026-06-02 拍板）：走 listPendingForCampus 本校，不传 sub', async () => {
+      pendingService.listPendingForCampus.mockResolvedValueOnce({ items: [] });
       const ADMIN_ACAD = 'acadAdminAA000000000000000000A02';
       await controller.pendingStudents(
-        { tenantSchema: TENANT },
+        { tenantSchema: TENANT, limit: 30 },
         academicReq({ sub: ADMIN_ACAD, role: 'academic_admin' }),
       );
-      expect(pendingService.listPendingForAcademic).toHaveBeenCalledWith(
+      // 督导视图：按本校 campusId（JWT）查全校教务名下，不按本人 sub
+      expect(pendingService.listPendingForCampus).toHaveBeenCalledWith(
         TENANT,
         CAMPUS,
-        ADMIN_ACAD,
-        { limit: undefined, offset: undefined },
+        { limit: 30, offset: undefined },
       );
+      // 不应误走本人名下分支
+      expect(pendingService.listPendingForAcademic).not.toHaveBeenCalled();
     });
 
     it('campusId 缺失 → 403', async () => {
