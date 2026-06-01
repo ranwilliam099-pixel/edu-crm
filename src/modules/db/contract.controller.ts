@@ -24,7 +24,7 @@ import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 import { Roles } from '../../guards/rbac.decorator';
 import { RbacGuard } from '../../guards/rbac.guard';
-// Sprint B.3 (2026-05-11): contract 字段级权限（教学人员不看金额；sales 不看他人合同金额）
+// Sprint B.3 (2026-05-11): contract 字段级权限（sales 不看他人合同金额）
 import {
   maskContract,
   canAccessContract,
@@ -32,9 +32,9 @@ import {
 } from '../../common/role-field-filter';
 // Sprint B.3 复审 (2026-05-11) — 修 3 by-student scope filter:
 //   - 用 studentRepo.findBrief 拿 ownerSalesId / assignedTeacherId
-//   - sales 只看自己 owner 的学生合同；teacher 只看自己 assigned 的；其他 admin/finance/academic 放行
+//   - sales 只看自己 owner 的学生合同；其他 admin/finance/academic 放行
+//   - 2026-06-01 拍板：teacher 不看合同相关信息，by-student @Roles 不含 teacher。
 import { StudentRepository } from './student.repository';
-import { TeacherRepository } from './teacher.repository';
 // Sprint B.5 (2026-05-11): audit_log 业务写 + 拒绝路径
 //   - create 写 audit_log（金额详情入 audit 用于变更溯源 — 不脱敏，财务/审计场景必需）
 //   - canAccessContract 失败前 audit 'contract.access-denied'
@@ -64,8 +64,6 @@ export class ContractController {
     private readonly repo: ContractRepository,
     // Sprint B.3 复审: by-student scope filter 需查 student 归属
     private readonly studentRepo: StudentRepository,
-    // Sprint B.3 复审: teacher role 反查 ownTeacherId
-    private readonly teacherRepo: TeacherRepository,
     // Sprint B.5 (2026-05-11): audit_log 业务写 + 拒绝路径
     //   - @Optional：unit spec 直接 new 不传也能跑（兼容现有 spec 测试）
     //   - fail-open：log() 写失败仅 logger.warn 不抛主业务
@@ -243,7 +241,7 @@ export class ContractController {
    *     - admin / boss / finance / academic / academic_admin：放行
    *     - sales / sales_manager：student.ownerSalesId === req.user.sub 才放行
    *       （sales_manager 走 admin group 收口，全放行 — 5/15 A-2 删 sales_director）
-   *     - teacher：student.assignedTeacherId === ownTeacherId 才放行
+   *     - teacher：不看合同相关信息，HTTP RBAC 直接 403（@Roles 不含 teacher）
    *     - parent / hr：403（拍板 hr 不参与；parent 走 c 端独立 endpoint）
    *   - 失败 → ForbiddenException
    */
@@ -280,18 +278,13 @@ export class ContractController {
 
     // admin / academic / finance group 全放行（拍板「老板校长 + 教务 + 财务 ✅」）
     // sales 个人（sales/marketing）：必须 student.ownerSalesId === me
-    // teacher：必须 student.assignedTeacherId === ownTeacherId（反查 teachers.user_id）
+    // teacher：不看合同相关信息，@Roles 不含 teacher；即使绕过到这里也不放行
     // parent / hr / unknown：403
     let allowed = false;
     if (group === 'admin' || group === 'academic' || group === 'finance') {
       allowed = true;
     } else if (group === 'sales' && subId) {
       allowed = student.ownerSalesId === subId;
-    } else if (group === 'teacher' && subId) {
-      const ownTeacher = await this.teacherRepo.findByUserId(tenantSchema, subId);
-      if (ownTeacher) {
-        allowed = student.assignedTeacherId === ownTeacher.id;
-      }
     }
     // parent / hr / unknown 留 allowed=false
 
@@ -326,7 +319,6 @@ export class ContractController {
       offset: offset ? parseInt(offset, 10) : 0,
     });
     // Sprint B.3：from student/detail OOUX 进入
-    //   teacher 主带学生合同 → 走 teacher path（金额全 0）
     //   sales 自己客户的孩子合同 → owner=me ✅，他 owner ❌ 0
     //   admin/finance/academic 走各自路径
     //   parent 自己孩子合同 → totalAmount 保留 + discountAmount/giftHours 0

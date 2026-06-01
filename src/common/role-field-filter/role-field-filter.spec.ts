@@ -12,7 +12,7 @@
  *   - role 过滤后字段类型保持（set null/undefined/0，不删 key）
  *   - admin/boss 看到全字段（不被裁剪）
  *   - sales other 看不到他人客户 phone/wechat
- *   - teacher 看不到合同金额
+ *   - teacher 不看合同相关信息
  *   - parent c 端独立流程，本 helper 默认全裁剪
  */
 
@@ -503,14 +503,13 @@ describe('maskContract', () => {
     });
   });
 
-  describe('teacher → 金额全 0（§4.1 墙①老师永不看价格）', () => {
-    it('老师看合同 → 金额全清零，仅看 status/classType/lessonHours', () => {
+  describe('teacher → 合同 endpoint 不开放，maskContract 仅作纵深兜底', () => {
+    it('若误入 maskContract → 金额全清零', () => {
       const r = maskContract(contractFixture(), jwt('teacher'));
       expect(r.standardPrice).toBe(0);
       expect(r.discountAmount).toBe(0);
       expect(r.totalAmount).toBe(0);
       expect(r.giftHours).toBe(0);
-      // 教学执行字段保留
       expect(r.lessonHours).toBe(60);
       expect(r.classType).toBe('一对一');
       expect(r.status).toBe('active');
@@ -631,8 +630,8 @@ describe('canAccessContract', () => {
     expect(canAccessContract(c, jwt('sales_director' as never, USER_OTHER))).toBe(false);
   });
 
-  it('teacher → 可看（学生关系在 controller 校验）', () => {
-    expect(canAccessContract(c, jwt('teacher'))).toBe(true);
+  it('teacher → 拒绝（老师不看合同相关信息）', () => {
+    expect(canAccessContract(c, jwt('teacher'))).toBe(false);
   });
 
   it('marketing → 可看（§4.1 归 academic group，本校全放行；合同价格 maskContract 不隐）', () => {

@@ -4,10 +4,10 @@
  * 范围：
  *   - GET /db/contracts/:id：scope filter + field mask
  *   - GET /db/contracts/mine：listByOwner 已 SQL 过滤 + mask
- *   - GET /db/contracts/by-student/:studentId：教学/家长视角字段裁剪
+ *   - GET /db/contracts/by-student/:studentId：学员视角合同列表 + 角色边界
  *
  * 红线（fields-by-role.md #4）：
- *   - 教学人员（teacher/academic）不看合同金额细节（standardPrice/discountAmount/giftHours 全 0）
+ *   - teacher 不看合同相关信息，HTTP RBAC 不放行；academic 不看合同金额细节
  *   - sales 别人合同 → 403（scope filter）
  *   - parent 自己孩子 → totalAmount ✅ + discountAmount/giftHours 0
  */
@@ -16,7 +16,6 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ContractController } from './contract.controller';
 import { Contract, ContractRepository } from './contract.repository';
 import { StudentRepository } from './student.repository';
-import { TeacherRepository } from './teacher.repository';
 import { AuthenticatedRequest, JwtPayload, TenantRole } from '../auth/jwt-payload.interface';
 import { AuditLogRepository } from './audit-log.repository';
 
@@ -28,7 +27,6 @@ describe('ContractController (Sprint B.3 字段级权限)', () => {
     listByStudent: jest.Mock;
   };
   let studentRepo: { findBrief: jest.Mock };
-  let teacherRepo: { findByUserId: jest.Mock };
 
   const TENANT_A = 'TENANTA00000000000000000000000A1';
   const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
@@ -81,11 +79,9 @@ describe('ContractController (Sprint B.3 字段级权限)', () => {
       listByStudent: jest.fn(),
     };
     studentRepo = { findBrief: jest.fn() };
-    teacherRepo = { findByUserId: jest.fn() };
     controller = new ContractController(
       repo as unknown as ContractRepository,
       studentRepo as unknown as StudentRepository,
-      teacherRepo as unknown as TeacherRepository,
     );
   });
 
@@ -162,19 +158,15 @@ describe('ContractController (Sprint B.3 字段级权限)', () => {
       expect(r.classType).toBe('一对一');
     });
 
-    it('teacher → 金额全 0，仅 status/classType/lessonHours', async () => {
+    it('teacher → 403（老师不看合同相关信息）', async () => {
       repo.findById.mockResolvedValueOnce(contractFixture());
-      const r = (await controller.detail(
-        CONTRACT_ID,
-        TENANT_SCHEMA,
-        req(jwt('teacher')),
-      )) as Contract;
-      expect(r.standardPrice).toBe(0);
-      expect(r.discountAmount).toBe(0);
-      expect(r.totalAmount).toBe(0);
-      expect(r.giftHours).toBe(0);
-      expect(r.lessonHours).toBe(60); // 教学执行需要
-      expect(r.classType).toBe('一对一');
+      await expect(
+        controller.detail(
+          CONTRACT_ID,
+          TENANT_SCHEMA,
+          req(jwt('teacher')),
+        ),
+      ).rejects.toThrow(ForbiddenException);
     });
 
     it('parent → totalAmount + standardPrice ✅，discountAmount/giftHours 0', async () => {
@@ -253,7 +245,7 @@ describe('ContractController (Sprint B.3 字段级权限)', () => {
         studentName: '小明',
         customerId: 'cust00000000000000000000000000A1',
         ownerSalesId: SALES_A,
-        assignedTeacherId: TEACHER_ID_A,
+        assignedTeacherId: 'teacherID000000000000000000000A1',
         ownerChangedAt: null,
         ownerChangeReason: null,
         gradeOrAge: null,
@@ -263,35 +255,22 @@ describe('ContractController (Sprint B.3 字段级权限)', () => {
       });
     }
 
-    it('teacher 主带学生（assignedTeacherId === ownTeacherId）→ 金额全 0', async () => {
+    it('teacher 即使是主带学生 → 403（老师不看合同相关信息）', async () => {
       mockStudent({ assignedTeacherId: TEACHER_ID_A });
-      teacherRepo.findByUserId.mockResolvedValueOnce({
-        id: TEACHER_ID_A,
-        userId: TEACHER_USER_A,
-      });
-      repo.listByStudent.mockResolvedValueOnce([
-        contractFixture({ ownerUserId: SALES_A }),
-        contractFixture({ id: 'c2', ownerUserId: SALES_B }),
-      ]);
-      const r = await controller.listByStudent(
-        STUDENT_ID,
-        TENANT_SCHEMA,
-        undefined,
-        undefined,
-        req(jwt('teacher', TEACHER_USER_A)),
-      );
-      expect(r.items[0].totalAmount).toBe(0);
-      expect(r.items[1].totalAmount).toBe(0);
-      expect(r.items[0].classType).toBe('一对一');
-      expect(r.items[0].lessonHours).toBe(60);
+      await expect(
+        controller.listByStudent(
+          STUDENT_ID,
+          TENANT_SCHEMA,
+          undefined,
+          undefined,
+          req(jwt('teacher', TEACHER_USER_A)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(repo.listByStudent).not.toHaveBeenCalled();
     });
 
-    it('teacher 非主带学生 → 403（scope filter 拒绝）', async () => {
+    it('teacher 非主带学生 → 403（老师不看合同相关信息）', async () => {
       mockStudent({ assignedTeacherId: 'OTHER_TEACHER_0000000000000000A1' });
-      teacherRepo.findByUserId.mockResolvedValueOnce({
-        id: TEACHER_ID_A,
-        userId: TEACHER_USER_A,
-      });
       await expect(
         controller.listByStudent(
           STUDENT_ID,
@@ -419,9 +398,8 @@ describe('ContractController (Sprint B.3 字段级权限)', () => {
       expect(r.items[0].standardPrice).toBe(9999);
     });
 
-    it('teacher 未绑定 teachers.user_id → 403（fail-safe，不抛 500）', async () => {
+    it('teacher → 403（fail-safe，不抛 500）', async () => {
       mockStudent();
-      teacherRepo.findByUserId.mockResolvedValueOnce(null);
       await expect(
         controller.listByStudent(
           STUDENT_ID,
@@ -463,7 +441,6 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
     getTeamPerformance: jest.Mock;
   };
   let studentRepo: { findBrief: jest.Mock };
-  let teacherRepo: { findByUserId: jest.Mock };
   let auditLog: { log: jest.Mock };
 
   const TENANT_A = 'TENANTA00000000000000000000000A1';
@@ -474,7 +451,6 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
   const CONTRACT_ID = 'contract000000000000000000000A01';
   const STUDENT_ID = 'student00000000000000000000000A1';
   const TEACHER_USER_A = 'teacherUser00000000000000000A01';
-  const TEACHER_ID_A = 'teacherID000000000000000000000A1';
 
   function jwt(role: TenantRole, sub = SALES_A): JwtPayload {
     return { sub, tenantId: TENANT_A, role, campusId: CAMPUS_A };
@@ -528,12 +504,10 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
       getTeamPerformance: jest.fn(),
     } as any;
     studentRepo = { findBrief: jest.fn() };
-    teacherRepo = { findByUserId: jest.fn() };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     controller = new ContractController(
       repo as unknown as ContractRepository,
       studentRepo as unknown as StudentRepository,
-      teacherRepo as unknown as TeacherRepository,
       auditLog as unknown as AuditLogRepository,
     );
   });
@@ -588,7 +562,7 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
         studentName: '小明',
         customerId: 'cust00000000000000000000000000A1',
         ownerSalesId: SALES_B, // 他人客户
-        assignedTeacherId: TEACHER_ID_A,
+        assignedTeacherId: 'teacherID000000000000000000000A1',
         ownerChangedAt: null,
         ownerChangeReason: null,
         gradeOrAge: null,
@@ -614,7 +588,7 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
       expect(entry.after.endpoint).toBe('by-student');
     });
 
-    it('teacher 非主带学生 → audit access-denied + 403', async () => {
+    it('teacher → audit access-denied + 403（老师不看合同相关信息）', async () => {
       studentRepo.findBrief.mockResolvedValueOnce({
         id: STUDENT_ID,
         studentName: '小明',
@@ -626,10 +600,6 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
         gradeOrAge: null,
         intendedSubject: null,
         contractClassType: null,
-      });
-      teacherRepo.findByUserId.mockResolvedValueOnce({
-        id: TEACHER_ID_A,
-        userId: TEACHER_USER_A,
       });
       await expect(
         controller.listByStudent(

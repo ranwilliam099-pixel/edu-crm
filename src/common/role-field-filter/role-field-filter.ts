@@ -330,11 +330,11 @@ export function maskTeacher<T extends Teacher>(
  * 实现策略：
  *   - admin / boss：✅ 全字段
  *   - marketing（市场）：✅ 含价格（2026-05-31 §4.1 表行「业务关系（价格/金额）市 ✅（含价格）」
- *       — marketing 非 teacher，不受「老师永不看价格」墙约束；显式 raw-role 放行，
+ *       — marketing 非 teacher，不受「老师不看合同」墙约束；显式 raw-role 放行，
  *       不随 academic group 隐价）
  *   - sales（合同 owner=me）：✅；owner != me 拒绝（controller 校验）
  *   - academic：仅看 totalAmount + 付费状态；价格细节 ❌
- *   - teacher：仅 status + class_type + signed_at + 剩余课时；金额全 ❌（§4.1 墙①老师永不看价格）
+ *   - teacher：不看合同相关信息；合同 endpoint 不应对 teacher 放行（本分支仅作纵深兜底）
  *   - finance：✅（作账需要全字段，含 refund）
  *   - parent：看自己孩子合同：基础 + 时间 + 状态；价格细节 ✅（家长视图）
  *
@@ -359,7 +359,7 @@ export function maskContract<T extends Contract>(
   // 2026-05-31 §4.1 表行 328「业务关系（价格/金额）市(marketing) ✅（含价格）」：
   //   marketing 归 academic group（本校只读 + PII 脱敏），但合同价格对 marketing 不隐藏
   //   （获客/市场需看签约金额）。显式 raw-role 检测，先于 group switch 放行全价格字段。
-  //   注：teacher 不在此分支（墙①老师永不看价格保持）。
+  //   注：teacher 不在此分支（老师不看合同相关信息，endpoint 不放行）。
   if (user?.role === 'marketing') {
     return masked;
   }
@@ -391,7 +391,7 @@ export function maskContract<T extends Contract>(
       return masked;
 
     case 'teacher':
-      // 老师 ❌ 全金额；保留 status + signed_at + class_type + lessonHours（教学执行需要）
+      // 老师不看合同相关信息；若误入本 helper，金额全部清零作纵深兜底。
       masked.standardPrice = 0;
       masked.discountAmount = 0;
       masked.totalAmount = 0;
@@ -425,7 +425,7 @@ export function maskContract<T extends Contract>(
  * StudentDetail 字段权限（SSOT §4.1 student/detail，2026-05-31 全面放开）：
  *
  * 学员档案「完整读」对 老板/校长/教务/老师/市场/自己销售 放开，仅两道墙：
- *   ①老师永不看价格 — StudentDetail **无价格字段**，墙①在 maskContract 处理，本函数不涉及；
+ *   ①老师不看合同相关信息 — StudentDetail **无价格字段**，合同区由前端/contract endpoint 共同守门；
  *   ②手机/身份证 = §5 一级隐私 — 仅 自己销售 / 老板 / 校长 看明文；
  *     教务(academic/academic_admin) / 老师(teacher) / 市场(marketing) **脱敏** 138****8801。
  *
@@ -582,9 +582,8 @@ export function canAccessContract(
       // 教务可看本校合同（campus 比对在 controller）
       return true;
     case 'teacher':
-      // 老师可看主带学生的合同（需 controller 层校验 student.assigned_teacher_id === ownTeacherId）
-      // 此 helper 不做学生关系反查（避免重 IO），controller 校验后传 ok
-      return true;
+      // 2026-06-01 拍板：老师不看合同相关信息，页面和 endpoint 都不开放。
+      return false;
     case 'parent':
       // 家长可看自己孩子合同（controller 校验 student 关系）
       return true;
