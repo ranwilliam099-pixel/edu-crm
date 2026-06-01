@@ -2264,8 +2264,8 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
 
     describe('field: canAccessContract_owned', () => {
       // scope filter — contract.ownerUserId = USER_OWNER
-      // visible=[admin,boss,sales_manager,sales_owner,marketing,academic,academic_admin,finance,teacher,parent]
-      // hidden=[sales_other,hr,unknown]
+      // visible=[admin,boss,sales_manager,sales_owner,marketing,academic,academic_admin,finance,parent]
+      // hidden=[sales_other,teacher,hr,unknown]
 
       it('visible: admin → canAccessContract = true', () => {
         expect(callAccess('contract', 'admin')).toBe(true);
@@ -2291,14 +2291,14 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
       it('visible: finance → canAccessContract = true', () => {
         expect(callAccess('contract', 'finance')).toBe(true);
       });
-      it('visible: teacher → canAccessContract = true', () => {
-        expect(callAccess('contract', 'teacher')).toBe(true);
-      });
       it('visible: parent → canAccessContract = true', () => {
         expect(callAccess('contract', 'parent')).toBe(true);
       });
       it('hidden: sales_other → canAccessContract = false', () => {
         expect(callAccess('contract', 'sales_other')).toBe(false);
+      });
+      it('hidden: teacher → canAccessContract = false', () => {
+        expect(callAccess('contract', 'teacher')).toBe(false);
       });
       it('hidden: hr → canAccessContract = false', () => {
         expect(callAccess('contract', 'hr')).toBe(false);

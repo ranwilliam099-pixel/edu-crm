@@ -859,10 +859,10 @@
           },
           "canAccessContract_owned": {
             "_category": "scope filter — contract.ownerUserId = USER_OWNER",
-            "_note": "fixture: 合同归 USER_OWNER 销售；测试每角色的访问决策；academic/teacher/finance/parent 默认 true（controller 层校验）；marketing → sales group + sub=USER_OWNER 默认匹配 ownerUserId → access=true。",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "marketing", "academic", "academic_admin", "finance", "teacher", "parent"],
+            "_note": "fixture: 合同归 USER_OWNER 销售；测试每角色的访问决策；academic/finance/parent 默认 true（controller 层校验）；2026-06-01 拍板「老师不看合同的全部信息」→ canAccessContract teacher=false（teacher 移入 hidden）；marketing → sales group + sub=USER_OWNER 默认匹配 ownerUserId → access=true。",
+            "visible": ["admin", "boss", "sales_manager", "sales_owner", "marketing", "academic", "academic_admin", "finance", "parent"],
             "masked": [],
-            "hidden": ["sales_other", "hr", "unknown"]
+            "hidden": ["sales_other", "teacher", "hr", "unknown"]
           },
           "canAccessCustomer_owned": {
             "_category": "scope filter — customer.ownerUserId = USER_OWNER",
