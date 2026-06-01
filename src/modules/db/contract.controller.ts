@@ -193,6 +193,57 @@ export class ContractController {
     return { items };
   }
 
+  /**
+   * Phase 2 财务激活重构 (2026-06-01)：本校待激活合同列表（财务激活工作台数据源）
+   *
+   * 财务核心动作 = 激活（确认收款 → 合同 pending → active），激活端点
+   *   POST /db/contracts/:contractId/activate（@Roles('finance')）已存在。
+   *   本端点补「财务看本校待激活合同」的数据源（之前缺）。
+   *
+   * RBAC：@Roles('finance') — finance 是单校 role；仅财务可见待激活清单。
+   *   RbacGuard 已在 controller class-level @UseGuards 注册（与 activate 一致）。
+   *
+   * 范围：本校（campus_id = JWT.campusId，禁信前端传参防伪造）+ status='pending'。
+   *   缺 campusId → 403（finance 必有 campusId；缺失即配置异常，拒绝兜底）。
+   *
+   * 只读端点，不写 audit（与其他 list 一致）。金额对 finance 可见（§4.5 作账）。
+   *
+   * 返回每条：id / studentName / productName / totalAmount / signedAt / status
+   *   （repo.listPendingActivationByCampus 已 JOIN students + course_products 取名）。
+   */
+  @Post('pending-activation')
+  @UseGuards(RbacGuard)
+  @Roles('finance')
+  @HttpCode(HttpStatus.OK)
+  async pendingActivation(
+    @Body() body: { tenantSchema: string },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{
+    items: Array<{
+      id: string;
+      studentName: string | null;
+      productName: string | null;
+      totalAmount: number;
+      signedAt: string | null;
+      status: ContractStatus;
+    }>;
+  }> {
+    if (!body?.tenantSchema) throw new BadRequestException('tenantSchema required');
+    // campusId 一律取自 JWT，禁信前端传参（防伪造跨校）
+    const campusId = req.user?.campusId;
+    if (!campusId) {
+      // finance 是单校 role，campusId 必填；缺失即 token/配置异常 → 403 拒绝兜底
+      throw new ForbiddenException(
+        'PENDING_ACTIVATION_NO_CAMPUS: finance must have a campusId scope',
+      );
+    }
+    const items = await this.repo.listPendingActivationByCampus(
+      body.tenantSchema,
+      campusId,
+    );
+    return { items };
+  }
+
   @Get(':contractId')
   // 2026-05-31 §4.1 表行「业务关系（价格/金额）市 ✅（含价格）」：marketing 纳入合同读，且 maskContract 不隐价。
   @Roles('sales', 'sales_manager', 'boss', 'admin', 'academic', 'academic_admin', 'finance', 'marketing')

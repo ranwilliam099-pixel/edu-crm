@@ -394,6 +394,64 @@ export class ContractRepository {
     return rows.map((r) => ContractRepository.mapRow(r));
   }
 
+  /**
+   * Phase 2 财务激活重构 (2026-06-01)：本校待激活合同列表（财务激活数据源）
+   *
+   * 用途：财务「确认收款 → 激活」工作台列出本校 status='pending' 合同。
+   *   激活动作走 POST /db/contracts/:contractId/activate（已存在，pending→active）。
+   *   本方法只提供「待激活清单」，只读，不写 audit（与其他 list 一致）。
+   *
+   * 范围：本校（campus_id = JWT.campusId，controller 层强制 — 禁信前端传参）+ status='pending'。
+   *   finance 是单校 role；controller 缺 campusId → 403（不查库）。
+   *
+   * 投影：仅返回激活清单所需字段（与前端对接约定）：
+   *   id / studentName / productName(COALESCE) / totalAmount / signedAt / status。
+   *   金额对 finance 可见（§4.5 作账可见；maskContract finance 分支不剥价格）。
+   *
+   * SQL：JOIN students 取学员名 + COALESCE(course_product_name, cp.product_name) 取课程名
+   *   （参照 listByOwner JOIN 写法）。参数化（campus_id = $1）防注入。
+   *   排序：signed_at 早的优先（NULLS LAST）→ 先签先激活，再按 created_at。
+   */
+  async listPendingActivationByCampus(
+    tenantSchema: string,
+    campusId: string,
+  ): Promise<
+    Array<{
+      id: string;
+      studentName: string | null;
+      productName: string | null;
+      totalAmount: number;
+      signedAt: string | null;
+      status: ContractStatus;
+    }>
+  > {
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT c.id,
+              s.student_name AS student_name,
+              COALESCE(c.course_product_name, cp.product_name) AS course_product_name,
+              c.total_amount,
+              c.signed_at,
+              c.status
+         FROM contracts c
+         LEFT JOIN students s ON s.id = c.student_id AND s.deleted_at IS NULL
+         LEFT JOIN course_products cp ON cp.id = c.course_product_id
+        WHERE c.status = 'pending'
+          AND c.campus_id = $1
+          AND c.deleted_at IS NULL
+        ORDER BY c.signed_at ASC NULLS LAST, c.created_at ASC`,
+      [campusId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      studentName: r.student_name ?? null,
+      productName: r.course_product_name ?? null,
+      totalAmount: Number(r.total_amount),
+      signedAt: r.signed_at ? new Date(r.signed_at).toISOString() : null,
+      status: r.status as ContractStatus,
+    }));
+  }
+
   async findById(tenantSchema: string, id: string): Promise<Contract | null> {
     // #10a + #10c (2026-05-31): 详情同样 JOIN users 取销售名 + COALESCE 课程名回填
     //   旧 plain SELECT * → 详情页「签约销售」显原始 ULID + 空快照显「未命名课程」

@@ -767,3 +767,192 @@ describe('ContractController (Sprint B.5 audit_log)', () => {
     });
   });
 });
+
+// ============================================================
+// Phase 2 财务激活重构 (2026-06-01):
+//   POST /db/contracts/pending-activation — 本校待激活合同列表（财务激活数据源）
+//   - @Roles('finance') 单校；campusId 取自 JWT（禁前端传）
+//   - 缺 campusId → 403；只读端点（不写 audit）
+// ============================================================
+describe('ContractController (Phase 2 pending-activation 财务激活清单)', () => {
+  let controller: ContractController;
+  let repo: {
+    findById: jest.Mock;
+    listByOwner: jest.Mock;
+    listByStudent: jest.Mock;
+    listPendingActivationByCampus: jest.Mock;
+  };
+  let studentRepo: { findBrief: jest.Mock };
+
+  const TENANT_A = 'TENANTA00000000000000000000000A1';
+  const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const CAMPUS_A = 'campus_A0000000000000000000000A01';
+  const FINANCE_A = 'financeA0000000000000000000000A1';
+  const CONTRACT_ID = 'contract000000000000000000000A01';
+
+  function jwt(
+    role: TenantRole,
+    sub = FINANCE_A,
+    campusId: string | null = CAMPUS_A,
+  ): JwtPayload {
+    return { sub, tenantId: TENANT_A, role, campusId };
+  }
+
+  function req(user?: JwtPayload): AuthenticatedRequest {
+    return { user, headers: {}, body: {}, query: {}, params: {} };
+  }
+
+  function pendingRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: CONTRACT_ID,
+      studentName: '小明',
+      productName: '一对一英语',
+      totalAmount: 9000,
+      signedAt: '2026-05-08T00:00:00.000Z',
+      status: 'pending' as const,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    repo = {
+      findById: jest.fn(),
+      listByOwner: jest.fn(),
+      listByStudent: jest.fn(),
+      listPendingActivationByCampus: jest.fn(),
+    };
+    studentRepo = { findBrief: jest.fn() };
+    controller = new ContractController(
+      repo as unknown as ContractRepository,
+      studentRepo as unknown as StudentRepository,
+    );
+  });
+
+  const ROLES_KEY = 'rbac_roles'; // guards/rbac.decorator.ts ROLES_METADATA_KEY
+
+  it('@Roles 严格 = [finance]（仅财务可看待激活清单）', () => {
+    const roles = Reflect.getMetadata(
+      ROLES_KEY,
+      ContractController.prototype.pendingActivation,
+    );
+    expect(roles).toEqual(['finance']);
+  });
+
+  it('非 finance 角色不在白名单（sales/academic/admin/boss/...）→ RbacGuard 403', () => {
+    const roles = Reflect.getMetadata(
+      ROLES_KEY,
+      ContractController.prototype.pendingActivation,
+    ) as string[];
+    for (const r of [
+      'sales',
+      'sales_manager',
+      'boss',
+      'admin',
+      'academic',
+      'academic_admin',
+      'teacher',
+      'parent',
+      'hr',
+      'marketing',
+    ]) {
+      expect(roles).not.toContain(r);
+    }
+  });
+
+  // 真跑 RbacGuard：非 finance 调本端点 → ForbiddenException（HTTP 层 403）
+  describe('RbacGuard.canActivate（真 guard 跑 pending-activation 路由）', () => {
+    const guard = new RbacGuard(new Reflector());
+
+    function ctxForPending(user?: Partial<JwtPayload>): ExecutionContext {
+      return {
+        getHandler: () => ContractController.prototype.pendingActivation,
+        getClass: () => ContractController,
+        switchToHttp: () => ({ getRequest: () => ({ user }) }),
+      } as unknown as ExecutionContext;
+    }
+
+    it('finance → 放行（canActivate 返 true）', () => {
+      expect(guard.canActivate(ctxForPending(jwt('finance', FINANCE_A)))).toBe(true);
+    });
+
+    it.each([
+      'sales',
+      'sales_manager',
+      'boss',
+      'admin',
+      'academic',
+      'academic_admin',
+      'teacher',
+      'marketing',
+      'hr',
+    ] as const)('%s → ForbiddenException（非 finance 不能看待激活清单）', (role) => {
+      expect(() =>
+        guard.canActivate(ctxForPending(jwt(role as TenantRole, FINANCE_A))),
+      ).toThrow(ForbiddenException);
+    });
+
+    it('无 user（未认证）→ UnauthorizedException', () => {
+      expect(() => guard.canActivate(ctxForPending(undefined))).toThrow(
+        UnauthorizedException,
+      );
+    });
+  });
+
+  it('finance → 本校 pending 列表（含 studentName + productName + totalAmount）', async () => {
+    repo.listPendingActivationByCampus.mockResolvedValueOnce([
+      pendingRow(),
+      pendingRow({ id: 'c2', studentName: '小红', totalAmount: 12000 }),
+    ]);
+    const r = await controller.pendingActivation(
+      { tenantSchema: TENANT_SCHEMA },
+      req(jwt('finance', FINANCE_A)),
+    );
+    expect(r.items).toHaveLength(2);
+    expect(r.items[0].studentName).toBe('小明');
+    expect(r.items[0].productName).toBe('一对一英语');
+    expect(r.items[0].totalAmount).toBe(9000);
+    expect(r.items[0].status).toBe('pending');
+    expect(r.items[1].totalAmount).toBe(12000);
+  });
+
+  it('campusId 一律取自 JWT（禁信前端传参）→ repo 用 JWT.campusId 调用', async () => {
+    repo.listPendingActivationByCampus.mockResolvedValueOnce([]);
+    await controller.pendingActivation(
+      { tenantSchema: TENANT_SCHEMA },
+      req(jwt('finance', FINANCE_A, CAMPUS_A)),
+    );
+    expect(repo.listPendingActivationByCampus).toHaveBeenCalledWith(
+      TENANT_SCHEMA,
+      CAMPUS_A,
+    );
+  });
+
+  it('finance 缺 campusId → 403 ForbiddenException（不查库）', async () => {
+    await expect(
+      controller.pendingActivation(
+        { tenantSchema: TENANT_SCHEMA },
+        req(jwt('finance', FINANCE_A, null)),
+      ),
+    ).rejects.toThrow(ForbiddenException);
+    expect(repo.listPendingActivationByCampus).not.toHaveBeenCalled();
+  });
+
+  it('tenantSchema 缺失 → BadRequest（不查库）', async () => {
+    await expect(
+      controller.pendingActivation(
+        { tenantSchema: '' },
+        req(jwt('finance', FINANCE_A)),
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(repo.listPendingActivationByCampus).not.toHaveBeenCalled();
+  });
+
+  it('空结果 → items 为空数组', async () => {
+    repo.listPendingActivationByCampus.mockResolvedValueOnce([]);
+    const r = await controller.pendingActivation(
+      { tenantSchema: TENANT_SCHEMA },
+      req(jwt('finance', FINANCE_A)),
+    );
+    expect(r.items).toEqual([]);
+  });
+});
