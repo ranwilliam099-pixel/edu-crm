@@ -60,516 +60,1752 @@
       "c_message"
     ]
   },
-  "actions": ["create", "read", "update", "delete"],
+  "actions": [
+    "create",
+    "read",
+    "update",
+    "delete"
+  ],
   "matrix": {
     "_doc": "每个对象一个 sub-object，按 4 CRUD 列允许/拒绝角色。SSOT §6 + §4 + 代码 controller @Roles 综合 ground truth。",
-
     "customer": {
       "_ssot": "§4.4 + §6 customer.create=[sales, sales_manager, boss, admin]",
       "create": {
-        "allow": ["sales", "sales_manager", "boss", "admin"],
-        "deny": ["academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "allow": [
+          "sales",
+          "sales_manager",
+          "boss",
+          "admin"
+        ],
+        "deny": [
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "finance", "marketing"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "boss",
+          "admin",
+          "academic",
+          "academic_admin",
+          "finance",
+          "marketing"
+        ],
         "_note": "sales 仅看 owner=self / 池; academic 看本校已成交; finance 仅作账金额; 2026-05-31 §4.1 marketing 纳入（比照 academic 本校只读 + 手机脱敏）; SSOT §4.4 customer.联系人=销 owner=me ✅ / 务 本校已成交 ✅ / 市 本校脱敏 ✅ / 老校 ✅ / 财 ❌",
-        "deny": ["teacher", "parent", "platform_admin", "finance_admin", "hr"]
+        "deny": [
+          "teacher",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["sales", "sales_manager", "boss", "admin"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "boss",
+          "admin"
+        ],
         "_note": "owner 字段仅 owner 自己改 / sales_manager 调拨; SSOT §4.4 销 ✅ owner=me / 老校 ✅",
-        "deny": ["academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "客户软删 archive 仅老校 admin/boss; 销售自己不删客户 (历史保留)",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "student": {
       "_ssot": "§4.1 student OOUX 中心对象 + §6 student.transferSales=[admin,boss,sales,sales_manager] + student.transferTeacher=[admin,boss]",
       "create": {
-        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "boss",
+          "admin",
+          "academic",
+          "academic_admin"
+        ],
         "_note": "试听后由教务/老板/admin 显式 customer.promote-student; sales 在客户详情建学生 (§4.1 销 ✅ 自己客户)",
-        "deny": ["teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "read": {
-        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "teacher", "parent", "marketing"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "boss",
+          "admin",
+          "academic",
+          "academic_admin",
+          "teacher",
+          "parent",
+          "marketing"
+        ],
         "_note": "sales 自己客户 ✅; teacher 主带 ✅ (controller 层 ownership 校验, 非 @Roles 层); parent C 端独立 ✅ (走 ParentJwt aud); 2026-05-31 §4.1 marketing 纳入（本校只读 + 手机脱敏，maskStudentDetail）",
-        "deny": ["finance", "platform_admin", "finance_admin", "hr"]
+        "deny": [
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "boss",
+          "admin",
+          "academic",
+          "academic_admin"
+        ],
         "_note": "§4.1 销 ✅ 自己客户 / 务 ✅ 本校 / 老校 ✅",
-        "deny": ["teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "学员归档仅 admin/boss (F4 拍板)",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "contract": {
       "_ssot": "§4.5 + §6 contract.create=[sales, sales_manager, boss, admin] (5/15 Wave 11 修订 去除 academic)",
       "create": {
-        "allow": ["sales", "sales_manager", "boss", "admin"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "boss",
+          "admin"
+        ],
         "_note": "5/15 Wave 11 修订：教务续费走 OOUX 通知销售路径; finance 不签合同",
-        "deny": ["academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["sales", "sales_manager", "boss", "admin", "academic", "academic_admin", "finance", "parent", "marketing"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "boss",
+          "admin",
+          "academic",
+          "academic_admin",
+          "finance",
+          "parent",
+          "marketing"
+        ],
         "_note": "§4.5 销 ✅ 自己 / 务 ✅ 本校 / 老校 ✅ / 财 ✅作账 / 家 ✅自己; teacher 仅看主带学员剩余课时不看金额; teacher 不看合同对象本身; 2026-05-31 §4.1 表行「业务关系（价格）市 ✅（含价格）」marketing 纳入（含价格，maskContract raw-role 放行）",
-        "deny": ["teacher", "platform_admin", "finance_admin", "hr"]
+        "deny": [
+          "teacher",
+          "platform_admin",
+          "finance_admin",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["sales", "sales_manager", "boss", "admin"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "boss",
+          "admin"
+        ],
         "_note": "§4.5 销 ✅ 自己续费机会 / 老校 ✅ 接手",
-        "deny": ["academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "合同退费/作废仅 admin/boss; finance 处理退费但不删合同",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "teacher": {
       "_ssot": "§4.3 teacher 23 字段 + §6 teacher.basic.edit=[admin,boss]",
       "create": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "§12.4 修订 (Sprint X.2 round 12 2026-05-18 用户拍板): admin 跨校 + boss 本校区创建员工（不可创建另一 boss/admin/平台管理）",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["admin", "boss", "academic", "academic_admin", "teacher", "sales", "sales_manager", "parent"],
+        "allow": [
+          "admin",
+          "boss",
+          "academic",
+          "academic_admin",
+          "teacher",
+          "sales",
+          "sales_manager",
+          "parent"
+        ],
         "_note": "§4.3 师自 ✅ / 务 👁 不改 / 老校 ✅ / 同校师 👁 透明 / 家 走 showcase / 销 走 showcase / sales_manager 视作 sales 主管同看; finance 不看老师档案 (薪资全删后无需要)",
-        "deny": ["finance", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["admin", "boss", "teacher"],
+        "allow": [
+          "admin",
+          "boss",
+          "teacher"
+        ],
         "_note": "teacher self-edit 自己档案 (C2-1); §4.3 师自 ✅ 全编辑 / 老校 ✅; 教务不改 (§4.3 务 👁 不改); admin/boss 改任何老师",
-        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "V27 离职链路: deactivated_at + 数据交接; 仅 admin/boss",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "parent": {
       "_ssot": "§12.5 教务/销售/admin/boss 在学员页绑定 + §6 parent C 端跨机构共享订阅",
       "create": {
-        "allow": ["sales", "sales_manager", "academic", "academic_admin", "admin", "boss"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss"
+        ],
         "_note": "§12.5 教务/销售在学员页绑定家长 (T-PARENT-BIND-BY-STAFF); admin/boss 兜底",
-        "deny": ["teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "read": {
-        "allow": ["sales", "sales_manager", "academic", "academic_admin", "admin", "boss", "parent"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss",
+          "parent"
+        ],
         "_note": "B 端业务人员在学员页看家长卡; parent 自己 ✅ (C 端 ParentJwt); teacher 不看家长详情 (PII 隔离)",
-        "deny": ["teacher", "finance", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "teacher",
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["sales", "sales_manager", "academic", "academic_admin", "admin", "boss"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss"
+        ],
         "_note": "binding 撤绑 (T-PARENT-UNBIND); parent 自己改不在本端点 (走 C 端 /parents/me)",
-        "deny": ["teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "parents.status='停用' 软删仅 admin/boss; 解绑 ≠ 删除 (§12.6 失效逻辑)",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "schedule": {
       "_ssot": "§6 schedule 5/15 Wave 11 反向修复：@Roles('academic') 教务唯一；schedule.controller / recurring-schedule.controller 全部 service 层硬编码 callerRole='academic'。sales 对教务全只读（不在 @Roles）。",
       "create": {
-        "allow": ["academic", "academic_admin", "admin", "boss"],
+        "allow": [
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss"
+        ],
         "_note": "schedule.controller server-derive callerRole='academic'（5/15 Wave 11）；admin/boss 兜底；academic_admin 视作 academic 主管同口径",
-        "deny": ["sales", "sales_manager", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "read": {
-        "allow": ["academic", "academic_admin", "admin", "boss", "teacher", "sales", "sales_manager", "parent"],
+        "allow": [
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss",
+          "teacher",
+          "sales",
+          "sales_manager",
+          "parent"
+        ],
         "_note": "teacher 看自己排课；sales 看自己客户学员排课；parent C 端看自己孩子排课；academic 维护本校；finance 不看排课（无金额）",
-        "deny": ["finance", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["academic", "academic_admin", "admin", "boss"],
+        "allow": [
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss"
+        ],
         "_note": "改时间/老师/学员仅 academic 主导；admin/boss 兜底；cancel/complete/attendance Sprint B.4-1 RBAC 限 {teacher, sales} 早期 403（应用层拒绝），manifest 反映 controller @Roles 真实层（无 @Roles 此 endpoint 走 service 内部 callerRole 校验）",
-        "deny": ["sales", "sales_manager", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "delete": {
-        "allow": ["academic", "academic_admin", "admin", "boss"],
+        "allow": [
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss"
+        ],
         "_note": "cancel/archive recurring schedule 仅 academic + admin/boss；finance/parent 严禁",
-        "deny": ["sales", "sales_manager", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       }
     },
-
     "lesson_feedback": {
       "_ssot": "§6 + feedback.controller.ts: @Roles('teacher', 'admin', 'boss') 写线；@Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss') 教务/销售对老师线只读统计",
       "create": {
-        "allow": ["teacher", "admin", "boss"],
+        "allow": [
+          "teacher",
+          "admin",
+          "boss"
+        ],
         "_note": "feedback.controller:294 POST /db/lesson-feedbacks @Roles('teacher','admin','boss'); 教务 ❌ 不创建反馈（教务线只读老师线）",
-        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["teacher", "academic", "academic_admin", "admin", "boss", "sales", "sales_manager", "parent"],
+        "allow": [
+          "teacher",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "parent"
+        ],
         "_note": "teacher 看自己 ✅; academic 看本校老师反馈（只读）; sales 看自己客户学员反馈; parent C 端看自己孩子反馈; finance ❌ 无价值",
-        "deny": ["finance", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["teacher", "admin", "boss"],
+        "allow": [
+          "teacher",
+          "admin",
+          "boss"
+        ],
         "_note": "feedback.controller:387 @Roles('teacher','admin','boss'); teacher 主带改自己（owner check 在 service）; admin/boss 兜底",
-        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "lesson_feedback 仅软删 / 撤回 admin/boss；teacher 自己不删（历史可追溯）",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "homework": {
       "_ssot": "§6 + homework.controller.ts: @Roles('teacher','admin','boss') 老师布置/批改；parent 端 C 端独立路径（提交作业 controller:194 无 @Roles 走 parent JWT 默认放行）",
       "create": {
-        "allow": ["teacher", "admin", "boss"],
+        "allow": [
+          "teacher",
+          "admin",
+          "boss"
+        ],
         "_note": "homework.controller:163 POST /db/assignments @Roles('teacher','admin','boss')；academic 不布置作业（只读老师线）",
-        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["teacher", "academic", "academic_admin", "admin", "boss", "sales", "sales_manager", "parent"],
+        "allow": [
+          "teacher",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "parent"
+        ],
         "_note": "homework.controller:259/289/314 读 endpoint @Roles 含 teacher/admin/boss/academic/academic_admin/sales/sales_manager；parent C 端独立 ✅",
-        "deny": ["finance", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["teacher", "admin", "boss"],
+        "allow": [
+          "teacher",
+          "admin",
+          "boss"
+        ],
         "_note": "homework.controller:215/241 grade/return @Roles('teacher','admin','boss'); parent 提交不走 update 走独立 submission endpoint",
-        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "作业作业历史不删（teacher 误布置只能 archive）；admin/boss 兜底",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "assessment": {
       "_ssot": "§6 + assessment.controller.ts: @Roles('teacher','admin','boss') 写线；@Roles 读 endpoint 含 academic/academic_admin/sales/sales_manager",
       "create": {
-        "allow": ["teacher", "admin", "boss"],
+        "allow": [
+          "teacher",
+          "admin",
+          "boss"
+        ],
         "_note": "assessment.controller:133/158/180/192 全部写 endpoint @Roles('teacher','admin','boss')；academic 不创建评测（只读老师线）",
-        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["teacher", "academic", "academic_admin", "admin", "boss", "sales", "sales_manager", "parent"],
+        "allow": [
+          "teacher",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "parent"
+        ],
         "_note": "assessment.controller:208/231/255 读 endpoint @Roles 含教务老校销售；parent C 端独立看自己孩子",
-        "deny": ["finance", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["teacher", "admin", "boss"],
+        "allow": [
+          "teacher",
+          "admin",
+          "boss"
+        ],
         "_note": "publish/close 仅 teacher（main owner）+ admin/boss；evals 不可改 owner ≠ self",
-        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "评测结果历史不删；admin/boss 兜底",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "learning_profile": {
       "_ssot": "§6 + learning-profile.controller.ts: @Roles('teacher','admin','boss') 写线；@Roles 读 endpoint 含 sales/sales_manager/academic/academic_admin",
       "create": {
-        "allow": ["teacher", "admin", "boss"],
+        "allow": [
+          "teacher",
+          "admin",
+          "boss"
+        ],
         "_note": "learning-profile.controller:90 POST /db/students/:studentId/recompute @Roles('teacher','admin','boss')；学情档案 owner=teacher",
-        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["teacher", "academic", "academic_admin", "admin", "boss", "sales", "sales_manager", "parent"],
+        "allow": [
+          "teacher",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "parent"
+        ],
         "_note": "learning-profile.controller:111/135 读 endpoint @Roles 含 sales/sales_manager/academic/academic_admin/teacher/admin/boss；parent C 端 ✅",
-        "deny": ["finance", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["teacher", "admin", "boss"],
+        "allow": [
+          "teacher",
+          "admin",
+          "boss"
+        ],
         "_note": "recompute-all/recompute-stale 维护 endpoint @Roles('admin','boss')；teacher 自己档案改通过 recompute",
-        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "学情档案不删（仅 deactivate）；admin/boss 兜底",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "monthly_report": {
       "_ssot": "§6 + feedback.controller.ts: @Roles('admin','boss') generate；finalize self-check 仅 teacher main owner",
       "create": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "feedback.controller:573 POST /db/monthly-reports/generate @Roles('admin','boss')；月报系统生成不开放给业务",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["teacher", "academic", "academic_admin", "admin", "boss", "parent"],
+        "allow": [
+          "teacher",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss",
+          "parent"
+        ],
         "_note": "teacher 看自己生成的月报；academic 看本校老师月报（只读）；parent C 端看自己孩子月报；finance/sales 不看月报（无金额无客户线）",
-        "deny": ["sales", "sales_manager", "finance", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["teacher", "admin", "boss"],
+        "allow": [
+          "teacher",
+          "admin",
+          "boss"
+        ],
         "_note": "finalize-teacher self-check 仅 main owner teacher；finalize-parent 仅家长 C 端独立路径；admin/boss 兜底",
-        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "月报历史不删；admin/boss 兜底",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "invoice": {
       "_ssot": "§6 A-1 拍板（2026-05-15）：finance.invoice.create=[finance] / finance.invoice.listPending=[finance]，不含 boss/admin。本对象 create/read/update 全部 [finance] 唯一；delete 仍保留 [admin,boss]（红冲/作废属平台操作）。",
       "create": {
-        "allow": ["finance"],
+        "allow": [
+          "finance"
+        ],
         "_note": "5/15 A-1 修订：仅 finance 可开票；boss/admin 不开票（SSOT §6 明文）。删除/作废走 delete 路径 admin/boss。",
-        "deny": ["boss", "admin", "sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "boss",
+          "admin",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["finance"],
+        "allow": [
+          "finance"
+        ],
         "_note": "5/15 A-1 同口径：read endpoint（listPending / detail）仅 finance；boss/admin 不读发票详情（避免越权查公司财税数据）；parent 自己合同票走 contract.read（不走 invoice.read）",
-        "deny": ["boss", "admin", "sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "boss",
+          "admin",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "update": {
-        "allow": ["finance"],
+        "allow": [
+          "finance"
+        ],
         "_note": "5/15 A-1 同口径：状态推进（issue / push parent / 红冲发起）仅 finance；boss/admin 不直接改发票状态。真正的红冲走 delete。",
-        "deny": ["boss", "admin", "sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "boss",
+          "admin",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "invoice 红冲/作废保留 admin/boss（平台级操作，审计追溯）；finance 不直接删（避免单角色掩盖红冲）",
-        "deny": ["finance", "sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "finance",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "course_consumption": {
       "_ssot": "§6 + feedback.controller.ts: @Roles('teacher','admin','boss') create；@Roles('admin','boss') confirm/scan-and-lock/cancel；@Roles('teacher','admin','boss') unlock-late",
       "create": {
-        "allow": ["teacher", "admin", "boss"],
+        "allow": [
+          "teacher",
+          "admin",
+          "boss"
+        ],
         "_note": "feedback.controller:447 POST /db/course-consumptions @Roles('teacher','admin','boss')；课消由老师在反馈时一并产生",
-        "deny": ["sales", "sales_manager", "academic", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["teacher", "academic", "academic_admin", "admin", "boss", "finance", "sales", "sales_manager", "parent"],
+        "allow": [
+          "teacher",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss",
+          "finance",
+          "sales",
+          "sales_manager",
+          "parent"
+        ],
         "_note": "teacher 看自己课消；academic 看本校；finance ✅ 作账要扣减课时；sales 看自己客户课消；parent C 端看自己孩子剩余课时",
-        "deny": ["platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "feedback.controller:476/525 confirm/cancel @Roles('admin','boss')；课消金额一旦记录由 admin/boss 修正",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "课消历史不删（财务可追溯）；admin/boss 兜底",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "course_package_balance": {
       "_ssot": "§6 + course-balance.controller.ts: db endpoint 多数无 @Roles 走 TenantScopeGuard + 应用层；课时包激活/冻结/解冻 admin/boss",
       "create": {
-        "allow": ["admin", "boss", "finance"],
+        "allow": [
+          "admin",
+          "boss",
+          "finance"
+        ],
         "_note": "course-balance/db/activate 课时包激活由 admin/boss + finance 协同（合同签后激活）；销售签合同 → admin/boss 激活课时包",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["sales", "sales_manager", "academic", "academic_admin", "admin", "boss", "finance", "teacher", "parent"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss",
+          "finance",
+          "teacher",
+          "parent"
+        ],
         "_note": "课时包余额几乎所有角色都要看：sales 看自己客户剩余 / teacher 看主带学员剩余 / parent C 端看自己孩子剩余 / academic 排课需 / finance 作账",
-        "deny": ["platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["admin", "boss", "finance"],
+        "allow": [
+          "admin",
+          "boss",
+          "finance"
+        ],
         "_note": "deduct/refund/freeze/unfreeze admin/boss 主导 + finance 协同退费；teacher 不直接扣减（走 course_consumption）",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "课时包不删（仅作废）；admin/boss 兜底",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "course_product": {
       "_ssot": "§6 + course-product.controller.ts: @Roles('admin','boss') 写线；@Roles('admin','boss','academic','sales') stats 读（A-3 加 sales scope）",
       "create": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "course-product.controller:273 POST @Roles('admin','boss')；产品库管理 admin/boss 主导",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["admin", "boss", "academic", "academic_admin", "sales", "sales_manager", "finance"],
+        "allow": [
+          "admin",
+          "boss",
+          "academic",
+          "academic_admin",
+          "sales",
+          "sales_manager",
+          "finance"
+        ],
         "_note": "课时产品目录公开给业务线读：sales 报价用；academic 排课对照；finance 作账价目表；teacher/parent 不直接看产品（看自己课程）",
-        "deny": ["teacher", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "teacher",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "course-product.controller:307 POST :id/status @Roles('admin','boss')；价格/状态调整 admin/boss",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "课时产品不真删（status='下架'）；admin/boss 兜底",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "campus": {
       "_ssot": "§6 + boss.controller / 多校区 V31。campus 创建/编辑/归档 仅 admin/boss",
       "create": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "boss 私有 6 page 之一：新增校区；销售/教务无创建权限",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["admin", "boss", "sales", "sales_manager", "academic", "academic_admin", "teacher", "finance"],
+        "allow": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "academic_admin",
+          "teacher",
+          "finance"
+        ],
         "_note": "校区列表全员可读（业务线需要 campus 选择器）；parent C 端不看校区管理（只看自己绑定校区）",
-        "deny": ["parent", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "校区资料/状态编辑 admin/boss",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "校区归档 admin/boss；删除前需迁移所有学员/老师/合同",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "user": {
       "_ssot": "§12.4 修订 (Sprint X.2 round 12 2026-05-18 用户拍板): admin 跨校 + boss 本校区 全部 endpoint",
       "create": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "user.controller:92 POST @Roles('admin','boss')，Sprint X.2 round 12 用户拍板修订: admin 跨校 + boss 本校区创建员工（不可创建另一 boss/admin）",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "user.controller:239/262/275 GET list/active/by-id @Roles('admin','boss')；员工档案对业务线不可见（隐私）",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "update": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "user.controller:299/392/489 deactivate/reset-password/handover @Roles('admin','boss')",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "员工离职走 deactivate + handover（非真删）；admin/boss",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "parent_referral": {
       "_ssot": "§6 + referral.controller.ts: db/referrals 无 @Roles 默认放行（parent C 端 + B 端共用）；by-code 凭推荐码访问；mark-rated 业务流转",
       "create": {
-        "allow": ["sales", "sales_manager", "academic", "academic_admin", "admin", "boss", "parent"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss",
+          "parent"
+        ],
         "_note": "referral 创建：parent 自己发起转介 + 业务人员在客户详情代填；teacher 不发推荐 (PII 隔离)；finance 不参与",
-        "deny": ["teacher", "finance", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "teacher",
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "read": {
-        "allow": ["sales", "sales_manager", "academic", "academic_admin", "admin", "boss", "parent", "teacher"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "academic_admin",
+          "admin",
+          "boss",
+          "parent",
+          "teacher"
+        ],
         "_note": "referral 读取：业务线 + parent + teacher（看自己被转介统计 stats endpoint）；finance/marketing/hr ❌",
-        "deny": ["finance", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "update": {
-        "allow": ["sales", "sales_manager", "admin", "boss", "academic", "academic_admin"],
+        "allow": [
+          "sales",
+          "sales_manager",
+          "admin",
+          "boss",
+          "academic",
+          "academic_admin"
+        ],
         "_note": "mark-rated/trial-completed 业务流转 仅业务线 + admin/boss；parent 不直接改状态（系统驱动）",
-        "deny": ["teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr"]
+        "deny": [
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr"
+        ]
       },
       "delete": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "推荐记录历史保留；admin/boss 兜底删除",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "kpi": {
       "_ssot": "§6 (2026-05-20 新增) admin/boss home KPI Level 2 下钻 — 4 endpoint signed/renewal/consumption/student-activity 全部 admin+boss 读，其余角色 403。boss 由后端强制 jwt.campusId 过滤（A04 client-controlled scope 防御）。",
       "create": {
         "allow": [],
         "_note": "KPI 是聚合读路径，不存在 create 语义（聚合自 contracts/schedules/students 既存数据）",
-        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["admin", "boss"],
+        "allow": [
+          "admin",
+          "boss"
+        ],
         "_note": "kpi.controller.ts (2026-05-20): GET /db/kpi/signed | renewal | consumption | student-activity 全部 @Roles('admin','boss')；boss 服务端强制 callerCampusId=jwt.campusId（即使 query 传他校 → 403 FORBIDDEN_CAMPUS_MISMATCH）",
-        "deny": ["sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "update": {
         "allow": [],
         "_note": "KPI 不存在 update 语义（聚合是只读派生）",
-        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
         "allow": [],
         "_note": "KPI 不存在 delete 语义（聚合是只读派生）",
-        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "teacher_rating": {
       "_ssot": "§5.2 家长线 rate 对象 + §6 (2026-05-20 新增) parent 评老师 5 星 + content + tags; SSOT §2 规则 6 跨机构共享（评分不绑 tenant 内独立 schema 但走 tenant.middleware family-owner 守门）",
       "_note": "POST /db/teacher-ratings @ teacher-rating.controller.ts (2026-05-20) — 不走 RbacGuard（parent JWT 无 role.tenant），走 ParentSelfGuard + tenant.middleware.requireParentDbUser + assertParent helper（jwtParentSub === body.parentId + binding active + teacher×student 真实关系 + msgSecCheck）。RBAC 矩阵记录为「parent.create=allow，其余 13 role deny」便于 batch-b generator 推 deny case。",
       "create": {
-        "allow": ["parent"],
+        "allow": [
+          "parent"
+        ],
         "_note": "teacher-rating.controller.ts:90 — POST /db/teacher-ratings 唯一允许 parent C 端创建/更新（三元组 UNIQUE → upsert）",
-        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
         "allow": [],
         "_note": "目前无 GET endpoint（前端 showcase 直接读 teacher_recommendations）；Sprint Y 如需扩 c-side 看自己评分历史时补",
-        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "update": {
-        "allow": ["parent"],
+        "allow": [
+          "parent"
+        ],
         "_note": "三元组 UNIQUE → POST upsert 内部走 update 路径",
-        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
         "allow": [],
         "_note": "评分历史保留，不允许删除（家长重评 → upsert update 内容，非新增 row）",
-        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     },
-
     "c_message": {
       "_ssot": "§3.7 家长 home 消息中心（feedback/monthly-report/system 聚合）+ §6 parent C 端独立",
       "_note": "GET /api/c/messages + PATCH /api/c/messages/:id/mark-read @ c-side.controller.ts (2026-05-20) — 走 ParentSelfGuard + tenant.middleware.requireParentDbUser，不走 RbacGuard。matrix 记录用于 batch-b generator 推非 parent role 全 deny。",
       "create": {
         "allow": [],
         "_note": "消息由系统派生（feedback/monthly-report notified_at 派生），无业务 create endpoint",
-        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "read": {
-        "allow": ["parent"],
+        "allow": [
+          "parent"
+        ],
         "_note": "c-side.controller.ts:184 — GET /api/c/messages 仅 parent；assertParent 强制 jwtParentSub===query.parentId",
-        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "update": {
-        "allow": ["parent"],
+        "allow": [
+          "parent"
+        ],
         "_note": "c-side.controller.ts:284 — PATCH /api/c/messages/:id/mark-read 仅 parent 标自己消息已读",
-        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       },
       "delete": {
         "allow": [],
         "_note": "消息派生表，不允许 delete（系统生命周期由源数据控制）",
-        "deny": ["admin", "boss", "sales", "sales_manager", "academic", "teacher", "finance", "parent", "platform_admin", "finance_admin", "marketing", "hr", "academic_admin"]
+        "deny": [
+          "admin",
+          "boss",
+          "sales",
+          "sales_manager",
+          "academic",
+          "teacher",
+          "finance",
+          "parent",
+          "platform_admin",
+          "finance_admin",
+          "marketing",
+          "hr",
+          "academic_admin"
+        ]
       }
     }
   },
-
   "fieldPermission": {
     "_doc": "Batch D 字段级权限矩阵：每对象 × 每关键字段 × 每角色 → visible / masked / hidden 三态。直接验证 RoleFieldFilter mask 函数行为（src/common/role-field-filter/role-field-filter.ts）。\n\n字段语义：\n  - visible: mask 后字段值原样保留（toEqual 原值）\n  - masked: mask 后字段值变为 0 / null / 部分隐藏（toEqual mask 后预期值，不为原值且不为 hidden）\n  - hidden: mask 后字段从对象中消失（toBeUndefined / 字段不在 key 列表）\n\n本批与 Batch A/B/C 区别：\n  - Batch A/B 测 RbacGuard.canActivate（controller-level @Roles 通过 / 拒绝）\n  - Batch C 测 TenantScopeGuard.canActivate（跨 tenant 拦截）\n  - Batch D 测 RoleFieldFilter.mask*() / canAccess*()（字段级数据过滤）\n\nrole 扩展（角色变体）：\n  - sales_owner: sales 角色 + isOwnerSelf=true (自己客户/合同)\n  - sales_other: sales 角色 + isOwnerSelf=false (别人客户/合同)\n  - teacher_self: teacher 角色 + isSelf=true (老师看自己档案)\n  - teacher_other: teacher 角色 + isSelf=false (老师看别人档案)\n  - 其他 9 SSOT + 4 auxiliary 角色照常\n\nstudent / parent 用 canAccessStudent / 不存在 maskParent → 用 canAccess* 做二态（access / deny）测试。",
     "_implementation": "role-field-filter.ts L66-94 actorGroupOf（角色 → group 映射）+ L132-183 maskCustomer + L219-268 maskTeacher + L302-359 maskContract + L374-409 canAccessCustomer + L414-442 canAccessContract + L449-480 canAccessStudent",
@@ -579,30 +1815,74 @@
         "_maskFn": "maskCustomer(customer, user, { isOwnerSelf })",
         "_fields": {
           "phone": {
-            "_category": "PII 一级隐私（§5 手机仅自己销售/老板/校长明文；§4.1 2026-05-31 教务/老师/市场脱敏 138****）",
+            "_category": "PII 一级隐私（§5 手机仅自己销售/老板/校长明文；2026-06-01 §4.1 ① 除 teacher/finance 外所有岗位明文，含教务/教务主管/市场）",
             "_originalValue": "13800138000",
             "_maskedValue": null,
-            "_maskedValueByRole": { "academic": "138****8000", "academic_admin": "138****8000", "marketing": "138****8000" },
-            "_note_day_a": "2026-05-31 §4.1：academic/academic_admin/marketing 从 visible 移入 masked（一级隐私脱敏，非明文）。sales_other/finance/teacher/hr/parent/unknown 仍 null。",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner"],
-            "masked": ["academic", "academic_admin", "marketing", "sales_other", "finance", "teacher", "hr", "parent", "unknown"],
-            "hidden": []
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "academic",
+              "academic_admin",
+              "marketing"
+            ],
+            "masked": [
+              "sales_other",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
+            "hidden": [],
+            "_note_2026_06_01": "2026-06-01 §4.1 ①：academic/academic_admin/marketing 从 masked 移回 visible （客户联系人手机明文，逆转 5/31 脱敏）。仅 sales_other/finance/teacher/hr/parent/unknown 仍 null。"
           },
           "wechat": {
             "_category": "联系人信息（微信非一级 PII；§4.1 教务/市场本校可见明文）",
             "_originalValue": "wx_parent_abc",
             "_maskedValue": null,
             "_note_day_a": "2026-05-31 §4.1：marketing 移入 visible（比照 academic 本校联系人 ✅）。wechat 非一级 PII 不脱敏。",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "academic", "academic_admin", "marketing"],
-            "masked": ["sales_other", "finance", "teacher", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "academic",
+              "academic_admin",
+              "marketing"
+            ],
+            "masked": [
+              "sales_other",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "hidden": []
           },
           "source": {
             "_category": "业务（销售渠道，仅销售看 / 教务市场不看）",
             "_originalValue": "抖音",
             "_maskedValue": null,
-            "visible": ["admin", "boss", "sales_manager", "sales_owner"],
-            "masked": ["academic", "academic_admin", "sales_other", "marketing", "finance", "teacher", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner"
+            ],
+            "masked": [
+              "academic",
+              "academic_admin",
+              "sales_other",
+              "marketing",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "hidden": []
           },
           "note": {
@@ -610,63 +1890,190 @@
             "_originalValue": "内部跟进备注",
             "_maskedValue": null,
             "_note_day_a": "2026-05-31 §4.1：marketing 移入 visible（比照 academic）。",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "academic", "academic_admin", "marketing"],
-            "masked": ["sales_other", "finance", "teacher", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "academic",
+              "academic_admin",
+              "marketing"
+            ],
+            "masked": [
+              "sales_other",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "hidden": []
           },
           "stage": {
             "_category": "业务参考（state machine，所有角色保留）",
             "_originalValue": "初步接触",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "studentName": {
             "_category": "业务参考（学员姓名，所有角色保留）",
             "_originalValue": "小明",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "intendedSubject": {
             "_category": "业务参考（意向学科，所有角色保留）",
             "_originalValue": "英语",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "intentLevel": {
             "_category": "业务参考（意向等级，所有角色保留 — 不在 mask 字段列表）",
             "_originalValue": "高",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "gradeOrAge": {
             "_category": "业务参考（年级/年龄，所有角色保留）",
             "_originalValue": "三年级",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "lastContactAt": {
             "_category": "业务参考（最近联系时间，所有角色保留 — 不在 mask 字段列表）",
             "_originalValue": "2026-05-10T10:00:00.000Z",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "id": {
             "_category": "业务参考（customer id 主键 ULID，所有角色保留）",
             "_originalValue": "oppor000000000000000000000000A01",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "studentId": {
             "_category": "业务参考（关联 student id，所有角色保留）",
             "_originalValue": "student00000000000000000000A001",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "finance", "teacher", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "finance",
+              "teacher",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           }
@@ -680,37 +2087,116 @@
             "_category": "PII 一级隐私（§4.3 note 一级隐私仅 self/老板/校长可见明文；§4.1 教务/市场脱敏 139****）",
             "_originalValue": "13900139000",
             "_maskedValue": "undefined (via assign)",
-            "_maskedValueByRole": { "academic": "139****9000", "academic_admin": "139****9000", "marketing": "139****9000" },
+            "_maskedValueByRole": {
+              "academic": "139****9000",
+              "academic_admin": "139****9000",
+              "marketing": "139****9000"
+            },
             "_note_day_a": "2026-05-31 (Day-A)：academic/academic_admin 从 visible 移入 masked（teacher phone 脱敏，对齐 §4.3 note 一级隐私仅 self+boss+admin）。marketing（归 academic group）从 hidden 移入 masked。teacher_other/sales/finance/parent/unknown 仍 hidden（undefined）。",
-            "visible": ["admin", "boss", "sales_manager", "teacher_self", "hr"],
-            "masked": ["academic", "academic_admin", "marketing"],
-            "hidden": ["teacher_other", "sales", "finance", "parent", "unknown"]
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "teacher_self",
+              "hr"
+            ],
+            "masked": [
+              "academic",
+              "academic_admin",
+              "marketing"
+            ],
+            "hidden": [
+              "teacher_other",
+              "sales",
+              "finance",
+              "parent",
+              "unknown"
+            ]
           },
           "name": {
             "_category": "业务（公开姓名，所有角色保留）",
             "_originalValue": "王老师",
-            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "academic",
+              "academic_admin",
+              "teacher_self",
+              "teacher_other",
+              "sales",
+              "marketing",
+              "finance",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "subjects": {
             "_category": "业务（教学学科，所有角色保留）",
-            "_originalValue": ["数学", "物理"],
-            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "_originalValue": [
+              "数学",
+              "物理"
+            ],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "academic",
+              "academic_admin",
+              "teacher_self",
+              "teacher_other",
+              "sales",
+              "marketing",
+              "finance",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "status": {
             "_category": "业务（在职状态，所有角色保留）",
             "_originalValue": "在职",
-            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "academic",
+              "academic_admin",
+              "teacher_self",
+              "teacher_other",
+              "sales",
+              "marketing",
+              "finance",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "campusId": {
             "_category": "业务（所属校区，所有角色保留）",
             "_originalValue": "campus_A0000000000000000000000A01",
-            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "academic",
+              "academic_admin",
+              "teacher_self",
+              "teacher_other",
+              "sales",
+              "marketing",
+              "finance",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
@@ -720,19 +2206,61 @@
             "_note": "Day 2 D1.4 X1 拍板物理删除 hourly_price_yuan；Teacher interface 已删字段。本 spec 验「字段永不出现」。",
             "visible": [],
             "masked": [],
-            "hidden": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"]
+            "hidden": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "academic",
+              "academic_admin",
+              "teacher_self",
+              "teacher_other",
+              "sales",
+              "marketing",
+              "finance",
+              "hr",
+              "parent",
+              "unknown"
+            ]
           },
           "id": {
             "_category": "业务参考（teacher id 主键 ULID，所有角色保留）",
             "_originalValue": "teacher00000000000000000000A001",
-            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "academic",
+              "academic_admin",
+              "teacher_self",
+              "teacher_other",
+              "sales",
+              "marketing",
+              "finance",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "userId": {
             "_category": "业务参考（teacher.user_id 关联 users.id，所有角色保留 — 不在 mask 列表）",
             "_originalValue": "salesA00000000000000000000000A01",
-            "visible": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "academic",
+              "academic_admin",
+              "teacher_self",
+              "teacher_other",
+              "sales",
+              "marketing",
+              "finance",
+              "hr",
+              "parent",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
@@ -742,7 +2270,21 @@
             "_note": "Teacher fixture 不设 bio （optional），所有角色访问均得 undefined。本字段验「optional 字段不存在时 mask 行为」=「字段不出现 = 全 hidden」。",
             "visible": [],
             "masked": [],
-            "hidden": ["admin", "boss", "sales_manager", "academic", "academic_admin", "teacher_self", "teacher_other", "sales", "marketing", "finance", "hr", "parent", "unknown"]
+            "hidden": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "academic",
+              "academic_admin",
+              "teacher_self",
+              "teacher_other",
+              "sales",
+              "marketing",
+              "finance",
+              "hr",
+              "parent",
+              "unknown"
+            ]
           }
         }
       },
@@ -755,8 +2297,23 @@
             "_originalValue": 9000,
             "_maskedValue": 0,
             "_note_day_a": "2026-05-31 §4.1 表行「业务关系（价格）市 ✅（含价格）」：marketing 从 masked 移入 visible（maskContract raw-role 放行）。",
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "academic", "academic_admin", "parent", "marketing"],
-            "masked": ["sales_other", "teacher", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "academic",
+              "academic_admin",
+              "parent",
+              "marketing"
+            ],
+            "masked": [
+              "sales_other",
+              "teacher",
+              "hr",
+              "unknown"
+            ],
             "hidden": []
           },
           "standardPrice": {
@@ -764,8 +2321,23 @@
             "_originalValue": 9999,
             "_maskedValue": 0,
             "_note_day_a": "2026-05-31 §4.1：marketing 从 masked 移入 visible（含价格）。",
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "parent", "marketing"],
-            "masked": ["academic", "academic_admin", "sales_other", "teacher", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "parent",
+              "marketing"
+            ],
+            "masked": [
+              "academic",
+              "academic_admin",
+              "sales_other",
+              "teacher",
+              "hr",
+              "unknown"
+            ],
             "hidden": []
           },
           "discountAmount": {
@@ -773,8 +2345,23 @@
             "_originalValue": 999,
             "_maskedValue": 0,
             "_note_day_a": "2026-05-31 §4.1：marketing 从 masked 移入 visible（含价格）。",
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "marketing"],
-            "masked": ["academic", "academic_admin", "sales_other", "teacher", "parent", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "marketing"
+            ],
+            "masked": [
+              "academic",
+              "academic_admin",
+              "sales_other",
+              "teacher",
+              "parent",
+              "hr",
+              "unknown"
+            ],
             "hidden": []
           },
           "giftHours": {
@@ -783,63 +2370,190 @@
             "_maskedValue": 0,
             "_leaderDecision": "Day 6 leader 拍板（最严）: academic/academic_admin 不看赠课（避免反推折扣构成）— SSOT §4.5 academic '价格 👁 仅付费状态' 严格解读包含赠课。已改 role-field-filter.ts maskContract academic 加 masked.giftHours = 0。",
             "_note_day_a": "2026-05-31 §4.1：marketing 从 masked 移入 visible（含价格）。",
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "marketing"],
-            "masked": ["sales_other", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "marketing"
+            ],
+            "masked": [
+              "sales_other",
+              "academic",
+              "academic_admin",
+              "teacher",
+              "parent",
+              "hr",
+              "unknown"
+            ],
             "hidden": []
           },
           "lessonHours": {
             "_category": "业务（课时数，所有角色保留 — 教学执行需要）",
             "_originalValue": 60,
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "teacher",
+              "parent",
+              "hr",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "classType": {
             "_category": "业务（班型 1v1/班课，所有角色保留 — 排课/反馈需要）",
             "_originalValue": "一对一",
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "teacher",
+              "parent",
+              "hr",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "status": {
             "_category": "业务（active/expired，所有角色保留）",
             "_originalValue": "active",
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "teacher",
+              "parent",
+              "hr",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "courseProductName": {
             "_category": "业务参考（产品名称，所有角色保留）",
             "_originalValue": "一对一英语",
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "teacher",
+              "parent",
+              "hr",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "signedAt": {
             "_category": "业务参考（签约时间，所有角色保留 — 不在 mask 列表）",
             "_originalValue": "2026-05-08T00:00:00.000Z",
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "teacher",
+              "parent",
+              "hr",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "orderType": {
             "_category": "业务参考（新签/续签/转介，所有角色保留 — 不在 mask 列表）",
             "_originalValue": "新签",
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "teacher",
+              "parent",
+              "hr",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "campusId": {
             "_category": "业务参考（所属校区，所有角色保留）",
             "_originalValue": "campus_A0000000000000000000000A01",
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "teacher",
+              "parent",
+              "hr",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           },
           "paidLocked": {
             "_category": "业务参考（已锁定支付状态 bool，所有角色保留 — 不在 mask 列表）",
             "_originalValue": false,
-            "visible": ["admin", "boss", "sales_manager", "finance", "sales_owner", "sales_other", "marketing", "academic", "academic_admin", "teacher", "parent", "hr", "unknown"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "finance",
+              "sales_owner",
+              "sales_other",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "teacher",
+              "parent",
+              "hr",
+              "unknown"
+            ],
             "masked": [],
             "hidden": []
           }
@@ -853,23 +2567,69 @@
           "canAccessStudent_owned": {
             "_category": "scope filter — student.ownerSalesId = USER_OWNER, student.assignedTeacherId = TEACHER_OWN",
             "_note": "fixture: 学生归 USER_OWNER 销售 + TEACHER_OWN 老师；测试每角色的访问决策。marketing → sales group + sub=USER_OWNER 默认匹配 ownerSalesId → access=true（与 sales_owner 等效）。\n\n2026-05-19 Day 6 round 2 BLOCKER B1 修：finance 从 visible 移到 hidden。SSOT §4.1 student 列头「销/师/务/老校/家」不含 finance — student 是教学线对象，finance 仅在 §6 finance.invoice.* 有权限。双层防御对齐 student.controller @Roles 全 deny finance。",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "marketing", "academic", "academic_admin", "teacher_self"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "teacher_self"
+            ],
             "masked": [],
-            "hidden": ["sales_other", "teacher_other", "finance", "parent", "hr", "unknown"]
+            "hidden": [
+              "sales_other",
+              "teacher_other",
+              "finance",
+              "parent",
+              "hr",
+              "unknown"
+            ]
           },
           "canAccessContract_owned": {
             "_category": "scope filter — contract.ownerUserId = USER_OWNER",
             "_note": "fixture: 合同归 USER_OWNER 销售；测试每角色的访问决策；academic/finance/parent 默认 true（controller 层校验）；2026-06-01 拍板「老师不看合同的全部信息」→ canAccessContract teacher=false（teacher 移入 hidden）；marketing → sales group + sub=USER_OWNER 默认匹配 ownerUserId → access=true。",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "marketing", "academic", "academic_admin", "finance", "parent"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "finance",
+              "parent"
+            ],
             "masked": [],
-            "hidden": ["sales_other", "teacher", "hr", "unknown"]
+            "hidden": [
+              "sales_other",
+              "teacher",
+              "hr",
+              "unknown"
+            ]
           },
           "canAccessCustomer_owned": {
             "_category": "scope filter — customer.ownerUserId = USER_OWNER",
             "_note": "fixture: 客户归 USER_OWNER 销售；测试每角色的访问决策；marketing → sales group + sub=USER_OWNER 默认匹配 ownerUserId → access=true。",
-            "visible": ["admin", "boss", "sales_manager", "sales_owner", "marketing", "academic", "academic_admin", "finance"],
+            "visible": [
+              "admin",
+              "boss",
+              "sales_manager",
+              "sales_owner",
+              "marketing",
+              "academic",
+              "academic_admin",
+              "finance"
+            ],
             "masked": [],
-            "hidden": ["sales_other", "teacher", "parent", "hr", "unknown"]
+            "hidden": [
+              "sales_other",
+              "teacher",
+              "parent",
+              "hr",
+              "unknown"
+            ]
           }
         }
       },
@@ -900,7 +2660,6 @@
       }
     }
   },
-
   "crossTenantBoundary": {
     "_doc": "Batch C 跨 tenant 强制 403：每对象每角色 × mismatch tenantSchema 都必须被 TenantScopeGuard 拦截。9 SSOT 角色 × 18 对象（5 核心 + 13 外围）= 162 case（manifest 角色全 13 时实际 13 × 18 = 234 case 含 4 auxiliary 角色 / platform_admin 早期豁免）。",
     "_design": {

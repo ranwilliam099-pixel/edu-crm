@@ -139,10 +139,13 @@ export function actorGroupOf(role: TenantRole | string | undefined | null): Acto
  *
  * 实现策略：
  *   - admin/boss：✅ 全字段返
- *   - academic：✅ 联系人保留（拍板「本校已成交可看」），但 source/follow 不看
+ *   - academic（academic/academic_admin/marketing）：✅ 联系人保留（拍板「本校只读」），
+ *       2026-06-01 §4.1 ① phone/primaryMobile/studentPhone **明文**（逆转 5/31 脱敏）；
+ *       source/follow 仍不看（销售跟进字段，非联系人）。
  *   - sales：调用方需先用 listMine（已过滤 owner=me）；本 helper 处理 detail 路径
  *           外层确认 owner_user_id=me 后再走全字段；否则只暴露 name + stage
- *   - finance：phone/wechat 都 null（仅看作账金额，不需要联系人）
+ *   - finance：phone/wechat 都 null（仅看作账金额，不需要联系人；§4.1 ① teacher/finance 不看明文，
+ *       customer 路径 finance 比脱敏更严，直接 null）
  *   - teacher / hr / parent / unknown：phone/wechat/source 全 null（不该看）
  *
  * 注：scope filter（sales owner=me 校验）由 controller 完成；本 helper 接受
@@ -176,24 +179,18 @@ export function maskCustomer<T extends Customer>(
       return masked;
 
     case 'academic':
-      // 教务双层 + 市场（marketing）：联系人姓名/微信 ✅（拍板「本校只读」），source 跟进 ❌。
-      //   2026-05-31 §4.1「手机/身份证 = §5 一级隐私，教务/老师/市场脱敏 138****8801」
-      //     → phone 脱敏（不再明文）；primaryMobile / studentPhone 同为一级 PII 一并脱敏。
-      //   wechat = 联系人信息（非一级 PII），academic/marketing 本校可见，保留。
-      //   ⚠️ 行为变更（Day-A）：原 academic 分支 phone 明文 → 现脱敏。详见报告「拿不准处」。
-      masked.phone = maskPhoneLevel1(masked.phone) as T['phone'];
-      if (masked.primaryMobile !== undefined) {
-        masked.primaryMobile = maskPhoneLevel1(masked.primaryMobile) as T['primaryMobile'];
-      }
-      if (masked.studentPhone !== undefined) {
-        masked.studentPhone = maskPhoneLevel1(masked.studentPhone) as T['studentPhone'];
-      }
+      // 教务双层（academic/academic_admin）+ 市场（marketing）：
+      //   2026-06-01 §4.1 ①「客户/学员联系人手机号、身份证：除 teacher、finance 外所有岗位看明文
+      //     （含教务/教务主管/市场）」→ 逆转 5/31 对 academic group 的脱敏：phone / primaryMobile /
+      //     studentPhone 现返**明文**（不再 maskPhoneLevel1）。
+      //   wechat = 联系人信息（非一级 PII），academic/marketing 本校可见，保留明文。
+      //   source = 销售跟进字段（非联系人，§4.1 不在 academic 列）→ 仍 null（与本批脱敏放宽无关）。
       masked.source = null;
       return masked;
 
     case 'sales':
       // 自己客户 ✅（含 phone 明文，§4.1「自己销售可见明文」）；
-      //   别人客户 phone/wechat/note 全 null（不该看）
+      //   别人客户（公海池）phone/wechat/note 全 null（不该看；owner-scope 已挡非池他人客户）
       if (options.isOwnerSelf) {
         return masked;
       }
@@ -201,14 +198,17 @@ export function maskCustomer<T extends Customer>(
       masked.wechat = null;
       masked.note = null;
       masked.source = null;
+      nullContactMobiles(masked);
       return masked;
 
     case 'finance':
-      // 财务作账：phone/wechat ❌；只保留 name/stage/signed_at/合同金额（合同走 contract mask）
+      // 财务作账：phone/wechat ❌；只保留 name/stage/signed_at/合同金额（合同走 contract mask）。
+      //   2026-06-01 §4.1 ① finance 不看联系人明文 → primaryMobile/studentPhone 一并 null（比脱敏更严，合规）。
       masked.phone = null;
       masked.wechat = null;
       masked.note = null;
       masked.source = null;
+      nullContactMobiles(masked);
       return masked;
 
     case 'teacher':
@@ -216,13 +216,28 @@ export function maskCustomer<T extends Customer>(
     case 'parent':
     case 'unknown':
     default:
-      // 不该看 customer PII → 全 null
+      // 不该看 customer PII → 全 null（teacher 经 canAccessCustomer 已挡；本分支字段层兜底）
       masked.phone = null;
       masked.wechat = null;
       masked.note = null;
       masked.source = null;
+      nullContactMobiles(masked);
       return masked;
   }
+}
+
+/**
+ * 把 customer 上的联系人手机字段（primaryMobile=家长手机、studentPhone=学员电话）置 null。
+ *   仅在「不该看 customer 联系人」分支（finance/teacher/hr/parent/unknown/sales-other）调用，
+ *   防御 §12B/V55 JOIN 出来的 primaryMobile/studentPhone 一级 PII 经 customer 路径泄露。
+ *   有值才置（保持字段不存在时不引入 key）。
+ */
+function nullContactMobiles(masked: {
+  primaryMobile?: string | null;
+  studentPhone?: string | null;
+}): void {
+  if (masked.primaryMobile !== undefined) masked.primaryMobile = null;
+  if (masked.studentPhone !== undefined) masked.studentPhone = null;
 }
 
 // ============================================================
@@ -426,8 +441,10 @@ export function maskContract<T extends Contract>(
  *
  * 学员档案「完整读」对 老板/校长/教务/老师/市场/自己销售 放开，仅两道墙：
  *   ①老师不看合同相关信息 — StudentDetail **无价格字段**，合同区由前端/contract endpoint 共同守门；
- *   ②手机/身份证 = §5 一级隐私 — 仅 自己销售 / 老板 / 校长 看明文；
- *     教务(academic/academic_admin) / 老师(teacher) / 市场(marketing) **脱敏** 138****8801。
+ *   ②手机/身份证 = §5 一级隐私 — 2026-06-01 §4.1 ① 脱敏范围收窄为**仅 teacher / finance**：
+ *     除老师/财务外所有岗位（admin/boss/sales/sales_manager/教务/教务主管/市场/hr）看**明文**；
+ *     老师(teacher) / 财务(finance) **脱敏** 138****8801（fail-safe：未知 role 也脱敏）。
+ *     ⚠️ 逆转 5/31 对 教务/市场 的脱敏（现明文）。
  *
  * 一级 PII 字段（StudentDetail 内）：
  *   - parentPhone（家长手机，customer.primary_mobile）
@@ -436,16 +453,17 @@ export function maskContract<T extends Contract>(
  * **非**一级 PII（联系人信息，§4.1 教务/老师/市场本校可见 → 保留明文）：
  *   - parentName（家长姓名）、parentGender（家长性别）— §4.1 联系人信息 ✅
  *
- * 角色策略：
+ * 角色策略（2026-06-01 §4.1 ①）：
  *   - admin / boss：✅ 全字段明文（含 parentPhone / phone）
- *   - sales（自己学员 ownerSalesId=me）：✅ 全字段明文（§4.1「自己销售可见明文」）；
- *       别人学员 → 脱敏（防个人销售越界看他人客户手机）
+ *   - sales（自己学员 ownerSalesId=me）：✅ 全字段明文；别人学员 → **明文**亦可（§4.1 ① 销售非脱敏对象，
+ *       但仍受 canAccessStudent owner-scope 范围墙：sales 只读到自己学员，isOwnerSelf=false 实际不会命中
+ *       他人学员；保留分支语义最小化改动，他人学员 phone 现也明文）
  *   - academic / academic_admin / marketing（academic group）：parentName/parentGender 保留，
- *       parentPhone / phone **脱敏**
- *   - teacher：parentName/parentGender 保留（§4.1 新放开「联系人信息」），
- *       parentPhone / phone **脱敏**（§4.1 墙②；逆转旧实现「teacher 家长字段全 null」）
- *   - finance / hr / parent / unknown：本函数兜底脱敏（学员档案非其职；endpoint @Roles 已挡，
- *       本函数仅纵深防御）
+ *       parentPhone / phone **明文**（逆转 5/31 脱敏）
+ *   - teacher：parentName/parentGender 保留（§4.1 联系人 ✅），parentPhone / phone **脱敏**（§4.1 ① 墙②）
+ *   - finance：**脱敏**（§4.1 ① teacher/finance 脱敏；学员档案非其职 endpoint @Roles 已挡，本函数兜底脱敏）
+ *   - hr：明文（§4.1 ① 除 teacher/finance 外明文）
+ *   - parent / unknown：本函数兜底脱敏（parent 走 c 端；unknown fail-safe 脱敏）
  *
  * 红线（与拍板对齐）：
  *   - 不删 key，只脱敏字符串或保留值（前端依旧拿结构化对象）
@@ -455,9 +473,10 @@ export interface StudentDetailMaskOptions {
   /**
    * 是否是当前用户自己持有的学员（sales ownerSalesId === req.user.sub）
    *
-   * 仅对 sales 组生效：
-   *   - true：parentPhone / phone 明文（§4.1「自己销售可见明文」）
-   *   - false：脱敏（个人销售不看他人客户一级 PII）
+   * 2026-06-01 §4.1 ①：sales 非脱敏对象（仅 teacher/finance 脱敏），故 sales 看到的
+   *   parentPhone / phone 一律明文；范围墙由 canAccessStudent owner-scope 守（sales 只读到
+   *   自己学员，他人学员在 controller 层 403，不会进入本函数）。此标记保留作语义记录，
+   *   sales 分支不再据此脱敏。
    */
   isOwnerSelf?: boolean;
 }
@@ -476,18 +495,15 @@ export function maskStudentDetail<T extends StudentDetail>(
       return masked;
 
     case 'sales':
-      // 自己学员 ✅ 明文；别人学员一级 PII 脱敏（联系人姓名保留 = 本校可见）
-      if (options.isOwnerSelf) {
-        return masked;
-      }
-      masked.parentPhone = maskPhoneLevel1(masked.parentPhone) as T['parentPhone'];
-      masked.phone = maskPhoneLevel1(masked.phone) as T['phone'];
+      // 2026-06-01 §4.1 ①：sales 非脱敏对象 → parentPhone / phone 明文（无论 isOwnerSelf）。
+      //   范围墙在 controller（canAccessStudent owner-scope：sales 仅读自己学员，他人学员 403 不进此函数）。
       return masked;
 
     case 'academic':
-      // 教务双层 + 市场（marketing）：联系人姓名/性别保留；手机一级 PII 脱敏
-      masked.parentPhone = maskPhoneLevel1(masked.parentPhone) as T['parentPhone'];
-      masked.phone = maskPhoneLevel1(masked.phone) as T['phone'];
+      // 教务双层（academic/academic_admin）+ 市场（marketing）：
+      //   2026-06-01 §4.1 ①「客户/学员联系人手机号、身份证：除 teacher、finance 外所有岗位看明文
+      //     （含教务/教务主管/市场）」→ 逆转 5/31 对 academic group 的脱敏：parentPhone / phone
+      //     现返**明文**（不再 maskPhoneLevel1）。联系人姓名/性别本就保留。
       return masked;
 
     case 'teacher':
@@ -498,12 +514,17 @@ export function maskStudentDetail<T extends StudentDetail>(
       masked.phone = maskPhoneLevel1(masked.phone) as T['phone'];
       return masked;
 
-    case 'finance':
     case 'hr':
+      // 2026-06-01 §4.1 ①：hr 不在脱敏集合（仅 teacher/finance 脱敏）→ 明文。
+      //   注：student 是教学线对象，hr 一般无 @Roles，本分支仅作字段层兜底（hr 若经某路径进入则明文）。
+      return masked;
+
+    case 'finance':
     case 'parent':
     case 'unknown':
     default:
-      // 学员档案非其职（endpoint @Roles 已挡 finance/parent）；本函数纵深防御一级 PII 脱敏
+      // 2026-06-01 §4.1 ①：finance 脱敏（财务不看联系人明文）；parent 走 c 端；
+      //   unknown fail-safe 脱敏（学员档案非其职，endpoint @Roles 已挡 finance/parent，本函数纵深防御）。
       masked.parentPhone = maskPhoneLevel1(masked.parentPhone) as T['parentPhone'];
       masked.phone = maskPhoneLevel1(masked.phone) as T['phone'];
       return masked;

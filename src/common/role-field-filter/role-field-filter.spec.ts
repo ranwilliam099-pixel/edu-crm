@@ -258,38 +258,38 @@ describe('maskCustomer', () => {
     });
   });
 
-  describe('academic / marketing → 联系人姓名/微信 ✅，手机一级 PII 脱敏，source ❌', () => {
-    // 2026-05-31 §4.1：「手机/身份证 = §5 一级隐私，教务/老师/市场脱敏 138****8801」
-    //   ⚠️ 行为变更（Day-A）：原 academic 分支 phone 明文 → 现脱敏（与 §4.1 一级隐私一致）。
-    it('academic 手机脱敏（phone / primaryMobile / studentPhone 全 138****），wechat 保留', () => {
+  describe('academic / academic_admin / marketing → 联系人手机明文（2026-06-01 §4.1 ①），source ❌', () => {
+    // 2026-06-01 §4.1 ①：「客户/学员联系人手机号、身份证：除 teacher、finance 外所有岗位看明文
+    //   （含教务/教务主管/市场）」⚠️ 逆转 5/31 对 academic group 的脱敏（现明文）。
+    it('academic 手机明文（phone / primaryMobile / studentPhone 全明文），wechat/姓名保留', () => {
       const r = maskCustomer(customerFixture(), jwt('academic'));
-      expect(r.phone).toBe('138****8000'); // 脱敏（非明文）
-      expect(r.primaryMobile).toBe('138****8000'); // 家长手机一级 PII 脱敏
-      expect(r.studentPhone).toBe('137****7000'); // 学员手机一级 PII 脱敏
+      expect(r.phone).toBe('13800138000'); // 明文（逆转 5/31 脱敏）
+      expect(r.primaryMobile).toBe('13800138000'); // 家长手机明文
+      expect(r.studentPhone).toBe('13700137000'); // 学员手机明文
       expect(r.wechat).toBe('wx_parent_abc'); // 微信非一级 PII，本校可见
       expect(r.parentName).toBe('小明妈妈'); // 联系人姓名 ✅
-      // source 是销售跟进字段，教务不看
+      // source 是销售跟进字段（非联系人），教务仍不看
       expect(r.source).toBeNull();
     });
 
-    it('academic_admin 同 academic（手机脱敏）', () => {
+    it('academic_admin 同 academic（手机明文）', () => {
       const r = maskCustomer(customerFixture(), jwt('academic_admin'));
-      expect(r.phone).toBe('138****8000');
-      expect(r.primaryMobile).toBe('138****8000');
+      expect(r.phone).toBe('13800138000');
+      expect(r.primaryMobile).toBe('13800138000');
       expect(r.source).toBeNull();
     });
 
-    it('marketing 比照 academic：手机脱敏 + wechat/姓名可见 + source ❌（§4.1 2026-05-31）', () => {
+    it('marketing 比照 academic：手机明文 + wechat/姓名可见 + source ❌（§4.1 ① 2026-06-01）', () => {
       const r = maskCustomer(customerFixture(), jwt('marketing'));
-      expect(r.phone).toBe('138****8000'); // 脱敏（marketing 非 owner，无明文）
-      expect(r.primaryMobile).toBe('138****8000');
-      expect(r.studentPhone).toBe('137****7000');
+      expect(r.phone).toBe('13800138000'); // 明文（§4.1 ① 市场除外名单）
+      expect(r.primaryMobile).toBe('13800138000');
+      expect(r.studentPhone).toBe('13700137000');
       expect(r.wechat).toBe('wx_parent_abc');
       expect(r.parentName).toBe('小明妈妈');
       expect(r.source).toBeNull();
     });
 
-    it('academic 无值手机不脱敏成 ***（保持字段类型 null/原值）', () => {
+    it('academic 无值手机保持原值（null/undefined 不引入）', () => {
       const r = maskCustomer(
         customerFixture({ phone: null, primaryMobile: undefined }),
         jwt('academic'),
@@ -299,23 +299,29 @@ describe('maskCustomer', () => {
     });
   });
 
-  describe('finance → phone/wechat/note/source 全 null', () => {
-    it('finance 看 customer → phone/wechat null（只作账）', () => {
+  describe('finance → 联系人手机/微信全 null（2026-06-01 §4.1 ① finance 不看联系人明文）', () => {
+    // §4.1 ①：teacher / finance 仍脱敏。customer 路径 finance 比脱敏更严：phone/primaryMobile/studentPhone 全 null。
+    it('finance 看 customer → phone/wechat/primaryMobile/studentPhone 全 null（只作账）', () => {
       const r = maskCustomer(customerFixture(), jwt('finance'));
       expect(r.phone).toBeNull();
       expect(r.wechat).toBeNull();
       expect(r.note).toBeNull();
       expect(r.source).toBeNull();
+      // §4.1 ① 一并防御 JOIN 出来的联系人手机
+      expect(r.primaryMobile).toBeNull();
+      expect(r.studentPhone).toBeNull();
       // 但保留 stage / signedAt / lostReason 等作账字段
       expect(r.stage).toBe('初步接触');
     });
   });
 
-  describe('teacher / hr / parent / unknown → 全敏感 null', () => {
-    it('teacher 不该看 customer PII', () => {
+  describe('teacher / hr / parent / unknown → 全敏感 null（含联系人手机，§4.1 ① teacher 脱敏对象）', () => {
+    it('teacher 不该看 customer PII（phone/wechat/primaryMobile/studentPhone 全 null）', () => {
       const r = maskCustomer(customerFixture(), jwt('teacher'));
       expect(r.phone).toBeNull();
       expect(r.wechat).toBeNull();
+      expect(r.primaryMobile).toBeNull();
+      expect(r.studentPhone).toBeNull();
     });
 
     it('hr 不看 customer PII（HR 不参与客户线索）', () => {
@@ -769,20 +775,22 @@ describe('maskStudentDetail', () => {
     });
   });
 
-  describe('sales 别人学员 → 手机脱敏（个人销售不看他人客户一级 PII）', () => {
-    it('sales isOwnerSelf=false → parentPhone / phone 脱敏，姓名保留', () => {
+  describe('sales 别人学员 → 手机明文（2026-06-01 §4.1 ① sales 非脱敏对象；范围墙在 controller owner-scope）', () => {
+    // §4.1 ①：仅 teacher/finance 脱敏。sales 看到的手机一律明文；
+    //   sales 仅读到自己学员（canAccessStudent owner-scope，他人学员 403 不进本函数），
+    //   此分支为字段层最小化语义记录。
+    it('sales isOwnerSelf=false → parentPhone / phone 明文，姓名保留', () => {
       const r = maskStudentDetail(studentDetailFixture(), jwt('sales', USER_OTHER), {
         isOwnerSelf: false,
       });
-      expect(r.parentPhone).toBe('138****8000');
-      expect(r.phone).toBe('137****7000');
-      // 联系人姓名 / 基础信息保留
+      expect(r.parentPhone).toBe('13800138000');
+      expect(r.phone).toBe('13700137000');
       expect(r.parentName).toBe('小明妈妈');
       expect(r.studentName).toBe('小明');
     });
   });
 
-  describe('teacher → 联系人姓名/性别 ✅ + 手机脱敏（§4.1 2026-05-31 放开，墙②脱敏）', () => {
+  describe('teacher → 联系人姓名/性别 ✅ + 手机脱敏（§4.1 ① teacher 脱敏对象）', () => {
     it('teacher 看到 parentName/parentGender，但 parentPhone / phone 脱敏', () => {
       const r = maskStudentDetail(studentDetailFixture(), jwt('teacher'));
       // 逆转旧实现「teacher → parentName/parentGender 全 null」
@@ -793,52 +801,73 @@ describe('maskStudentDetail', () => {
     });
   });
 
-  describe('academic / academic_admin / marketing → 联系人姓名 ✅ + 手机脱敏', () => {
-    it('academic 手机脱敏，姓名/性别保留', () => {
+  describe('academic / academic_admin / marketing → 联系人姓名 ✅ + 手机明文（2026-06-01 §4.1 ① 逆转脱敏）', () => {
+    it('academic 手机明文，姓名/性别保留', () => {
       const r = maskStudentDetail(studentDetailFixture(), jwt('academic'));
-      expect(r.parentPhone).toBe('138****8000');
-      expect(r.phone).toBe('137****7000');
+      expect(r.parentPhone).toBe('13800138000');
+      expect(r.phone).toBe('13700137000');
       expect(r.parentName).toBe('小明妈妈');
     });
 
-    it('academic_admin 同 academic', () => {
+    it('academic_admin 同 academic（手机明文）', () => {
       const r = maskStudentDetail(studentDetailFixture(), jwt('academic_admin'));
-      expect(r.parentPhone).toBe('138****8000');
-      expect(r.phone).toBe('137****7000');
+      expect(r.parentPhone).toBe('13800138000');
+      expect(r.phone).toBe('13700137000');
     });
 
-    it('marketing 比照 academic：手机脱敏 + 姓名保留（§4.1 市场可读学员）', () => {
+    it('marketing 比照 academic：手机明文 + 姓名保留（§4.1 ① 市场除外名单）', () => {
       const r = maskStudentDetail(studentDetailFixture(), jwt('marketing'));
-      expect(r.parentPhone).toBe('138****8000');
-      expect(r.phone).toBe('137****7000');
+      expect(r.parentPhone).toBe('13800138000');
+      expect(r.phone).toBe('13700137000');
       expect(r.parentName).toBe('小明妈妈');
       expect(r.studentName).toBe('小明');
     });
   });
 
-  describe('finance / parent / unknown → 兜底脱敏（纵深防御；endpoint @Roles 已挡）', () => {
-    it('finance → 手机脱敏（学员档案非其职，@Roles 已 deny，本函数兜底）', () => {
+  describe('hr → 手机明文（2026-06-01 §4.1 ① hr 不在脱敏集合）', () => {
+    it('hr → parentPhone / phone 明文（除 teacher/finance 外明文）', () => {
+      const r = maskStudentDetail(studentDetailFixture(), jwt('hr'));
+      expect(r.parentPhone).toBe('13800138000');
+      expect(r.phone).toBe('13700137000');
+    });
+  });
+
+  describe('finance / parent / unknown → 兜底脱敏（§4.1 ① finance 脱敏；纵深防御）', () => {
+    it('finance → 手机脱敏（§4.1 ① teacher/finance 脱敏；学员档案非其职 @Roles 已 deny，本函数兜底）', () => {
       const r = maskStudentDetail(studentDetailFixture(), jwt('finance'));
       expect(r.parentPhone).toBe('138****8000');
       expect(r.phone).toBe('137****7000');
     });
 
-    it('user undefined → 手机脱敏', () => {
+    it('parent → 手机脱敏（c 端独立流程，本函数兜底）', () => {
+      const r = maskStudentDetail(studentDetailFixture(), jwt('parent' as TenantRole));
+      expect(r.parentPhone).toBe('138****8000');
+      expect(r.phone).toBe('137****7000');
+    });
+
+    it('user undefined → 手机脱敏（fail-safe）', () => {
       const r = maskStudentDetail(studentDetailFixture(), undefined);
       expect(r.parentPhone).toBe('138****8000');
       expect(r.phone).toBe('137****7000');
     });
   });
 
-  it('mask 返回新对象，不污染原对象', () => {
+  it('mask 返回新对象，不污染原对象（finance 脱敏路径）', () => {
     const original = studentDetailFixture();
-    const r = maskStudentDetail(original, jwt('academic'));
+    const r = maskStudentDetail(original, jwt('finance'));
     expect(r.parentPhone).toBe('138****8000');
     // 原对象不变
     expect(original.parentPhone).toBe('13800138000');
   });
 
-  it('手机字段为 null → 原样 null（不脱敏成 ***）', () => {
+  it('academic 明文路径不污染原对象（shallow copy 返回新对象）', () => {
+    const original = studentDetailFixture();
+    const r = maskStudentDetail(original, jwt('academic'));
+    expect(r).not.toBe(original);
+    expect(r.parentPhone).toBe('13800138000');
+  });
+
+  it('手机字段为 null → 原样 null（teacher 脱敏路径不脱敏成 ***）', () => {
     const r = maskStudentDetail(
       studentDetailFixture({ parentPhone: null, phone: null }),
       jwt('teacher'),

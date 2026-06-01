@@ -178,9 +178,9 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
 
   describe('customer (maskCustomer × 12 fields)', () => {
     describe('field: phone', () => {
-      // PII 一级隐私（§5 手机仅自己销售/老板/校长明文；§4.1 2026-05-31 教务/老师/市场脱敏 138****）
-      // visible=[admin,boss,sales_manager,sales_owner]
-      // masked=[academic,academic_admin,marketing,sales_other,finance,teacher,hr,parent,unknown]
+      // PII 一级隐私（§5 手机仅自己销售/老板/校长明文；2026-06-01 §4.1 ① 除 teacher/finance 外所有岗位明文，含教务/教务主管/市场）
+      // visible=[admin,boss,sales_manager,sales_owner,academic,academic_admin,marketing]
+      // masked=[sales_other,finance,teacher,hr,parent,unknown]
       // hidden=[]
 
       it('visible: admin → phone=13800138000', () => {
@@ -199,17 +199,17 @@ describe('[RBAC L9 Batch D] 字段级权限矩阵 visible / masked / hidden = 49
         const result = maskCustomerByRoleVariant('sales_owner');
         expect((result as Customer & Record<string, unknown>).phone).toBe("13800138000");
       });
-      it('masked: academic → phone="138****8000"', () => {
+      it('visible: academic → phone=13800138000', () => {
         const result = maskCustomerByRoleVariant('academic');
-        expect((result as Customer & Record<string, unknown>).phone).toBe("138****8000");
+        expect((result as Customer & Record<string, unknown>).phone).toBe("13800138000");
       });
-      it('masked: academic_admin → phone="138****8000"', () => {
+      it('visible: academic_admin → phone=13800138000', () => {
         const result = maskCustomerByRoleVariant('academic_admin');
-        expect((result as Customer & Record<string, unknown>).phone).toBe("138****8000");
+        expect((result as Customer & Record<string, unknown>).phone).toBe("13800138000");
       });
-      it('masked: marketing → phone="138****8000"', () => {
+      it('visible: marketing → phone=13800138000', () => {
         const result = maskCustomerByRoleVariant('marketing');
-        expect((result as Customer & Record<string, unknown>).phone).toBe("138****8000");
+        expect((result as Customer & Record<string, unknown>).phone).toBe("13800138000");
       });
       it('masked: sales_other → phone=null', () => {
         const result = maskCustomerByRoleVariant('sales_other');

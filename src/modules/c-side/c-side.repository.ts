@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PgPoolService, PgRow } from '../db/pg-pool.service';
+// SSOT §4.1.1 学员年级自动升级（computed-on-read）：与 B 端 student.repository 同一套推算。
+import { academicYear, computeCurrentGrade } from '../../common/grade-ladder';
 
 /**
  * CSideRepository — P4-Y C 端家长聚合查询 2026-05-20
@@ -12,8 +14,10 @@ import { PgPoolService, PgRow } from '../db/pg-pool.service';
  * 单 tenant scope（家长 ParentJwt 跨多机构时由 controller 分别调多次，与中间件单 tenant 守护对齐）
  */
 
-// SSOT §4.1 parent C 端字段红线：仅看「姓名 + 头像 + 校区 + 主带老师」
+// SSOT §4.1 parent C 端字段红线：仅看「姓名 + 头像 + 校区 + 主带老师 + 年级」
 // 5/20 round 2 BLOCKER-1 修：删 gender/gradeOrAge/schoolName 不在 §4.1 允许范围
+// 2026-06-01 §4.1 ② 用户拍板：家长孩子卡新增显示 currentGrade（§4.1.1 computed-on-read 推算值）；
+//   逆转原「家长不显年级」。仍仅 姓名+头像+校区+主带老师+年级，不显手机/合同/价格等。
 export interface ChildBrief {
   id: string;
   name: string;
@@ -23,6 +27,8 @@ export interface ChildBrief {
   // 主带老师所在校区（teachers.campus_id → campuses.name）
   campusId?: string | null;
   campusName?: string | null;
+  // 2026-06-01 §4.1 ② 当前年级（computed-on-read，封顶高三，非阶梯值原样；缺基准年用 created_at 兜底）
+  currentGrade?: string | null;
 }
 
 export interface TodayLesson {
@@ -84,8 +90,13 @@ export class CSideRepository {
     if (studentIds.length === 0) return [];
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
+      // 2026-06-01 §4.1 ②：补 SELECT grade_or_age / grade_base_year（+ created_at 兜底）
+      //   供 §4.1.1 computed-on-read 推算 currentGrade（与 B 端 student.repository 同口径）。
       `SELECT s.id, s.student_name AS name,
               s.assigned_teacher_id AS main_teacher_id,
+              s.grade_or_age      AS grade_or_age,
+              s.grade_base_year   AS grade_base_year,
+              s.created_at        AS created_at,
               t.name              AS main_teacher_name,
               t.campus_id         AS campus_id,
               c.name              AS campus_name
@@ -375,7 +386,7 @@ export class CSideRepository {
 
   // ===== helpers =====
 
-  // SSOT §4.1 parent C 端：仅 姓名 + 头像 + 校区 + 主带老师（5/20 round 2 BLOCKER-1）
+  // SSOT §4.1 parent C 端：仅 姓名 + 头像 + 校区 + 主带老师 + 年级（5/20 BLOCKER-1 + 6/1 §4.1 ②）
   private mapChildRow(r: PgRow): ChildBrief {
     return {
       id: r.id,
@@ -384,7 +395,29 @@ export class CSideRepository {
       mainTeacherName: r.main_teacher_name ?? null,
       campusId: r.campus_id ?? null,
       campusName: r.campus_name ?? null,
+      // 2026-06-01 §4.1 ②：currentGrade = §4.1.1 computed-on-read 推算（封顶高三/非阶梯豁免）
+      currentGrade: this.computeCurrentGrade(r),
     };
+  }
+
+  /**
+   * SSOT §4.1.1 computed-on-read：grade_or_age 录入原值 + grade_base_year 按当前学年推算 currentGrade。
+   *   - grade_base_year 缺失（老数据未 backfill）→ 用 created_at 学年兜底（与 B 端 student.repository 一致）。
+   *   - 缺 created_at 且缺 grade_base_year → computeCurrentGrade 内保守原样返回 grade_or_age。
+   */
+  private computeCurrentGrade(r: PgRow): string | null {
+    const gradeOrAge: string | null = r.grade_or_age || null;
+    let gradeBaseYear: number | null =
+      r.grade_base_year === null || r.grade_base_year === undefined
+        ? null
+        : Number(r.grade_base_year);
+    if (gradeBaseYear !== null && !Number.isFinite(gradeBaseYear)) gradeBaseYear = null;
+    const effectiveBaseYear =
+      gradeBaseYear ??
+      (r.created_at
+        ? academicYear(new Date(r.created_at as string | number | Date))
+        : null);
+    return (computeCurrentGrade(gradeOrAge, effectiveBaseYear) as string | null) ?? null;
   }
 
   private mapMessageRow(r: PgRow): MessageItem {
