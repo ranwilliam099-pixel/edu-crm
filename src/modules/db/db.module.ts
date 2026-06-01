@@ -119,6 +119,11 @@ import { CampusAssignmentConfigRepository } from './campus-assignment-config.rep
 import { StudentAssignmentService } from './student-assignment.service';
 import { CampusAssignmentController } from './campus-assignment.controller';
 
+// ===== V64 (2026-06-01) — Phase 4 试听课流程（#9）=====
+import { TrialRepository } from './trial.repository';
+import { TrialAssignmentService } from './trial-assignment.service';
+import { TrialController } from './trial.controller';
+
 // ===== V33 审计日志（生产架构 P0 第 1 项）=====
 import { AuditLogRepository } from './audit-log.repository';
 
@@ -228,6 +233,8 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     RefundController,
     // V63 (2026-06-01) — Phase 3 学员→教务分配机制（校长配置 + 手动分配 + 待分配列表）
     CampusAssignmentController,
+    // V64 (2026-06-01) — Phase 4 试听课流程（发起/分配/排老师/结果）
+    TrialController,
   ],
   providers: [
     // 基础设施
@@ -288,6 +295,9 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     // V63 (2026-06-01) — Phase 3 学员→教务分配机制
     CampusAssignmentConfigRepository,
     StudentAssignmentService,
+    // V64 (2026-06-01) — Phase 4 试听课流程
+    TrialRepository,
+    TrialAssignmentService,
   ],
   exports: [
     PgPoolService,
@@ -336,6 +346,9 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     // V63 (2026-06-01) — Phase 3 学员→教务分配（contract.controller activate 触发用）
     CampusAssignmentConfigRepository,
     StudentAssignmentService,
+    // V64 (2026-06-01) — Phase 4 试听课流程
+    TrialRepository,
+    TrialAssignmentService,
   ],
 })
 export class DbModule {}

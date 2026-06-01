@@ -795,6 +795,34 @@ export class CustomerRepository {
     return rows.map((r) => this.mapCustomerRow(r));
   }
 
+  /**
+   * 轻量 owner-scope 查询（2026-06-01 trial.create IDOR 收口）：
+   *   仅取 opportunities 的 owner_user_id / campus_id 用于跨人/跨校归属校验，
+   *   **不 JOIN students/customers、不解密 PII、不返完整 Customer**（findById 才返全字段）。
+   *
+   *   - trial.controller.create 用此校验「发起销售是否拥有该客户 + 是否本校」（同租户 IDOR）。
+   *   - 客户（线索）= opportunities 行；owner_user_id 即归属销售，campus_id 即所属校区。
+   *   - 不存在 → null（调用方据此返 404/400，与既有风格一致）。
+   */
+  async findOwnershipById(
+    tenantSchema: string,
+    id: string,
+  ): Promise<{ ownerUserId: string | null; campusId: string | null } | null> {
+    const rows = await this.pg.tenantQuery<{
+      owner_user_id: string | null;
+      campus_id: string | null;
+    }>(
+      tenantSchema,
+      `SELECT owner_user_id, campus_id FROM opportunities WHERE id = $1`,
+      [id],
+    );
+    if (rows.length === 0) return null;
+    return {
+      ownerUserId: rows[0].owner_user_id ?? null,
+      campusId: rows[0].campus_id ?? null,
+    };
+  }
+
   async findById(tenantSchema: string, id: string): Promise<Customer | null> {
     // § 12B (2026-05-21): detail 页需要两板块全字段
     //   - students.gender / school / phone / available_time (V55)
