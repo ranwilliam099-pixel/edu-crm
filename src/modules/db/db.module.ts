@@ -124,6 +124,11 @@ import { TrialRepository } from './trial.repository';
 import { TrialAssignmentService } from './trial-assignment.service';
 import { TrialController } from './trial.controller';
 
+// ===== V66 (2026-06-02) — Phase 5 反馈规则配置 + 教务待反馈学员（#7b）=====
+import { FeedbackRuleConfigRepository } from './feedback-rule-config.repository';
+import { PendingFeedbackService } from './pending-feedback.service';
+import { FeedbackRuleController } from './feedback-rule.controller';
+
 // ===== V33 审计日志（生产架构 P0 第 1 项）=====
 import { AuditLogRepository } from './audit-log.repository';
 
@@ -235,6 +240,8 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     CampusAssignmentController,
     // V64 (2026-06-01) — Phase 4 试听课流程（发起/分配/排老师/结果）
     TrialController,
+    // V66 (2026-06-02) — Phase 5 反馈规则配置（校长）+ 教务待反馈学员（教务反馈页）
+    FeedbackRuleController,
   ],
   providers: [
     // 基础设施
@@ -298,6 +305,9 @@ import { HmacHasher } from '../../common/crypto/hmac-hasher';
     // V64 (2026-06-01) — Phase 4 试听课流程
     TrialRepository,
     TrialAssignmentService,
+    // V66 (2026-06-02) — Phase 5 反馈规则配置 + 教务待反馈学员
+    FeedbackRuleConfigRepository,
+    PendingFeedbackService,
   ],
   exports: [
     PgPoolService,
