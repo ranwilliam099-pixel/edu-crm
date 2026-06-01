@@ -17,13 +17,13 @@ import {
  *     auto ON → round-robin 发牌给本校在职 academic + status='pending_teacher' + audit；
  *     auto OFF → 留 status='pending_assign'（校长手动派）。
  *
- * ★ 游标决策（V64 schema 权威 + prompt 拍板）：
- *   V64 **不含**独立试听游标列（campus_assignment_config 仅有 rr_last_academic_id 一列，
- *   且 prompt 明确「V64 不含该列 → 改为 trial 分配也用 rr_last_academic_id 同游标」）。
- *   故本服务**复用 Phase 3 同一行同一 rr_last_academic_id 游标** —— 学员分配与试听分配
- *   在同一校区共享一个 round-robin 指针，交替推进（A→B→C 跨两条业务线连续轮转）。
- *   语义：教务负载在「学员 + 试听」两类工作上整体轮转均衡，符合「同一池子轮流接活」。
- *   若未来要两线独立游标 → V64 加列 rr_last_trial_academic_id（本服务改读/写该列一处即可）。
+ * ★ 游标决策（2026-06-02 用户拍板：**两线独立游标**，逆转原「共享游标」默认）：
+ *   学员分配（StudentAssignmentService）走 campus_assignment_config.rr_last_academic_id；
+ *   试听分配（本服务）走 **独立列 rr_last_trial_academic_id**（V64 ADD COLUMN）。
+ *   两线各自轮转、互不推进：学员发牌只动 rr_last_academic_id，试听发牌只动
+ *   rr_last_trial_academic_id（A→B→C 在试听线内部连续轮转，与学员线无关）。
+ *   并发：仍在同一配置行上 SELECT ... FOR UPDATE（两线共享行锁防同校并发双发），
+ *   但 ON CONFLICT 仅 SET 各自游标列 → 互不覆盖对方游标。
  *
  * 复用 Phase 3 资产（避免复制）：
  *   - StudentAssignmentService.pickNext（static 纯函数，发牌顺序）
@@ -95,9 +95,10 @@ export class TrialAssignmentService {
           };
         }
 
-        // 2. 锁配置行（FOR UPDATE）→ 防同校并发分配双发同一 academic（学员/试听共享此锁）
+        // 2. 锁配置行（FOR UPDATE）→ 防同校并发分配双发同一 academic
+        //   （学员/试听共享此**行锁**，但读/写各自独立游标列 rr_last_trial_academic_id）
         const cfgRows = await client.query<PgRow>(
-          `SELECT auto_assign_academic, rr_last_academic_id
+          `SELECT auto_assign_academic, rr_last_trial_academic_id
              FROM campus_assignment_config
             WHERE campus_id = $1
             FOR UPDATE`,
@@ -110,7 +111,7 @@ export class TrialAssignmentService {
           return { assigned: false, reason: 'auto_off' };
         }
         const rrLast: string | null =
-          cfgRows.rows[0].rr_last_academic_id ?? null;
+          cfgRows.rows[0].rr_last_trial_academic_id ?? null;
 
         // 3. 取本校在职教务池（ORDER BY id 稳定 round-robin 顺序）
         const poolRows = await client.query<PgRow>(
@@ -133,19 +134,20 @@ export class TrialAssignmentService {
         // 4. round-robin（复用 Phase 3 同一纯函数）
         const nextId = StudentAssignmentService.pickNext(pool, rrLast);
 
-        // 5. set trials.assigned_academic_id + status='pending_teacher' + 推进共享游标（同事务）
+        // 5. set trials.assigned_academic_id + status='pending_teacher' + 推进**独立试听游标**（同事务）
         await client.query(
           `UPDATE trials
               SET assigned_academic_id = $1, status = 'pending_teacher', updated_at = NOW()
             WHERE id = $2 AND status = 'pending_assign'`,
           [nextId, trialId],
         );
+        // ON CONFLICT 仅 SET rr_last_trial_academic_id → 不触碰学员游标 rr_last_academic_id（两线独立）
         await client.query(
           `INSERT INTO campus_assignment_config
-             (campus_id, auto_assign_academic, rr_last_academic_id, updated_by, updated_at)
+             (campus_id, auto_assign_academic, rr_last_trial_academic_id, updated_by, updated_at)
            VALUES ($1, true, $2, $3, NOW())
            ON CONFLICT (campus_id) DO UPDATE
-             SET rr_last_academic_id = EXCLUDED.rr_last_academic_id,
+             SET rr_last_trial_academic_id = EXCLUDED.rr_last_trial_academic_id,
                  updated_at = NOW()`,
           [campusId, nextId, actor.userId],
         );

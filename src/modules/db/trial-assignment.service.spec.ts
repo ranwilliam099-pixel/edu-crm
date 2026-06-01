@@ -6,7 +6,7 @@ import { ASSIGNMENT_POOL_ROLES } from './student-assignment.service';
 
 /**
  * TrialAssignmentService (V64 Phase 4) 单测
- *   - round-robin 发牌（复用 Phase 3 pickNext + 共享 rr_last_academic_id 游标）
+ *   - round-robin 发牌（复用 Phase 3 pickNext + **独立** rr_last_trial_academic_id 游标，2026-06-02 两线独立）
  *   - 幂等：已分配不重分
  *   - auto off：不分配（status 留 pending_assign）
  *   - 池空：不报错留 NULL
@@ -59,14 +59,14 @@ describe('TrialAssignmentService (V64 Phase 4 试听→教务分配)', () => {
     txClient.query
       .mockResolvedValueOnce(result([{ assigned_academic_id: null }])) // 1
       .mockResolvedValueOnce(
-        result([{ auto_assign_academic: true, rr_last_academic_id: rrLast }]),
+        result([{ auto_assign_academic: true, rr_last_trial_academic_id: rrLast }]),
       ) // 2
       .mockResolvedValueOnce(result(pool.map((id) => ({ id })))) // 3
       .mockResolvedValueOnce(result([])) // 4 UPDATE
       .mockResolvedValueOnce(result([])); // 5 INSERT cursor
   };
 
-  describe('round-robin 发牌（复用 Phase 3 pickNext + 共享游标）', () => {
+  describe('round-robin 发牌（复用 Phase 3 pickNext + 独立试听游标）', () => {
     it('rrLast=null → 发第一个 A，并把 trial status 推到 pending_teacher', async () => {
       armAutoOn(null);
       const r = await service.assignTrialIfNeeded(TENANT, TRIAL, CAMPUS, {
@@ -82,7 +82,7 @@ describe('TrialAssignmentService (V64 Phase 4 试听→教务分配)', () => {
       expect(updateCall[0]).toContain("WHERE id = $2 AND status = 'pending_assign'");
     });
 
-    it('rrLast=A → 发下一个 B（共享游标接着学员发牌后的位置轮转）', async () => {
+    it('rrLast=A → 发下一个 B（试听线独立游标在 A 后轮到 B）', async () => {
       armAutoOn(A);
       const r = await service.assignTrialIfNeeded(TENANT, TRIAL, CAMPUS, {
         userId: SALES,
@@ -109,15 +109,17 @@ describe('TrialAssignmentService (V64 Phase 4 试听→教务分配)', () => {
       expect(r.academicId).toBe(A);
     });
 
-    it('真分配推进【共享】rr_last_academic_id 游标 + 写 trial.auto_assigned 审计', async () => {
+    it('真分配推进【独立】rr_last_trial_academic_id 游标（不触学员游标）+ 写 trial.auto_assigned 审计', async () => {
       armAutoOn(A);
       await service.assignTrialIfNeeded(TENANT, TRIAL, CAMPUS, {
         userId: SALES,
         role: 'sales',
       });
-      // upsert 游标第 5 次调用：参数 [campusId, nextId, actor]，更新的是 rr_last_academic_id
+      // upsert 游标第 5 次调用：参数 [campusId, nextId, actor]，更新的是独立列 rr_last_trial_academic_id
       const cursorCall = txClient.query.mock.calls[4];
-      expect(cursorCall[0]).toContain('rr_last_academic_id');
+      expect(cursorCall[0]).toContain('rr_last_trial_academic_id');
+      // 两线独立：试听 upsert 不得触碰学员游标 rr_last_academic_id（仅 SET 试听列）
+      expect(cursorCall[0]).not.toMatch(/SET[\s\S]*\brr_last_academic_id\b/);
       expect(cursorCall[1]).toEqual([CAMPUS, B, SALES]);
       // 审计
       expect(auditLog.log).toHaveBeenCalledTimes(1);
@@ -163,7 +165,7 @@ describe('TrialAssignmentService (V64 Phase 4 试听→教务分配)', () => {
       txClient.query
         .mockResolvedValueOnce(result([{ assigned_academic_id: null }]))
         .mockResolvedValueOnce(
-          result([{ auto_assign_academic: false, rr_last_academic_id: null }]),
+          result([{ auto_assign_academic: false, rr_last_trial_academic_id: null }]),
         );
       const r = await service.assignTrialIfNeeded(TENANT, TRIAL, CAMPUS, {
         userId: SALES,
@@ -179,7 +181,7 @@ describe('TrialAssignmentService (V64 Phase 4 试听→教务分配)', () => {
       txClient.query
         .mockResolvedValueOnce(result([{ assigned_academic_id: null }]))
         .mockResolvedValueOnce(
-          result([{ auto_assign_academic: true, rr_last_academic_id: null }]),
+          result([{ auto_assign_academic: true, rr_last_trial_academic_id: null }]),
         )
         .mockResolvedValueOnce(result([])); // pool empty
       const r = await service.assignTrialIfNeeded(TENANT, TRIAL, CAMPUS, {
