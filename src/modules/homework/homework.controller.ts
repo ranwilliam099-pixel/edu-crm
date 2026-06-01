@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  Optional,
   Param,
   Post,
   Req,
@@ -22,7 +23,11 @@ import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { TeacherRepository } from '../db/teacher.repository';
+import { StudentRepository } from '../db/student.repository';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
+// 2026-06-01 同租户 by-student IDOR 修复：listAssignmentsByStudentInDb 缺 owner-scope
+//   （teacher 可读非自己班、sales 可读非自己客户学员作业）→ 复用 contract by-student 同款 scope。
+import { assertStudentByStudentScope } from '../../common/student-scope/student-by-student-scope';
 
 /**
  * HomeworkController — V13 作业管理 HTTP 暴露 BE-V13-1
@@ -47,6 +52,9 @@ export class HomeworkController {
   constructor(
     private readonly service: HomeworkService,
     private readonly teacherRepo: TeacherRepository,
+    // 2026-06-01 by-student IDOR 修复：listAssignmentsByStudentInDb owner-scope 需查 student 归属。
+    //   @Optional + 构造末尾：不破坏现有测试位置参数（由 @Global DbModule 注入，生产 / e2e 必有）。
+    @Optional() private readonly studentRepo?: StudentRepository,
   ) {}
 
   @Post('assignments')
@@ -381,8 +389,45 @@ export class HomeworkController {
   async listAssignmentsByStudentInDb(
     @Param('studentId') studentId: string,
     @Body() body: { tenantSchema: string },
+    @Req() req: AuthenticatedRequest,
   ): Promise<HomeworkAssignment[]> {
+    // 2026-06-01 同租户 by-student IDOR 修复：owner-scope 收口
+    //   - sales 只看自己客户学员作业；teacher 只看自己班（assignedTeacherId）
+    //   - academic/academic_admin/marketing/admin/boss 本校放行；parent c 端 bypass
+    //   - 越权（传他人学员 studentId）→ ForbiddenException
+    await this.assertByStudentScope(studentId, body.tenantSchema, req, 'homework-assignments');
     return this.service.listAssignmentsByStudentInDb(studentId, body.tenantSchema);
+  }
+
+  /**
+   * 2026-06-01 by-student owner-scope 校验（同租户 IDOR 修复）
+   *
+   * 先 studentRepo.findBrief 拿 ownerSalesId / assignedTeacherId，按 actorGroup 判定：
+   *   - sales → ownerSalesId===me；teacher → 反查 teachers.id===assignedTeacherId；
+   *   - admin/academic/finance group → 本校放行；parent c 端 bypass。
+   *
+   * fail-open 兜底：studentRepo 未注入（isolated module test）→ 跳过 scope（仅 @Roles 兜底）。
+   * 学员不存在 → 放行（service 返空，避免 enumeration 侧信道）。
+   */
+  private async assertByStudentScope(
+    studentId: string,
+    tenantSchema: string,
+    req: AuthenticatedRequest,
+    endpoint: string,
+  ): Promise<void> {
+    if (!this.studentRepo) return; // isolated unit test 兜底（生产 @Global 必有）
+    const student = await this.studentRepo.findBrief(tenantSchema, studentId);
+    if (!student) return; // 不存在 → 不泄露存在性
+    await assertStudentByStudentScope(
+      student,
+      req,
+      tenantSchema,
+      (schema, userId) =>
+        this.teacherRepo
+          .findByUserId(schema, userId)
+          .then((t) => t?.id ?? null),
+      { endpoint, studentId },
+    );
   }
 
   /**

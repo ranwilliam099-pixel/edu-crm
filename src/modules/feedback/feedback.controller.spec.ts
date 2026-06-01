@@ -15,13 +15,19 @@ import { LessonFeedbackService } from './lesson-feedback.service';
 import { CourseConsumptionService } from './course-consumption.service';
 import { MonthlyReportService } from './monthly-report.service';
 import { TeacherRepository } from '../db/teacher.repository';
+import { StudentRepository } from '../db/student.repository';
 import { AuditLogRepository } from '../db/audit-log.repository';
 import { ContentModerationService } from '../security/content-moderation.service';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
 describe('FeedbackController — Sprint B self-check', () => {
   let controller: FeedbackController;
-  let feedbackSvc: { findInDb: jest.Mock; submitInDb: jest.Mock; updateInDb: jest.Mock };
+  let feedbackSvc: {
+    findInDb: jest.Mock;
+    submitInDb: jest.Mock;
+    updateInDb: jest.Mock;
+    listByStudentInDb: jest.Mock;
+  };
   let consumptionSvc: Record<string, jest.Mock>;
   let reportSvc: {
     findInDb: jest.Mock;
@@ -30,6 +36,7 @@ describe('FeedbackController — Sprint B self-check', () => {
     listPendingFinalizeInDb: jest.Mock;
   };
   let teacherRepo: { findById: jest.Mock; findByUserId: jest.Mock };
+  let studentRepo: { findBrief: jest.Mock };
   let auditLog: { log: jest.Mock };
   let contentModeration: { enforceStaffText: jest.Mock };
 
@@ -74,7 +81,12 @@ describe('FeedbackController — Sprint B self-check', () => {
   };
 
   beforeEach(() => {
-    feedbackSvc = { findInDb: jest.fn(), submitInDb: jest.fn(), updateInDb: jest.fn() };
+    feedbackSvc = {
+      findInDb: jest.fn(),
+      submitInDb: jest.fn(),
+      updateInDb: jest.fn(),
+      listByStudentInDb: jest.fn().mockResolvedValue([]),
+    };
     consumptionSvc = {};
     reportSvc = {
       findInDb: jest.fn(),
@@ -83,6 +95,7 @@ describe('FeedbackController — Sprint B self-check', () => {
       listPendingFinalizeInDb: jest.fn(),
     };
     teacherRepo = { findById: jest.fn(), findByUserId: jest.fn() };
+    studentRepo = { findBrief: jest.fn() };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     contentModeration = { enforceStaffText: jest.fn().mockResolvedValue(undefined) };
 
@@ -93,6 +106,7 @@ describe('FeedbackController — Sprint B self-check', () => {
       teacherRepo as unknown as TeacherRepository,
       contentModeration as unknown as ContentModerationService,
       auditLog as unknown as AuditLogRepository,
+      studentRepo as unknown as StudentRepository,
     );
   });
 
@@ -639,6 +653,158 @@ describe('FeedbackController — Sprint B self-check', () => {
         ),
       ).rejects.toThrow(BadRequestException);
       expect(reportSvc.finalizeParentInDb).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // 2026-06-01 同租户 by-student IDOR 修复：listFeedbacksByStudentInDb owner-scope
+  //   - teacher 只看自己班学员（assignedTeacherId）；sales 只看自己客户学员（ownerSalesId）
+  //   - academic group / admin / finance 本校放行；parent c 端 bypass；越权 → 403
+  // ============================================================
+  describe('listFeedbacksByStudentInDb — by-student owner-scope（IDOR 修复）', () => {
+    const STUDENT = 'stu00000000000000000000000000S001';
+    const SALES_A = 'salesA0000000000000000000000A001';
+    const SALES_B = 'salesB0000000000000000000000B001';
+
+    // student 归属：默认 owner=SALES_A / assignedTeacher=TEACHER_T1
+    function mockStudent(
+      overrides: Partial<{ ownerSalesId: string | null; assignedTeacherId: string | null }> = {},
+    ) {
+      studentRepo.findBrief.mockResolvedValueOnce({
+        id: STUDENT,
+        studentName: '小明',
+        customerId: 'cust00000000000000000000000000A1',
+        ownerSalesId: SALES_A,
+        assignedTeacherId: TEACHER_T1,
+        ownerChangedAt: null,
+        ownerChangeReason: null,
+        gradeOrAge: null,
+        currentGrade: null,
+        gradeBaseYear: null,
+        intendedSubject: null,
+        ...overrides,
+      });
+    }
+
+    const body = { tenantSchema: TENANT };
+
+    it('teacher 自己班学员（assignedTeacherId === 反查 teachers.id）→ 放行', async () => {
+      mockStudent({ assignedTeacherId: TEACHER_T1 });
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1); // U1 → T1
+      const r = await controller.listFeedbacksByStudentInDb(STUDENT, body, mkReq());
+      expect(r).toEqual([]);
+      expect(feedbackSvc.listByStudentInDb).toHaveBeenCalledWith(
+        STUDENT,
+        TENANT,
+        { limit: undefined, offset: undefined },
+        'teacher',
+      );
+    });
+
+    it('teacher 非自己班学员（assignedTeacherId !== 反查 teachers.id）→ 403，不查反馈', async () => {
+      mockStudent({ assignedTeacherId: TEACHER_T2 }); // 学员归 T2
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1); // 调用者反查得 T1
+      await expect(
+        controller.listFeedbacksByStudentInDb(STUDENT, body, mkReq()),
+      ).rejects.toThrow(ForbiddenException);
+      expect(feedbackSvc.listByStudentInDb).not.toHaveBeenCalled();
+    });
+
+    it('teacher 未绑 teachers 档案 → 403', async () => {
+      mockStudent();
+      teacherRepo.findByUserId.mockResolvedValueOnce(null);
+      await expect(
+        controller.listFeedbacksByStudentInDb(STUDENT, body, mkReq()),
+      ).rejects.toThrow(ForbiddenException);
+      expect(feedbackSvc.listByStudentInDb).not.toHaveBeenCalled();
+    });
+
+    it('sales 自己客户学员（ownerSalesId === me）→ 放行', async () => {
+      mockStudent({ ownerSalesId: SALES_A });
+      const r = await controller.listFeedbacksByStudentInDb(
+        STUDENT,
+        body,
+        mkReq({ user: { sub: SALES_A, role: 'sales', tenantId: 't', campusId: 'c' } }),
+      );
+      expect(r).toEqual([]);
+      expect(feedbackSvc.listByStudentInDb).toHaveBeenCalledWith(
+        STUDENT,
+        TENANT,
+        { limit: undefined, offset: undefined },
+        'sales',
+      );
+      // sales 不走 teacher 反查
+      expect(teacherRepo.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it('sales 他人客户学员（ownerSalesId !== me）→ 403，不查反馈', async () => {
+      mockStudent({ ownerSalesId: SALES_B });
+      await expect(
+        controller.listFeedbacksByStudentInDb(
+          STUDENT,
+          body,
+          mkReq({ user: { sub: SALES_A, role: 'sales', tenantId: 't', campusId: 'c' } }),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(feedbackSvc.listByStudentInDb).not.toHaveBeenCalled();
+    });
+
+    it('academic 本校任意学员 → 放行（不 owner 收口）', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      const r = await controller.listFeedbacksByStudentInDb(
+        STUDENT,
+        body,
+        mkReq({ user: { sub: 'acd000000000000000000000000A001', role: 'academic', tenantId: 't', campusId: 'c' } }),
+      );
+      expect(r).toEqual([]);
+      expect(feedbackSvc.listByStudentInDb).toHaveBeenCalledTimes(1);
+    });
+
+    it('marketing 本校任意学员 → 放行（academic group）', async () => {
+      mockStudent({ ownerSalesId: SALES_B });
+      await controller.listFeedbacksByStudentInDb(
+        STUDENT,
+        body,
+        mkReq({ user: { sub: 'mkt000000000000000000000000M001', role: 'marketing', tenantId: 't', campusId: 'c' } }),
+      );
+      expect(feedbackSvc.listByStudentInDb).toHaveBeenCalledTimes(1);
+    });
+
+    it('admin 任意学员 → 放行', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      await controller.listFeedbacksByStudentInDb(
+        STUDENT,
+        body,
+        mkReq({ user: { sub: 'adm000000000000000000000000A001', role: 'admin', tenantId: null, campusId: null } }),
+      );
+      expect(feedbackSvc.listByStudentInDb).toHaveBeenCalledTimes(1);
+    });
+
+    it('parent c 端流（req.parent）→ bypass（绑定已 middleware 校验）', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      await controller.listFeedbacksByStudentInDb(
+        STUDENT,
+        body,
+        mkReq({
+          user: { sub: 'parent000000000000000000000P001', role: 'parent' as any, tenantId: 't', campusId: null },
+          parent: { sub: 'parent000000000000000000000P001', parentId: 'parent000000000000000000000P001', role: 'parent' },
+        }),
+      );
+      // bypass：仍走 service（service 层按 role='parent' 剥离 teacherInternalNote）
+      expect(feedbackSvc.listByStudentInDb).toHaveBeenCalledTimes(1);
+      // parent bypass：不做 teacher own-class 反查（findBrief 仍读但 verdict 直接放行）
+      expect(teacherRepo.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it('学员不存在（findBrief=null）→ 放行（避免 enumeration 侧信道，service 返空）', async () => {
+      studentRepo.findBrief.mockResolvedValueOnce(null);
+      const r = await controller.listFeedbacksByStudentInDb(
+        STUDENT,
+        body,
+        mkReq({ user: { sub: SALES_A, role: 'sales', tenantId: 't', campusId: 'c' } }),
+      );
+      expect(r).toEqual([]);
+      expect(feedbackSvc.listByStudentInDb).toHaveBeenCalledTimes(1);
     });
   });
 });

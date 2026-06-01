@@ -40,9 +40,11 @@
  * 学到的范式：精确 toHaveBeenCalledWith / rejects.toThrow / 时间 mock Date.now
  */
 
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { LeaveController } from './leave.controller';
 import { LeaveRepository, Leave, LeaveType } from './leave.repository';
+import { StudentRepository } from './student.repository';
+import { TeacherRepository } from './teacher.repository';
 import { ContentModerationService } from '../security/content-moderation.service';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 
@@ -55,6 +57,8 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
     reject: jest.Mock;
   };
   let contentModeration: { enforceStaffText: jest.Mock };
+  let studentRepo: { findBrief: jest.Mock };
+  let teacherRepo: { findByUserId: jest.Mock };
 
   // 32-char ULID 固定值
   const TENANT_SCHEMA = 'tenant_leave000000000000000000ab01';
@@ -93,9 +97,13 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
     contentModeration = {
       enforceStaffText: jest.fn().mockResolvedValue(undefined),
     };
+    studentRepo = { findBrief: jest.fn() };
+    teacherRepo = { findByUserId: jest.fn() };
     controller = new LeaveController(
       leaveRepo as unknown as LeaveRepository,
       contentModeration as unknown as ContentModerationService,
+      studentRepo as unknown as StudentRepository,
+      teacherRepo as unknown as TeacherRepository,
     );
 
     jest.spyOn(Date, 'now').mockReturnValue(NOW_MS);
@@ -452,6 +460,150 @@ describe('LeaveController (5/20 stryker 0% coverage 修补)', () => {
         STUDENT_ID,
         0,
       );
+    });
+  });
+
+  // ============================================================
+  // 2026-06-01 同租户 by-student IDOR 修复：listByStudent owner-scope
+  //   请假记录含家长/学员请假理由（隐私）→ teacher 只看自己班、sales 只看自己客户学员，
+  //   academic group / admin / finance 本校放行，parent c 端 bypass，越权 → 403。
+  // ============================================================
+  describe('listByStudent() — by-student owner-scope（IDOR 修复）', () => {
+    const SALES_A = 'salesA0000000000000000000000A001';
+    const SALES_B = 'salesB0000000000000000000000B001';
+    const TEACHER_T1 = 'tch00000000000000000000000000T001';
+    const TEACHER_T2 = 'tch00000000000000000000000000T002';
+    const USER_U1 = 'usr00000000000000000000000000U001';
+
+    const baseTeacherT1 = {
+      id: TEACHER_T1,
+      campusId: 'campus_a_00000000000000000000A001',
+      name: 'T1',
+      userId: USER_U1,
+      subjects: ['数学'],
+      status: '在职' as const,
+    };
+
+    function mockStudent(
+      overrides: Partial<{ ownerSalesId: string | null; assignedTeacherId: string | null }> = {},
+    ) {
+      studentRepo.findBrief.mockResolvedValueOnce({
+        id: STUDENT_ID,
+        studentName: '小刚',
+        customerId: 'cust00000000000000000000000000L1',
+        ownerSalesId: SALES_A,
+        assignedTeacherId: TEACHER_T1,
+        ownerChangedAt: null,
+        ownerChangeReason: null,
+        gradeOrAge: null,
+        currentGrade: null,
+        gradeBaseYear: null,
+        intendedSubject: null,
+        ...overrides,
+      });
+    }
+
+    const scReq = (overrides: Partial<AuthenticatedRequest> = {}): AuthenticatedRequest =>
+      ({
+        user: { sub: USER_U1, role: 'teacher', tenantId: 't', campusId: 'c' },
+        ip: '1.2.3.4',
+        headers: {},
+        ...overrides,
+      }) as AuthenticatedRequest;
+
+    it('teacher 自己班学员 → 放行', async () => {
+      mockStudent({ assignedTeacherId: TEACHER_T1 });
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      leaveRepo.findByStudent.mockResolvedValueOnce([]);
+      await controller.listByStudent(STUDENT_ID, TENANT_SCHEMA, {}, scReq());
+      expect(leaveRepo.findByStudent).toHaveBeenCalledWith(TENANT_SCHEMA, STUDENT_ID, 50);
+    });
+
+    it('teacher 非自己班学员 → 403，不查请假', async () => {
+      mockStudent({ assignedTeacherId: TEACHER_T2 });
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      await expect(
+        controller.listByStudent(STUDENT_ID, TENANT_SCHEMA, {}, scReq()),
+      ).rejects.toThrow(ForbiddenException);
+      expect(leaveRepo.findByStudent).not.toHaveBeenCalled();
+    });
+
+    it('sales 自己客户学员 → 放行', async () => {
+      mockStudent({ ownerSalesId: SALES_A });
+      leaveRepo.findByStudent.mockResolvedValueOnce([]);
+      await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        {},
+        scReq({ user: { sub: SALES_A, role: 'sales', tenantId: 't', campusId: 'c' } }),
+      );
+      expect(leaveRepo.findByStudent).toHaveBeenCalledTimes(1);
+      expect(teacherRepo.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it('sales 他人客户学员 → 403，不查请假', async () => {
+      mockStudent({ ownerSalesId: SALES_B });
+      await expect(
+        controller.listByStudent(
+          STUDENT_ID,
+          TENANT_SCHEMA,
+          {},
+          scReq({ user: { sub: SALES_A, role: 'sales', tenantId: 't', campusId: 'c' } }),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(leaveRepo.findByStudent).not.toHaveBeenCalled();
+    });
+
+    it('academic 本校任意学员 → 放行', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      leaveRepo.findByStudent.mockResolvedValueOnce([]);
+      await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        {},
+        scReq({ user: { sub: 'acd000000000000000000000000A001', role: 'academic', tenantId: 't', campusId: 'c' } }),
+      );
+      expect(leaveRepo.findByStudent).toHaveBeenCalledTimes(1);
+    });
+
+    it('admin 任意学员 → 放行', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      leaveRepo.findByStudent.mockResolvedValueOnce([]);
+      await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        {},
+        scReq({ user: { sub: 'adm000000000000000000000000A001', role: 'admin', tenantId: null, campusId: null } }),
+      );
+      expect(leaveRepo.findByStudent).toHaveBeenCalledTimes(1);
+    });
+
+    it('parent c 端流（req.parent）→ bypass（绑定已 middleware 校验）', async () => {
+      mockStudent({ ownerSalesId: SALES_B, assignedTeacherId: TEACHER_T2 });
+      leaveRepo.findByStudent.mockResolvedValueOnce([]);
+      await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        {},
+        scReq({
+          user: { sub: 'parent000000000000000000000P001', role: 'parent' as any, tenantId: 't', campusId: null },
+          parent: { sub: 'parent000000000000000000000P001', parentId: 'parent000000000000000000000P001', role: 'parent' },
+        }),
+      );
+      expect(leaveRepo.findByStudent).toHaveBeenCalledTimes(1);
+      expect(teacherRepo.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it('学员不存在（findBrief=null）→ 放行（避免 enumeration 侧信道）', async () => {
+      studentRepo.findBrief.mockResolvedValueOnce(null);
+      leaveRepo.findByStudent.mockResolvedValueOnce([]);
+      await controller.listByStudent(
+        STUDENT_ID,
+        TENANT_SCHEMA,
+        {},
+        scReq({ user: { sub: SALES_A, role: 'sales', tenantId: 't', campusId: 'c' } }),
+      );
+      expect(leaveRepo.findByStudent).toHaveBeenCalledTimes(1);
     });
   });
 

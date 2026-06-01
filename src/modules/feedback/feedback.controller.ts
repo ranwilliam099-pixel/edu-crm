@@ -40,7 +40,11 @@ import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.int
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
 import { ActorRole, AuditLogRepository, normalizeActorRole } from '../db/audit-log.repository';
 import { TeacherRepository } from '../db/teacher.repository';
+import { StudentRepository } from '../db/student.repository';
 import { ContentModerationService } from '../security/content-moderation.service';
+// 2026-06-01 同租户 by-student IDOR 修复：listByStudent 缺 owner-scope（teacher 可读非自己班、
+//   sales 可读非自己客户学员反馈）→ 复用 contract by-student 同款 scope（抽成共享 helper）。
+import { assertStudentByStudentScope } from '../../common/student-scope/student-by-student-scope';
 
 /**
  * FeedbackController — V9 教学反馈 + 课消 + 月报 HTTP 暴露 BE-V9-1/2/3
@@ -74,6 +78,11 @@ export class FeedbackController {
     //   - @Optional：unit spec 直接 new 时可传 undefined（不破坏现有 spec test）
     //   - fail-open：audit_log 写失败不阻塞主 ForbiddenException
     @Optional() private readonly auditLog?: AuditLogRepository,
+    // 2026-06-01 by-student IDOR 修复：listByStudent owner-scope 需查 student 归属
+    //   （ownerSalesId / assignedTeacherId）。放构造末尾 + @Optional：现有 spec 的位置参数
+    //   new FeedbackController(...) 6 参不破坏（第 7 参 undefined）；由 @Global DbModule 注入，
+    //   生产 / e2e 必有。
+    @Optional() private readonly studentRepo?: StudentRepository,
   ) {}
 
   // ==================== LessonFeedback ====================
@@ -447,6 +456,13 @@ export class FeedbackController {
     @Body() body: { tenantSchema: string; limit?: number; offset?: number },
     @Req() req: AuthenticatedRequest,
   ): Promise<LessonFeedback[]> {
+    // 2026-06-01 同租户 by-student IDOR 修复：owner-scope 收口
+    //   - sales 只看 student.ownerSalesId === 自己 的学员；teacher 只看自己班（assignedTeacherId）
+    //   - academic/academic_admin/marketing/admin/boss/finance 本校放行；parent c 端 bypass
+    //   - 越权（传他人学员 studentId）→ ForbiddenException
+    //   注：scope 是「可见范围」收口，正常流各角色本就只导航到自己范围的学员，不误伤。
+    await this.assertByStudentScope(studentId, body.tenantSchema, req, 'feedbacks');
+
     // 2026-05-31 SSOT §5.1: 透传 caller role → service 逐条剥离 teacherInternalNote
     //   - sales / sales_manager 不可见老师内部备注
     //   - parent 经 c 端 isParentDbPath 分流（/api/db/students/:id/feedbacks），role='parent' → 剥离
@@ -455,6 +471,37 @@ export class FeedbackController {
       body.tenantSchema,
       { limit: body.limit, offset: body.offset },
       req.user?.role,
+    );
+  }
+
+  /**
+   * 2026-06-01 by-student owner-scope 校验（同租户 IDOR 修复）
+   *
+   * 先 studentRepo.findBrief 拿 ownerSalesId / assignedTeacherId，再按 actorGroup 判定：
+   *   - sales → ownerSalesId===me；teacher → 反查 teachers.id===assignedTeacherId；
+   *   - admin/academic/finance group → 本校放行；parent c 端 bypass。
+   *
+   * fail-open 兜底：studentRepo 未注入（isolated module unit spec）→ 跳过 scope（仅 @Roles 兜底）。
+   * 学员不存在 → 放行（service 返空，避免 enumeration 侧信道，与 contract by-student 一致语义）。
+   */
+  private async assertByStudentScope(
+    studentId: string,
+    tenantSchema: string,
+    req: AuthenticatedRequest,
+    endpoint: string,
+  ): Promise<void> {
+    if (!this.studentRepo) return; // isolated unit spec 兜底（生产 @Global 必有）
+    const student = await this.studentRepo.findBrief(tenantSchema, studentId);
+    if (!student) return; // 不存在 → 不泄露存在性，service 自然返空
+    await assertStudentByStudentScope(
+      student,
+      req,
+      tenantSchema,
+      (schema, userId) =>
+        this.teacherRepo
+          .findByUserId(schema, userId)
+          .then((t) => t?.id ?? null),
+      { endpoint, studentId },
     );
   }
 

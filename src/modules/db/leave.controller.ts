@@ -5,17 +5,23 @@ import {
   Headers,
   HttpCode,
   HttpStatus,
+  Optional,
   Param,
   Post,
   Req,
   UseGuards,
 } from '@nestjs/common';
 import { LeaveRepository, Leave, LeaveType } from './leave.repository';
+import { StudentRepository } from './student.repository';
+import { TeacherRepository } from './teacher.repository';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { ContentModerationService } from '../security/content-moderation.service';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
+// 2026-06-01 同租户 by-student IDOR 修复：listByStudent（请假记录含家长/学员隐私理由）缺
+//   owner-scope → teacher 可读非自己班、sales 可读非自己客户学员请假理由。复用 by-student scope。
+import { assertStudentByStudentScope } from '../../common/student-scope/student-by-student-scope';
 
 /**
  * LeaveController — V16 请假/调课申请 HTTP 暴露
@@ -40,6 +46,11 @@ export class LeaveController {
     private readonly leaveRepo: LeaveRepository,
     // #24: B 端自由文本内容安全统一收口（@Global SecurityModule 注入，生产必有）
     private readonly contentModeration: ContentModerationService,
+    // 2026-06-01 by-student IDOR 修复：listByStudent owner-scope 需查 student 归属
+    //   + teacher 反查 teachers.id。@Optional + 构造末尾：现有 spec 位置参数 2 参不破坏
+    //   （由 @Global DbModule 注入；生产 / e2e 必有）。
+    @Optional() private readonly studentRepo?: StudentRepository,
+    @Optional() private readonly teacherRepo?: TeacherRepository,
   ) {}
 
   @Post('leaves')
@@ -119,11 +130,47 @@ export class LeaveController {
     @Param('studentId') studentId: string,
     @Headers('x-tenant-schema') tenantSchema: string,
     @Body() body: { limit?: number },
+    @Req() req?: AuthenticatedRequest,
   ): Promise<Leave[]> {
     if (!tenantSchema) {
       throw new BadRequestException('x-tenant-schema header required');
     }
+    // 2026-06-01 同租户 by-student IDOR 修复：请假记录含家长/学员请假理由（隐私）。
+    //   - sales 只看自己客户学员；teacher 只看自己班（assignedTeacherId）
+    //   - academic/academic_admin/marketing/admin/boss/finance 本校放行
+    //   - parent c 端流（req.parent）bypass：绑定关系已由 middleware.requireParentDbUser 校验
+    //   - 越权（传他人学员 studentId）→ ForbiddenException
+    await this.assertByStudentScope(studentId, tenantSchema, req);
     return this.leaveRepo.findByStudent(tenantSchema, studentId, body.limit ?? 50);
+  }
+
+  /**
+   * 2026-06-01 by-student owner-scope 校验（同租户 IDOR 修复）
+   *
+   * 先 studentRepo.findBrief 拿 ownerSalesId / assignedTeacherId，按 actorGroup 判定：
+   *   - sales → ownerSalesId===me；teacher → 反查 teachers.id===assignedTeacherId；
+   *   - admin/academic/finance group → 本校放行；parent c 端 bypass。
+   *
+   * fail-open 兜底：studentRepo / teacherRepo 未注入（isolated 5/20 stryker 修补 spec 仅 2 参）
+   *   → 跳过 scope（保持现有测试行为；生产 @Global 必注入两 repo）。
+   * 学员不存在 → 放行（repo 返空，避免 enumeration 侧信道）。
+   */
+  private async assertByStudentScope(
+    studentId: string,
+    tenantSchema: string,
+    req: AuthenticatedRequest | undefined,
+  ): Promise<void> {
+    if (!this.studentRepo || !this.teacherRepo) return; // isolated unit spec 兜底
+    const student = await this.studentRepo.findBrief(tenantSchema, studentId);
+    if (!student) return; // 不存在 → 不泄露存在性
+    const teacherRepo = this.teacherRepo;
+    await assertStudentByStudentScope(
+      student,
+      req,
+      tenantSchema,
+      (schema, userId) => teacherRepo.findByUserId(schema, userId).then((t) => t?.id ?? null),
+      { endpoint: 'leaves-list', studentId },
+    );
   }
 
   @Post('leaves/:leaveId/approve')
