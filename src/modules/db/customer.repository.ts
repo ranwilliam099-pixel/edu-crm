@@ -116,6 +116,39 @@ export interface CreateCustomerResult {
   studentId: string | null;
 }
 
+/**
+ * 阶段 B（2026-05-31 SSOT §6 customer.bulkUpload）：市场上传客户清单到公海，单行入参
+ *   - parentName / phone 必填（phone 11 位中国手机号 + 按 phone 去重）
+ *   - studentName 必填（opportunities.student_id NOT NULL；池里供销售认领需有学员可跟）
+ *   - sourceLevel1 可选 → opportunities.source（无则默认「市场批量导入」）
+ */
+export interface BulkPoolImportRow {
+  parentName: string;
+  phone: string;
+  studentName?: string;
+  gradeOrAge?: string;
+  intendedSubject?: string;
+  sourceLevel1?: string;
+}
+
+/**
+ * 阶段 B：市场批量入公海单行处理结果（逐条容错，单行失败不回滚整批）
+ *   - status='created'：customer + student + opportunity 三表写入成功（入池）
+ *   - status='skipped'：phone 已存在（同租户 primary_mobile_hash / 明文命中）→ 跳过
+ *   - status='error'：校验失败 / 写库失败 → 记 reason（其它行继续）
+ */
+export interface BulkPoolImportRowResult {
+  index: number;
+  status: 'created' | 'skipped' | 'error';
+  reason?: string;
+}
+
+export interface BulkPoolImportResult {
+  created: number;
+  skipped: number;
+  errors: Array<{ index: number; reason: string }>;
+}
+
 @Injectable()
 export class CustomerRepository {
   private readonly logger = new Logger(CustomerRepository.name);
@@ -379,6 +412,187 @@ export class CustomerRepository {
         throw new ConflictException('数据冲突，请检查输入');
       }
       throw err;
+    }
+  }
+
+  /**
+   * 阶段 B（2026-05-31 SSOT §6 customer.bulkUpload，市场独有）：
+   *   市场批量导入客户清单 **入公海**（owner_user_id=NULL），供销售认领。
+   *
+   * 每行建完整可认领链：
+   *   customers（家长，owner_id=NULL）→ students（学员）→ opportunities（公海线索）
+   *   opportunities：owner_user_id=NULL + entered_pool_at=NOW() + enter_pool_reason='市场批量导入'
+   *                  + stage='初步接触' + source=sourceLevel1（无则「市场批量导入」）
+   *
+   * 为何需要建 student：
+   *   opportunities.student_id NOT NULL（FK students）+ 公海列表 listPool 查 opportunities
+   *   → 没有 student 就形不成可认领的池条目。故 studentName 在行级必填（缺失 → errors）。
+   *   不做「{parentName}的孩子」假名兜底（与 §6.1 学员姓名真实性一致）。
+   *
+   * 去重（phone）：
+   *   写库前按 primary_mobile_hash（V41 生产路径）+ 明文 fallback（兼容期）查 customers，
+   *   命中即跳过该行（计 skipped），不新建重复客户。
+   *
+   * 逐条容错（非整批一个事务）：
+   *   每行独立 pg.transaction → 单行失败仅回滚该行 + 记 errors，其它行继续。
+   *   部分链失败（customer 入但 student 抛）→ 该行事务整体 ROLLBACK，不留半截脏数据。
+   *
+   * PII：primary_mobile 三写（明文 + HMAC hash + AES-GCM encrypted），与 createWithOpportunity 同。
+   * opportunities.phone 同步双写（明文 + phone_encrypted），与销售线一致，便于销售认领后看联系方式。
+   *
+   * @param campusId 从 JWT 透传（controller 层取 req.user.campusId，不收 body 防伪造）
+   * @param operatorUserId 市场操作人（created_by / updated_by；owner_id 仍为 NULL 入池）
+   */
+  async bulkPoolImport(
+    tenantSchema: string,
+    rows: ReadonlyArray<BulkPoolImportRow>,
+    options: { campusId: string; operatorUserId: string },
+  ): Promise<BulkPoolImportResult> {
+    if (!options.campusId) throw new BadRequestException('campusId required');
+    if (!options.operatorUserId) throw new BadRequestException('operatorUserId required');
+
+    const result: BulkPoolImportResult = { created: 0, skipped: 0, errors: [] };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowResult = await this.importOnePoolRow(tenantSchema, row, options, i);
+      if (rowResult.status === 'created') result.created++;
+      else if (rowResult.status === 'skipped') result.skipped++;
+      else result.errors.push({ index: i, reason: rowResult.reason || 'unknown error' });
+    }
+
+    return result;
+  }
+
+  /**
+   * 阶段 B：单行入公海（独立事务，逐条容错）。返回行级结果不抛（除非 schema 非法）。
+   *   - 行内校验失败（parentName/phone/studentName 缺、phone 非法）→ status='error'（不进事务）
+   *   - phone 去重命中 → status='skipped'
+   *   - 写库异常（含并发 23505 unique 冲突）→ status='error' + 友好 reason
+   *
+   * public：controller 按行编排（每行先过内容安全再调本方法），保持 index/error 对齐。
+   */
+  async importOnePoolRow(
+    tenantSchema: string,
+    row: BulkPoolImportRow,
+    options: { campusId: string; operatorUserId: string },
+    index = 0,
+  ): Promise<BulkPoolImportRowResult> {
+    // ---- 行级校验（不进事务，省 DB 往返）----
+    const parentName = (row.parentName || '').trim();
+    const phone = (row.phone || '').trim();
+    const studentName = (row.studentName || '').trim();
+    if (!parentName) return { index, status: 'error', reason: 'parentName 必填' };
+    if (!phone) return { index, status: 'error', reason: 'phone 必填' };
+    if (!/^1[3-9]\d{9}$/.test(phone)) {
+      return { index, status: 'error', reason: 'phone 必须是 11 位中国手机号' };
+    }
+    // opportunities.student_id NOT NULL → 入池需有学员（不做假名兜底，§6.1）
+    if (!studentName) {
+      return { index, status: 'error', reason: 'studentName 必填（公海线索需关联学员供销售认领）' };
+    }
+
+    const mobileHash = this.hashMobile(phone);
+    const mobileEncrypted = this.encryptMobile(phone);
+    const phoneEncrypted = this.encryptPhone(phone);
+
+    try {
+      return await this.pg.transaction(
+        async (client) => {
+          // 1. phone 去重（hash 优先 + 明文 fallback，兼容期 backfill 未完成的老行）
+          let existing = await client.query(
+            `SELECT id FROM customers WHERE primary_mobile_hash = $1 LIMIT 1`,
+            [mobileHash],
+          );
+          if (!existing.rowCount || existing.rowCount === 0) {
+            existing = await client.query(
+              `SELECT id FROM customers WHERE primary_mobile = $1 LIMIT 1`,
+              [phone],
+            );
+          }
+          if (existing.rowCount && existing.rowCount > 0) {
+            return { index, status: 'skipped' as const };
+          }
+
+          // 2. customer（家长）— owner_id=NULL 入池；三写 primary_mobile
+          const customerId = this.genId();
+          await client.query(
+            `INSERT INTO customers (
+               id, parent_name,
+               primary_mobile, primary_mobile_hash, primary_mobile_encrypted,
+               campus_id, owner_id, source_level1, created_by, updated_by
+             ) VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $8)`,
+            [
+              customerId,
+              parentName,
+              phone,
+              mobileHash,
+              mobileEncrypted,
+              options.campusId,
+              row.sourceLevel1 || null,
+              options.operatorUserId,
+            ],
+          );
+
+          // 3. student（学员）— 关联 customer；owner_sales_id=NULL（公海未认领）
+          const studentId = this.genId();
+          await client.query(
+            `INSERT INTO students
+               (id, student_name, customer_id, grade_or_age, intended_subject,
+                owner_sales_id, created_by, updated_by)
+             VALUES ($1, $2, $3, $4, $5, NULL, $6, $6)`,
+            [
+              studentId,
+              studentName,
+              customerId,
+              row.gradeOrAge || null,
+              row.intendedSubject || null,
+              options.operatorUserId,
+            ],
+          );
+
+          // 4. opportunity（公海线索）— owner_user_id=NULL + 入池标记
+          //    phone 双写（明文 + phone_encrypted）；stage 初步接触
+          const opportunityId = this.genId();
+          await client.query(
+            `INSERT INTO opportunities
+               (id, student_id, course_product_id, stage, owner_user_id, campus_id,
+                source, phone, phone_encrypted,
+                entered_pool_at, enter_pool_reason, last_contact_at, note,
+                created_by, updated_by)
+             VALUES ($1, $2, NULL, '初步接触', NULL, $3, $4, $5, $6,
+                     NOW(), '市场批量导入', NULL, NULL, $7, $7)`,
+            [
+              opportunityId,
+              studentId,
+              options.campusId,
+              row.sourceLevel1 || '市场批量导入',
+              phone,
+              phoneEncrypted,
+              options.operatorUserId,
+            ],
+          );
+
+          return { index, status: 'created' as const };
+        },
+        { tenantSchema },
+      );
+    } catch (err) {
+      // 并发场景：两次导入同手机号竞态 → 23505 unique_violation → 视为去重跳过
+      if (err && (err as { code?: string }).code === '23505') {
+        const constraint = (err as { constraint?: string }).constraint || '';
+        const detail = (err as { detail?: string }).detail || '';
+        if (constraint.includes('primary_mobile') || detail.includes('primary_mobile')) {
+          return { index, status: 'skipped' };
+        }
+        return { index, status: 'error', reason: '数据冲突，请检查输入' };
+      }
+      // 其它写库异常 → 行级 error（不阻断其它行）
+      this.logger.warn(
+        `[bulkPoolImport] row ${index} insert failed: ${(err as Error).message}`,
+      );
+      // 安全：不把 DB error message（可能含表/列名/约束 detail）回显给调用方；明细仅留 logger.warn
+      return { index, status: 'error', reason: '写库失败，请重试' };
     }
   }
 
@@ -907,11 +1121,9 @@ export class CustomerRepository {
 
   // ===== Helper =====
   private genId(): string {
-    // 32-char ULID-style（与项目其他地方一致）
-    const chars = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-    let s = '';
-    for (let i = 0; i < 32; i++) s += chars[Math.floor(Math.random() * chars.length)];
-    return s;
+    // 5/31 教训：新建路径 id 必用 ulid().padEnd(32,'0').slice(0,32)（全库 genId32 约定）；
+    //   原 Math.random 分布可预测、高并发碰撞概率高于 ULID。
+    return ulid().padEnd(32, '0').slice(0, 32);
   }
 
   // =====================================================================

@@ -13,6 +13,7 @@ import {
   Query,
   Req,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   CustomerRepository,
@@ -20,7 +21,10 @@ import {
   CreateCustomerResult,
   FollowEntry,
   FollowType,
+  BulkPoolImportRow,
+  BulkPoolImportResult,
 } from './customer.repository';
+import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { ParentService } from '../parent/parent.service';
 import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { AuthenticatedRequest, JwtPayload } from '../auth/jwt-payload.interface';
@@ -35,6 +39,13 @@ import { maskCustomer, canAccessCustomer, actorGroupOf } from '../../common/role
 import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.repository';
 // #24 (2026-05-30): B 端自由文本内容安全统一收口（@Global SecurityModule 注入，生产必有）
 import { ContentModerationService } from '../security/content-moderation.service';
+
+/**
+ * 阶段 B（2026-05-31 SSOT §6 customer.bulkUpload）：市场批量入公海单次上限。
+ *   - 防 DoS：单次请求行数硬上限 200（超出整批 400 拒绝，前端分批）
+ *   - 与 student-import 的 500 不同：入公海每行 3 表 3 写 + 1 次内容安全更重，取更保守 200
+ */
+const MAX_BULK_POOL_IMPORT_ROWS = 200;
 
 /**
  * CustomerController — V25 销售客户管理 HTTP 暴露
@@ -143,6 +154,124 @@ export class CustomerController {
     } catch {
       // fail-open: audit 写失败不阻塞主业务（AuditLogRepository.log 内部已 catch，再加一层兜底）
     }
+  }
+
+  /**
+   * 阶段 B（2026-05-31 SSOT §6 customer.bulkUpload，市场独有）：
+   *   市场上传客户清单 **入公海**（owner_user_id=NULL），供销售认领。
+   *
+   * URL: POST /api/db/customers/bulk-pool-import
+   * Body: { tenantId, tenantSchema, customers: [{ parentName, phone, studentName?,
+   *          gradeOrAge?, intendedSubject?, sourceLevel1? }] }
+   *
+   * 行为（逐条容错）：
+   *   - campus_id 从 JWT（req.user.campusId），**不收 body**（防伪造）。
+   *   - 每行：先过微信内容安全（自由文本 parentName/studentName/sourceLevel1）→ 命中违规该行计
+   *     errors 不阻断其它行；再建 customers(owner=NULL)+students+opportunities(入池) 链。
+   *   - phone 必填 + 11 位中国手机号 + 按 phone 去重（同租户已存在 → skipped）。
+   *   - studentName 行级必填（opportunities 需关联学员供认领，不做假名兜底）。
+   *
+   * RBAC（SSOT §6 customer.bulkUpload）：marketing / boss / admin
+   *   - 市场**只入池**，不能 create 归己客户（归己路径是 POST /db/customers，@Roles 不含 marketing）。
+   *
+   * audit_log：'customer.bulk_pool_import'（记 created/skipped/error count + operator，不含 PII 明文）。
+   *
+   * 返回 { created, skipped, errors:[{ index, reason }] }。
+   */
+  @Post('bulk-pool-import')
+  @UseGuards(RbacGuard)
+  @UseInterceptors(IdempotencyInterceptor)
+  @Roles('marketing', 'boss', 'admin')
+  @HttpCode(HttpStatus.OK)
+  async bulkPoolImport(
+    @Body()
+    body: {
+      tenantId: string;
+      tenantSchema: string;
+      customers: BulkPoolImportRow[];
+    },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<BulkPoolImportResult> {
+    if (!body.tenantSchema) throw new BadRequestException('tenantSchema required');
+    const operatorUserId = req.user?.sub;
+    if (!operatorUserId) throw new BadRequestException('user sub required');
+    // campus 从 JWT（不收 body 防伪造）；marketing 是单校角色必有 campusId
+    const campusId = req.user?.campusId;
+    if (!campusId) {
+      throw new BadRequestException('campusId required (从 JWT 取，marketing 单校角色应有 campusId)');
+    }
+    const customers = body.customers;
+    if (!Array.isArray(customers) || customers.length === 0) {
+      throw new BadRequestException('customers 必须是非空数组');
+    }
+    // 防 DoS：单次上限校验在任何写库前
+    if (customers.length > MAX_BULK_POOL_IMPORT_ROWS) {
+      throw new BadRequestException(
+        `单次最多导入 ${MAX_BULK_POOL_IMPORT_ROWS} 条（当前 ${customers.length}），请分批`,
+      );
+    }
+
+    const result: BulkPoolImportResult = { created: 0, skipped: 0, errors: [] };
+
+    // 逐条编排：每行先内容安全后入库，保持 index/error 对齐
+    for (let i = 0; i < customers.length; i++) {
+      const row = customers[i];
+
+      // #24 内容安全：自由文本逐行检测（risky → 该行 errors，不阻断其它行）
+      //   parentName/studentName 是实名但市场批量来源不可信（外部清单），纳入检测；
+      //   sourceLevel1 是渠道自由文本。命中 risky（reject）抛 400 → 本行计 errors 后 continue。
+      try {
+        await this.contentModeration.enforceStaffText(
+          body.tenantSchema,
+          [row?.parentName, row?.studentName, row?.sourceLevel1],
+          {
+            action: 'customer.bulk_pool_import',
+            targetType: 'customer',
+            targetId: null,
+            req,
+          },
+        );
+      } catch (err) {
+        if (err instanceof BadRequestException) {
+          result.errors.push({ index: i, reason: '内容不合规' });
+          continue;
+        }
+        // 非业务拒绝（理论上 enforceStaffText 已 fail-open 吞掉网络错）→ 保守计 error 不阻断
+        result.errors.push({ index: i, reason: (err as Error).message || 'moderation error' });
+        continue;
+      }
+
+      // 入库（独立事务，单行容错）
+      const rowResult = await this.repo.importOnePoolRow(
+        body.tenantSchema,
+        row,
+        { campusId, operatorUserId },
+        i,
+      );
+      if (rowResult.status === 'created') result.created++;
+      else if (rowResult.status === 'skipped') result.skipped++;
+      else result.errors.push({ index: i, reason: rowResult.reason || 'unknown error' });
+    }
+
+    // audit_log（不含 PII 明文；记 count + operator + campus）
+    await this.tryAudit(body.tenantSchema, {
+      actorUserId: operatorUserId,
+      ...this.auditCtx(req),
+      action: 'customer.bulk_pool_import',
+      targetType: 'customer',
+      targetId: null,
+      before: null,
+      after: {
+        created: result.created,
+        skipped: result.skipped,
+        errorCount: result.errors.length,
+        total: customers.length,
+        campusId,
+        operatorUserId,
+      },
+    });
+
+    return result;
   }
 
   /**

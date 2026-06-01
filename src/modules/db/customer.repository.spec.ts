@@ -477,4 +477,191 @@ describe('CustomerRepository (V25 + V34 字段加密双写双读 + V41 customers
       expect(r.salesName).toBeNull();
     });
   });
+
+  // =====================================================================
+  // 阶段 B (2026-05-31 SSOT §6 customer.bulkUpload，市场独有)
+  //   bulkPoolImport / importOnePoolRow — 市场上传客户清单入公海
+  //   覆盖：成功入池 owner=NULL + entered_pool_at + enter_pool_reason='市场批量导入' /
+  //         phone 去重 skip（hash + 明文 fallback）/ 非法 phone+缺字段 行级 error /
+  //         三写 primary_mobile + 双写 phone / 单行失败不阻断 / 23505 竞态视为 skip
+  // =====================================================================
+  describe('阶段 B bulkPoolImport / importOnePoolRow — 市场入公海', () => {
+    const MKT_USER = 'mktA00000000000000000000000M001';
+    const CAMPUS_JWT = 'campusJWT0000000000000000000J001';
+    const baseOpts = { campusId: CAMPUS_JWT, operatorUserId: MKT_USER };
+    const validRow = {
+      parentName: '小明妈妈',
+      phone: MOCK_PHONE_PLAIN,
+      studentName: '小明',
+      gradeOrAge: '三年级',
+      intendedSubject: '英语',
+      sourceLevel1: '地推',
+    };
+
+    it('成功入池：customers(owner_id NULL)+students+opportunities(owner_user_id NULL + 入池标记)', async () => {
+      // 5 queries：dedup hash SELECT(miss) → dedup 明文 SELECT(miss) →
+      //            INSERT customers → INSERT students → INSERT opportunities
+      txClient.query
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // dedup miss (hash)
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // dedup miss (明文 fallback)
+        .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // customers
+        .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // students
+        .mockResolvedValueOnce({ rowCount: 1, rows: [] }); // opportunities
+
+      const r = await repo.importOnePoolRow(TENANT, validRow, baseOpts, 0);
+      expect(r.status).toBe('created');
+
+      // customers INSERT: owner_id NULL（VALUES 含 NULL 字面量）+ 三写 primary_mobile
+      const customersCall = txClient.query.mock.calls.find(
+        (c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO customers'),
+      );
+      expect(customersCall).toBeDefined();
+      expect(customersCall![0]).toMatch(/primary_mobile_hash/);
+      expect(customersCall![0]).toMatch(/primary_mobile_encrypted/);
+      expect(customersCall![0]).toMatch(/owner_id/);
+      // VALUES (...) 含 NULL（owner_id 入池）
+      expect(customersCall![0]).toMatch(/NULL/);
+      const cParams = customersCall![1];
+      expect(cParams[1]).toBe('小明妈妈'); // parent_name
+      expect(cParams[2]).toBe(MOCK_PHONE_PLAIN); // primary_mobile 明文
+      expect(cParams[3]).toEqual(MOCK_HASH_MOBILE); // primary_mobile_hash
+      expect(cParams[4]).toEqual(MOCK_CIPHER_PHONE); // primary_mobile_encrypted
+      expect(cParams[5]).toBe(CAMPUS_JWT); // campus_id 从 opts(JWT)
+      expect(cParams[6]).toBe('地推'); // source_level1
+      expect(cParams[7]).toBe(MKT_USER); // created_by/updated_by
+
+      // opportunities INSERT: owner_user_id NULL + entered_pool_at NOW() + enter_pool_reason='市场批量导入'
+      const oppoCall = txClient.query.mock.calls.find(
+        (c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO opportunities'),
+      );
+      expect(oppoCall).toBeDefined();
+      expect(oppoCall![0]).toMatch(/owner_user_id/);
+      expect(oppoCall![0]).toMatch(/entered_pool_at/);
+      expect(oppoCall![0]).toMatch(/市场批量导入/);
+      expect(oppoCall![0]).toMatch(/phone_encrypted/);
+      expect(oppoCall![0]).toMatch(/NOW\(\)/);
+      const oParams = oppoCall![1];
+      expect(oParams[2]).toBe(CAMPUS_JWT); // campus_id
+      expect(oParams[3]).toBe('地推'); // source = sourceLevel1
+      expect(oParams[4]).toBe(MOCK_PHONE_PLAIN); // phone 明文
+      expect(oParams[5]).toEqual(MOCK_CIPHER_PHONE); // phone_encrypted
+
+      // 三写：hash 1 次 + encrypt 2 次（primary_mobile + phone）
+      expect(hasher.hash).toHaveBeenCalledWith(MOCK_PHONE_PLAIN);
+      expect(encryptor.encrypt).toHaveBeenCalledWith(MOCK_PHONE_PLAIN);
+    });
+
+    it('sourceLevel1 缺省 → opportunities.source 默认「市场批量导入」', async () => {
+      txClient.query
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // dedup hash miss
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // dedup 明文 miss
+        .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // customers
+        .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // students
+        .mockResolvedValueOnce({ rowCount: 1, rows: [] }); // opportunities
+
+      await repo.importOnePoolRow(TENANT, { ...validRow, sourceLevel1: undefined }, baseOpts, 0);
+      const oppoCall = txClient.query.mock.calls.find(
+        (c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO opportunities'),
+      );
+      expect(oppoCall![1][3]).toBe('市场批量导入'); // source fallback
+    });
+
+    it('phone 去重（hash 命中）→ skipped，不 INSERT', async () => {
+      txClient.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'existing-cust' }] }); // hash 命中
+      const r = await repo.importOnePoolRow(TENANT, validRow, baseOpts, 3);
+      expect(r.status).toBe('skipped');
+      expect(r.index).toBe(3);
+      // 只跑了 1 个 SELECT，无 INSERT
+      const insertCalls = txClient.query.mock.calls.filter(
+        (c) => typeof c[0] === 'string' && c[0].includes('INSERT'),
+      );
+      expect(insertCalls).toHaveLength(0);
+    });
+
+    it('phone 去重（hash miss + 明文命中）→ skipped（兼容期 backfill 未完成）', async () => {
+      txClient.query
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // hash miss
+        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'existing-cust' }] }); // 明文命中
+      const r = await repo.importOnePoolRow(TENANT, validRow, baseOpts, 0);
+      expect(r.status).toBe('skipped');
+      const insertCalls = txClient.query.mock.calls.filter(
+        (c) => typeof c[0] === 'string' && c[0].includes('INSERT'),
+      );
+      expect(insertCalls).toHaveLength(0);
+    });
+
+    it('非法 phone → 行级 error（不进事务）', async () => {
+      const r = await repo.importOnePoolRow(TENANT, { ...validRow, phone: '123' }, baseOpts, 5);
+      expect(r.status).toBe('error');
+      expect(r.index).toBe(5);
+      expect(r.reason).toContain('phone');
+      expect(txClient.query).not.toHaveBeenCalled(); // 未进事务
+    });
+
+    it('缺 parentName → 行级 error', async () => {
+      const r = await repo.importOnePoolRow(TENANT, { ...validRow, parentName: '  ' }, baseOpts, 0);
+      expect(r.status).toBe('error');
+      expect(r.reason).toContain('parentName');
+    });
+
+    it('缺 studentName → 行级 error（opportunities 需关联学员，不做假名兜底）', async () => {
+      const r = await repo.importOnePoolRow(TENANT, { ...validRow, studentName: '' }, baseOpts, 0);
+      expect(r.status).toBe('error');
+      expect(r.reason).toContain('studentName');
+    });
+
+    it('23505 unique 竞态（primary_mobile）→ 视为 skipped（并发两次导入同号）', async () => {
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // dedup miss
+      const uniqueErr: any = new Error('dup');
+      uniqueErr.code = '23505';
+      uniqueErr.constraint = 'customers_primary_mobile_key';
+      txClient.query.mockRejectedValueOnce(uniqueErr); // INSERT customers 冲突
+      const r = await repo.importOnePoolRow(TENANT, validRow, baseOpts, 0);
+      expect(r.status).toBe('skipped');
+    });
+
+    it('写库异常（非 unique）→ 行级 error，不抛', async () => {
+      txClient.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // dedup miss
+      txClient.query.mockRejectedValueOnce(new Error('disk full')); // INSERT 失败
+      const r = await repo.importOnePoolRow(TENANT, validRow, baseOpts, 2);
+      expect(r.status).toBe('error');
+      expect(r.index).toBe(2);
+      // 安全：DB error message 不回显给调用方（防 schema/列名泄露），固定文案；明细仅 logger.warn
+      expect(r.reason).toBe('写库失败，请重试');
+      expect(r.reason).not.toContain('disk full');
+    });
+
+    it('bulkPoolImport 聚合：created + skipped + errors 分类正确，单行失败不阻断后续', async () => {
+      // row0 created（5 query: 2 dedup miss + 3 insert）,
+      // row1 非法 phone（行级 error，0 query）,
+      // row2 skipped（1 query: hash 命中）
+      txClient.query
+        // row0
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // dedup hash miss
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // dedup 明文 miss
+        .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // customers
+        .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // students
+        .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // opportunities
+        // row2 (row1 非法 phone 不进事务)
+        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'dup' }] }); // dedup hash hit → skip
+
+      const rows = [
+        validRow,
+        { ...validRow, phone: '999' }, // 非法
+        { ...validRow, phone: '13700137000', studentName: '小红' }, // 重复 → skip
+      ];
+      const r = await repo.bulkPoolImport(TENANT, rows, baseOpts);
+      expect(r.created).toBe(1);
+      expect(r.skipped).toBe(1);
+      expect(r.errors).toHaveLength(1);
+      expect(r.errors[0].index).toBe(1);
+      expect(r.errors[0].reason).toContain('phone');
+    });
+
+    it('bulkPoolImport campusId 缺失 → 抛 BadRequest', async () => {
+      await expect(
+        repo.bulkPoolImport(TENANT, [validRow], { campusId: '', operatorUserId: MKT_USER }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
 });

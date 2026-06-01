@@ -1104,3 +1104,240 @@ describe('CustomerController (Sprint B.5 audit_log)', () => {
     });
   });
 });
+
+// ============================================================
+// 阶段 B (2026-05-31 SSOT §6 customer.bulkUpload，市场独有)
+//   POST /api/db/customers/bulk-pool-import
+//   市场批量入公海：owner=NULL + entered_pool_at + enter_pool_reason='市场批量导入' + campus 从 JWT
+//   覆盖：marketing 成功批量入池 / phone 去重 skip / 非法 phone 入 errors /
+//         sales 403（@Roles 不含；此处验逻辑层，Guard 由 e2e 覆盖）/
+//         campus 从 JWT 不被 body 覆盖 / 内容违规行入 errors / 上限 200 防 DoS / audit_log
+// ============================================================
+describe('CustomerController (阶段 B bulk-pool-import 市场入公海)', () => {
+  let controller: CustomerController;
+  let repo: { importOnePoolRow: jest.Mock };
+  let auditLog: { log: jest.Mock };
+  let contentModeration: { enforceStaffText: jest.Mock };
+
+  const TENANT_A = 'TENANTA00000000000000000000000A1';
+  const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const CAMPUS_JWT = 'campusJWT0000000000000000000J001';
+  const CAMPUS_FORGED = 'campusFORGED00000000000000F00001';
+  const MKT_USER = 'mktA00000000000000000000000M001';
+
+  function jwt(role: TenantRole, sub = MKT_USER, campusId: string | null = CAMPUS_JWT): JwtPayload {
+    return { sub, tenantId: TENANT_A, role, campusId };
+  }
+
+  function req(user?: JwtPayload): AuthenticatedRequest {
+    return {
+      user,
+      headers: { 'user-agent': 'WeChatMP/8.x', 'x-request-id': 'req-bulk-001' },
+      body: {},
+      query: {},
+      params: {},
+      ip: '127.0.0.1',
+    } as any;
+  }
+
+  const validRow = {
+    parentName: '小明妈妈',
+    phone: '13800138000',
+    studentName: '小明',
+    gradeOrAge: '三年级',
+    intendedSubject: '英语',
+    sourceLevel1: '地推',
+  };
+
+  beforeEach(() => {
+    repo = { importOnePoolRow: jest.fn() } as any;
+    auditLog = { log: jest.fn().mockResolvedValue(undefined) };
+    contentModeration = { enforceStaffText: jest.fn().mockResolvedValue(undefined) };
+    controller = new CustomerController(
+      repo as unknown as CustomerRepository,
+      contentModeration as unknown as ContentModerationService,
+      auditLog as unknown as AuditLogRepository,
+    );
+  });
+
+  it('marketing 成功批量入池 → importOnePoolRow 调用 owner=NULL（campus 从 JWT）+ created 计数 + audit', async () => {
+    repo.importOnePoolRow
+      .mockResolvedValueOnce({ index: 0, status: 'created' })
+      .mockResolvedValueOnce({ index: 1, status: 'created' });
+
+    const result = await controller.bulkPoolImport(
+      {
+        tenantId: TENANT_A,
+        tenantSchema: TENANT_SCHEMA,
+        customers: [validRow, { ...validRow, phone: '13900139000', studentName: '小红' }],
+      },
+      req(jwt('marketing')),
+    );
+
+    expect(result.created).toBe(2);
+    expect(result.skipped).toBe(0);
+    expect(result.errors).toEqual([]);
+    expect(repo.importOnePoolRow).toHaveBeenCalledTimes(2);
+    // campus 从 JWT 透传给 repo（owner=NULL 入池由 repo 内部保证）
+    const [, , opts] = repo.importOnePoolRow.mock.calls[0];
+    expect(opts.campusId).toBe(CAMPUS_JWT);
+    expect(opts.operatorUserId).toBe(MKT_USER);
+    // audit_log customer.bulk_pool_import
+    expect(auditLog.log).toHaveBeenCalledTimes(1);
+    const [schema, entry] = auditLog.log.mock.calls[0];
+    expect(schema).toBe(TENANT_SCHEMA);
+    expect(entry.action).toBe('customer.bulk_pool_import');
+    expect(entry.targetType).toBe('customer');
+    expect(entry.after.created).toBe(2);
+    expect(entry.after.total).toBe(2);
+    expect(entry.after.campusId).toBe(CAMPUS_JWT);
+  });
+
+  it('phone 去重 → repo 返 skipped → 计入 skipped 不计 created', async () => {
+    repo.importOnePoolRow
+      .mockResolvedValueOnce({ index: 0, status: 'created' })
+      .mockResolvedValueOnce({ index: 1, status: 'skipped' });
+
+    const result = await controller.bulkPoolImport(
+      {
+        tenantId: TENANT_A,
+        tenantSchema: TENANT_SCHEMA,
+        customers: [validRow, { ...validRow }],
+      },
+      req(jwt('marketing')),
+    );
+
+    expect(result.created).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('非法 phone → repo 返 error → 入 errors[{index, reason}]', async () => {
+    repo.importOnePoolRow.mockResolvedValueOnce({
+      index: 0,
+      status: 'error',
+      reason: 'phone 必须是 11 位中国手机号',
+    });
+
+    const result = await controller.bulkPoolImport(
+      {
+        tenantId: TENANT_A,
+        tenantSchema: TENANT_SCHEMA,
+        customers: [{ ...validRow, phone: '123' }],
+      },
+      req(jwt('marketing')),
+    );
+
+    expect(result.created).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].index).toBe(0);
+    expect(result.errors[0].reason).toContain('phone');
+  });
+
+  it('campus 从 JWT，不被 body 覆盖（body 无 campusId 字段也按 JWT 走）', async () => {
+    repo.importOnePoolRow.mockResolvedValueOnce({ index: 0, status: 'created' });
+
+    // body 即使被攻击者塞 campusId（类型外字段），controller 也只读 req.user.campusId
+    await controller.bulkPoolImport(
+      {
+        tenantId: TENANT_A,
+        tenantSchema: TENANT_SCHEMA,
+        customers: [validRow],
+        // @ts-expect-error 故意塞伪造字段验证不被采用
+        campusId: CAMPUS_FORGED,
+      },
+      req(jwt('marketing')),
+    );
+
+    const [, , opts] = repo.importOnePoolRow.mock.calls[0];
+    expect(opts.campusId).toBe(CAMPUS_JWT);
+    expect(opts.campusId).not.toBe(CAMPUS_FORGED);
+  });
+
+  it('内容违规行 → enforceStaffText reject → 该行 errors 且不写库（importOnePoolRow not called），其它行继续', async () => {
+    // 第 0 行违规 reject；第 1 行通过
+    contentModeration.enforceStaffText
+      .mockRejectedValueOnce(new BadRequestException('content violates content policy'))
+      .mockResolvedValueOnce(undefined);
+    repo.importOnePoolRow.mockResolvedValueOnce({ index: 1, status: 'created' });
+
+    const result = await controller.bulkPoolImport(
+      {
+        tenantId: TENANT_A,
+        tenantSchema: TENANT_SCHEMA,
+        customers: [
+          { ...validRow, parentName: '违规广告内容' },
+          { ...validRow, phone: '13700137000', studentName: '小刚' },
+        ],
+      },
+      req(jwt('marketing')),
+    );
+
+    expect(result.created).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].index).toBe(0);
+    expect(result.errors[0].reason).toBe('内容不合规');
+    // 违规行不进 repo；只有第 1 行进
+    expect(repo.importOnePoolRow).toHaveBeenCalledTimes(1);
+    const [, rowPassed] = repo.importOnePoolRow.mock.calls[0];
+    expect(rowPassed.studentName).toBe('小刚');
+  });
+
+  it('上限 200 防 DoS → 超出整批 400（任何写库前）', async () => {
+    const rows = Array.from({ length: 201 }, (_, i) => ({
+      ...validRow,
+      phone: `138${String(i).padStart(8, '0')}`,
+      studentName: `学员${i}`,
+    }));
+
+    await expect(
+      controller.bulkPoolImport(
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA, customers: rows },
+        req(jwt('marketing')),
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(repo.importOnePoolRow).not.toHaveBeenCalled();
+    expect(contentModeration.enforceStaffText).not.toHaveBeenCalled();
+  });
+
+  it('空数组 / 非数组 → 400（不写库）', async () => {
+    await expect(
+      controller.bulkPoolImport(
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA, customers: [] },
+        req(jwt('marketing')),
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(repo.importOnePoolRow).not.toHaveBeenCalled();
+  });
+
+  it('JWT 无 campusId（如 admin 跨校无单一 campus）→ 400（不写库）', async () => {
+    await expect(
+      controller.bulkPoolImport(
+        { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA, customers: [validRow] },
+        req(jwt('admin', MKT_USER, null)),
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(repo.importOnePoolRow).not.toHaveBeenCalled();
+  });
+
+  it('tenantSchema 缺失 → 400（不写库）', async () => {
+    await expect(
+      controller.bulkPoolImport(
+        { tenantId: TENANT_A, tenantSchema: '', customers: [validRow] },
+        req(jwt('marketing')),
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(repo.importOnePoolRow).not.toHaveBeenCalled();
+  });
+
+  it('audit_log 抛错 → 不阻塞主业务（fail-open，仍返结果）', async () => {
+    repo.importOnePoolRow.mockResolvedValueOnce({ index: 0, status: 'created' });
+    auditLog.log.mockRejectedValueOnce(new Error('audit write fail'));
+
+    const result = await controller.bulkPoolImport(
+      { tenantId: TENANT_A, tenantSchema: TENANT_SCHEMA, customers: [validRow] },
+      req(jwt('marketing')),
+    );
+    expect(result.created).toBe(1);
+  });
+});
