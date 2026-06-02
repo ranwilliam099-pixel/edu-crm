@@ -17,6 +17,7 @@ import {
 import { PromotionEligibilityService } from './promotion-eligibility.service';
 import { CampusRepository } from './campus.repository';
 import { AuthenticatedRequest, JwtPayload, TenantRole } from '../auth/jwt-payload.interface';
+import { ROLES_METADATA_KEY } from '../../guards/rbac.decorator';
 
 describe('DashboardController.homeAlerts (Phase 3 item #4)', () => {
   let controller: DashboardController;
@@ -181,5 +182,11 @@ describe('DashboardController.salesFunnel (§3.-2 D campus override)', () => {
       campusId: CAMPUS_A,
       ownerUserId: undefined,
     });
+  });
+
+  // 2026-06-02 安全审 FINDING-1：salesFunnel 补 @Roles（原无 → 任意租户 JWT 可读漏斗，中危 A01）
+  it('@Roles = [admin, boss, sales, sales_manager]（teacher/finance/parent 拒）', () => {
+    const roles = Reflect.getMetadata(ROLES_METADATA_KEY, DashboardController.prototype.salesFunnel);
+    expect(roles).toEqual(['admin', 'boss', 'sales', 'sales_manager']);
   });
 });

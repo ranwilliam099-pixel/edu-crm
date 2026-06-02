@@ -105,6 +105,10 @@ export class DashboardController {
   }
 
   @Get('sales-funnel')
+  @UseGuards(RbacGuard)
+  // 2026-06-02 安全审 FINDING-1：原无 @Roles → 任意租户 JWT 可读全机构漏斗数据（中危 A01）。
+  //   补白名单对齐前端 FUNNEL_ALLOWED_ROLES（admin/boss/sales/sales_manager）；teacher/finance/parent/academic 拒入。
+  @Roles('admin', 'boss', 'sales', 'sales_manager')
   @HttpCode(HttpStatus.OK)
   async salesFunnel(
     @Headers('x-tenant-schema') tenantSchema: string,
