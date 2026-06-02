@@ -45,16 +45,26 @@ export interface ParentCommunication {
 export class ParentCommunicationRepository {
   constructor(private readonly pg: PgPoolService) {}
 
+  private static formatDateOnly(value: unknown): string {
+    if (value instanceof Date) {
+      // pg DATE may arrive as a UTC timestamp for local midnight; format in business timezone.
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(value);
+    }
+    return String(value).slice(0, 10);
+  }
+
   private static mapRow(row: PgRow): ParentCommunication {
     return {
       id: row.id,
       studentId: row.student_id,
       campusId: row.campus_id,
       // DATE 列：pg 驱动可能返回 Date 或字符串；统一取 YYYY-MM-DD（无时区漂移）
-      communicationDate:
-        row.communication_date instanceof Date
-          ? row.communication_date.toISOString().slice(0, 10)
-          : String(row.communication_date).slice(0, 10),
+      communicationDate: ParentCommunicationRepository.formatDateOnly(row.communication_date),
       type: row.type as CommunicationType,
       content: row.content,
       followUp: row.follow_up ?? null,
@@ -70,11 +80,11 @@ export class ParentCommunicationRepository {
   }
 
   /** 写 RETURNING 列（裸；INSERT…RETURNING 不 JOIN → createdByName 写回 null） */
-  private static readonly COLS = `id, student_id, campus_id, communication_date,
+  private static readonly COLS = `id, student_id, campus_id, communication_date::text AS communication_date,
               type, content, follow_up, created_by, created_at, updated_at`;
 
   /** 读路径列（pc. 前缀 + LEFT JOIN users 取 created_by_name），与 READ_FROM 配套 */
-  private static readonly COLS_PC = `pc.id, pc.student_id, pc.campus_id, pc.communication_date,
+  private static readonly COLS_PC = `pc.id, pc.student_id, pc.campus_id, pc.communication_date::text AS communication_date,
               pc.type, pc.content, pc.follow_up, pc.created_by, pc.created_at, pc.updated_at,
               u.name AS created_by_name`;
   private static readonly READ_FROM = `FROM parent_communications pc

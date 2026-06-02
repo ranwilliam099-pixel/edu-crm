@@ -52,6 +52,7 @@ describe('ParentCommunicationRepository (V67 §5.4 教务家长沟通记录)', (
       const sql = pg.tenantQuery.mock.calls[0][1] as string;
       const params = pg.tenantQuery.mock.calls[0][2] as unknown[];
       expect(sql).toContain('INSERT INTO parent_communications');
+      expect(sql).toContain('communication_date::text AS communication_date');
       // 落库参数顺序：id, student_id, campus_id, communication_date, type, content, follow_up, created_by
       expect(params[0]).toBe(COMM);
       expect(params[1]).toBe(STUDENT);
@@ -63,21 +64,21 @@ describe('ParentCommunicationRepository (V67 §5.4 教务家长沟通记录)', (
       expect(c.campusId).toBe(CAMPUS);
     });
 
-    it('mapRow：DATE 列归一为 YYYY-MM-DD（Date 对象不漂移）', async () => {
+    it('mapRow：DATE 列归一为 YYYY-MM-DD（Date 对象不按 UTC 漂移）', async () => {
       pg.tenantQuery.mockResolvedValue([
-        row({ communication_date: new Date('2026-06-02T00:00:00.000Z') }),
+        row({ communication_date: new Date('2026-06-02T16:00:00.000Z') }),
       ]);
       const c = await repo.create(TENANT, {
         id: COMM,
         studentId: STUDENT,
         campusId: CAMPUS,
-        communicationDate: '2026-06-02',
+        communicationDate: '2026-06-03',
         type: 'phone',
         content: 'x',
         followUp: null,
         createdBy: ACADEMIC,
       });
-      expect(c.communicationDate).toBe('2026-06-02');
+      expect(c.communicationDate).toBe('2026-06-03');
     });
   });
 
@@ -88,6 +89,7 @@ describe('ParentCommunicationRepository (V67 §5.4 教务家长沟通记录)', (
       const sql = pg.tenantQuery.mock.calls[0][1] as string;
       const params = pg.tenantQuery.mock.calls[0][2] as unknown[];
       expect(sql).toContain('FROM parent_communications pc');
+      expect(sql).toContain('pc.communication_date::text AS communication_date');
       expect(sql).toContain('LEFT JOIN users u ON u.id = pc.created_by');
       expect(sql).toContain('u.name AS created_by_name');
       expect(sql).toContain('pc.student_id = $1');
