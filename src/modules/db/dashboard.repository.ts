@@ -264,6 +264,10 @@ export class DashboardRepository {
     tenantSchema: string,
     options: { campusId?: string; ownerUserId?: string } = {},
   ): Promise<SalesFunnel> {
+    // 2026-06-02 §3.-2 C：3 状态映射 = opportunities.stage 8 枚举全覆盖（无遗漏）：
+    //   following(跟进中) 3 + trial(已试听) 3 + deal(成交) 1 + 已失单 1(→ lossReasons 独立区) = 8。
+    //   ⚠️「已联系」不是 opportunities.stage 枚举值（它是旧 5-阶段的显示标签，曾映射『已预约试听』）；
+    //     早期 stage = 已预约试听 已归入 following，故无线索静默丢失。勿误加 '已联系' 到 pgStages。
     const STAGE_MAP: Array<{ key: string; label: string; pgStages: string[] }> = [
       { key: 'following', label: '跟进中', pgStages: ['初步接触', '需求诊断', '已预约试听'] },
       { key: 'trial',     label: '已试听', pgStages: ['已试听待转化', '已出方案', '谈单中'] },
