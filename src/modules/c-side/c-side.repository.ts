@@ -71,6 +71,30 @@ export interface MessageItem {
   createdAt: string;
 }
 
+export interface ParentFeedbackDetail {
+  id: string;
+  scheduleId: string;
+  studentId: string;
+  teacherId: string;
+  attendanceStatus: string;
+  classroomPerformance: string;
+  knowledgePoints?: ReadonlyArray<{ name: string; mastery: string }>;
+  homework?: string;
+  teacherNote?: string;
+  teacherInternalNote?: null;
+  knowledgeMatrix?: ReadonlyArray<{ name: string; mastery: string }>;
+  dimRatings?: { focus?: number; engage?: number; think?: number; homework?: number };
+  homeworkDeadline?: string;
+  homeworkDifficulty?: string;
+  nextPreview?: string;
+  parentReadAt?: string | null;
+  submittedAt: string;
+  updatedAt: string;
+  studentName?: string | null;
+  teacherName?: string | null;
+  subject?: string | null;
+}
+
 @Injectable()
 export class CSideRepository {
   private readonly logger = new Logger(CSideRepository.name);
@@ -384,6 +408,43 @@ export class CSideRepository {
     return rows.length > 0;
   }
 
+  /**
+   * C 端反馈详情（家长视角）
+   *
+   * 后端已收窄 /db/lesson-feedbacks/:id/find 不再允许 parent token 调用；
+   * 这里提供专用读接口，并用 studentIds 做 family-owner scope，避免同租户跨家庭 IDOR。
+   */
+  async findFeedbackDetailForParent(
+    tenantSchema: string,
+    feedbackId: string,
+    studentIds: string[],
+  ): Promise<ParentFeedbackDetail | null> {
+    if (studentIds.length === 0) return null;
+    const rows = await this.pg.tenantQuery<PgRow>(
+      tenantSchema,
+      `SELECT lf.id, lf.schedule_id, lf.student_id, lf.teacher_id,
+              lf.attendance_status, lf.classroom_performance,
+              lf.knowledge_points, lf.homework, lf.teacher_note,
+              lf.knowledge_matrix, lf.dim_ratings,
+              lf.homework_deadline, lf.homework_difficulty, lf.next_preview,
+              lf.parent_read_at, lf.submitted_at, lf.updated_at,
+              s.student_name  AS student_name,
+              t.name          AS teacher_name,
+              cp.product_name AS subject
+         FROM lesson_feedbacks lf
+         JOIN students s ON s.id = lf.student_id
+    LEFT JOIN teachers t ON t.id = lf.teacher_id
+    LEFT JOIN schedules sc ON sc.id = lf.schedule_id
+    LEFT JOIN course_products cp ON cp.id = sc.course_product_id
+        WHERE lf.id = $1
+          AND lf.student_id = ANY($2::varchar[])
+        LIMIT 1`,
+      [feedbackId, studentIds],
+    );
+    if (rows.length === 0) return null;
+    return this.mapFeedbackDetailRow(rows[0]);
+  }
+
   // ===== helpers =====
 
   // SSOT §4.1 parent C 端：仅 姓名 + 头像 + 校区 + 主带老师 + 年级（5/20 BLOCKER-1 + 6/1 §4.1 ②）
@@ -438,6 +499,60 @@ export class CSideRepository {
       read: Boolean(r.read),
       createdAt: this.toIso(r.created_at),
     };
+  }
+
+  private mapFeedbackDetailRow(r: PgRow): ParentFeedbackDetail {
+    return {
+      id: r.id,
+      scheduleId: r.schedule_id,
+      studentId: r.student_id,
+      teacherId: r.teacher_id,
+      attendanceStatus: r.attendance_status,
+      classroomPerformance: r.classroom_performance,
+      knowledgePoints: this.parseJsonArray(r.knowledge_points),
+      homework: r.homework || undefined,
+      teacherNote: r.teacher_note || undefined,
+      teacherInternalNote: null,
+      knowledgeMatrix: this.parseJsonArray(r.knowledge_matrix),
+      dimRatings: this.parseJsonObject(r.dim_ratings),
+      homeworkDeadline: r.homework_deadline ? this.toIso(r.homework_deadline) : undefined,
+      homeworkDifficulty: r.homework_difficulty || undefined,
+      nextPreview: r.next_preview || undefined,
+      parentReadAt: r.parent_read_at ? this.toIso(r.parent_read_at) : null,
+      submittedAt: this.toIso(r.submitted_at),
+      updatedAt: this.toIso(r.updated_at),
+      studentName: r.student_name || null,
+      teacherName: r.teacher_name || null,
+      subject: r.subject || null,
+    };
+  }
+
+  private parseJsonArray(value: unknown): any[] | undefined {
+    if (!value) return undefined;
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+
+  private parseJsonObject(value: unknown): Record<string, any> | undefined {
+    if (!value) return undefined;
+    if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
   }
 
   /**

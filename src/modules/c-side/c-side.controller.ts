@@ -25,6 +25,7 @@ import {
   ChildBrief,
   MessageItem,
   MessageType,
+  ParentFeedbackDetail,
   TodayLesson,
   UnreadCount,
 } from './c-side.repository';
@@ -50,6 +51,7 @@ import {
  *   GET   /api/c/home                                 家长 home 一站式聚合
  *   GET   /api/c/students/:studentId/profile          C 端学员档案（家长视角脱敏）
  *   GET   /api/c/messages                             消息中心（feedback + monthly-report）
+ *   GET   /api/c/feedbacks/:id                        课后反馈详情（家长视角）
  *   PATCH /api/c/messages/:id/mark-read               标记单条消息已读（需 ?type=feedback|monthly-report）
  *
  * RBAC 双层守护：
@@ -661,6 +663,42 @@ export class CSideController {
       total: list.total,
       unreadCount: unread,
     };
+  }
+
+  /**
+   * GET /api/c/feedbacks/:feedbackId — C 端家长课后反馈详情
+   *
+   * 背景：/api/db/lesson-feedbacks/:id/find 已收窄为 B 端内部接口；
+   * C 端详情必须走 parent JWT + 当前 tenant header，并只允许读取自己绑定孩子的反馈。
+   */
+  @Get('feedbacks/:feedbackId')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async getFeedbackDetail(
+    @Param('feedbackId') feedbackId: string,
+    @Req() req: ParentRequest,
+  ): Promise<ParentFeedbackDetail> {
+    if (!ULID_PATTERN.test(feedbackId)) {
+      throw new BadRequestException('feedbackId must be 32-char ULID');
+    }
+    const { parentId, tenantSchema, tenantId } = this.assertParent(req);
+    const bindings = await this.parentRepo.findChildrenByParent(parentId);
+    const studentIds = bindings
+      .filter(
+        (b) =>
+          b.bindingStatus === 'active' &&
+          b.tenantId.toLowerCase() === tenantId.toLowerCase(),
+      )
+      .map((b) => b.studentId);
+    const detail = await this.cside.findFeedbackDetailForParent(
+      tenantSchema,
+      feedbackId,
+      studentIds,
+    );
+    if (!detail) {
+      throw new ForbiddenException('feedback not found or not owned by this parent');
+    }
+    return detail;
   }
 
   /**

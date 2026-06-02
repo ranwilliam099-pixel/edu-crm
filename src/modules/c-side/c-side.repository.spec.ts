@@ -148,3 +148,72 @@ describe('CSideRepository.findChildrenByIds — currentGrade（2026-06-01 §4.1 
     expect(leak.totalAmount).toBeUndefined();
   });
 });
+
+describe('CSideRepository.findFeedbackDetailForParent — C 端反馈详情 owner scope', () => {
+  let repo: CSideRepository;
+  let pg: { tenantQuery: jest.Mock };
+
+  const TENANT = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const FEEDBACK_ID = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMNF1';
+  const STUDENT_1 = '01HX7Y6P5K9N3M2QABCDEFGHIJKLMNS1';
+
+  beforeEach(async () => {
+    pg = { tenantQuery: jest.fn() };
+    const m = await Test.createTestingModule({
+      providers: [
+        CSideRepository,
+        { provide: PgPoolService, useValue: pg },
+      ],
+    }).compile();
+    repo = m.get(CSideRepository);
+  });
+
+  it('SQL 用 feedbackId + 家长绑定 studentIds 做 owner scope', async () => {
+    pg.tenantQuery.mockResolvedValueOnce([
+      {
+        id: FEEDBACK_ID,
+        schedule_id: 'schedule000000000000000000000001',
+        student_id: STUDENT_1,
+        teacher_id: 'teacher000000000000000000000001',
+        attendance_status: '出勤',
+        classroom_performance: '良好',
+        knowledge_points: JSON.stringify([{ name: '函数', mastery: '良好' }]),
+        homework: '完成练习',
+        teacher_note: '状态不错',
+        knowledge_matrix: [{ name: '函数', mastery: 'mastered' }],
+        dim_ratings: { focus: 5 },
+        homework_deadline: new Date('2026-06-10T13:00:00.000Z'),
+        homework_difficulty: 'medium',
+        next_preview: '预习方程',
+        parent_read_at: null,
+        submitted_at: new Date('2026-06-03T02:00:00.000Z'),
+        updated_at: new Date('2026-06-03T02:00:00.000Z'),
+        student_name: '学员1',
+        teacher_name: '周老师',
+        subject: '数学',
+      },
+    ]);
+
+    const detail = await repo.findFeedbackDetailForParent(TENANT, FEEDBACK_ID, [STUDENT_1]);
+
+    const [, sql, params] = pg.tenantQuery.mock.calls[0];
+    expect(sql).toContain('lf.id = $1');
+    expect(sql).toContain('lf.student_id = ANY($2::varchar[])');
+    expect(params).toEqual([FEEDBACK_ID, [STUDENT_1]]);
+    expect(detail).toMatchObject({
+      id: FEEDBACK_ID,
+      studentId: STUDENT_1,
+      studentName: '学员1',
+      teacherName: '周老师',
+      subject: '数学',
+      teacherInternalNote: null,
+    });
+    expect(detail!.knowledgePoints).toEqual([{ name: '函数', mastery: '良好' }]);
+    expect(detail!.dimRatings).toEqual({ focus: 5 });
+  });
+
+  it('无绑定 studentIds 时不查库并返回 null', async () => {
+    await expect(repo.findFeedbackDetailForParent(TENANT, FEEDBACK_ID, [])).resolves.toBeNull();
+    expect(pg.tenantQuery).not.toHaveBeenCalled();
+  });
+});

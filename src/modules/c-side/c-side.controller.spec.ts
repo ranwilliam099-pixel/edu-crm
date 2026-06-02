@@ -14,7 +14,7 @@
  *     PG 参数化查询 → 跨 parent 物理隔离 (本 spec 不重复测仓库层, 测 controller scope 单元)
  */
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { CSideController } from './c-side.controller';
 import { CSideRepository, ChildBrief } from './c-side.repository';
 import { ParentRepository } from '../db/parent.repository';
@@ -374,5 +374,82 @@ describe('CSideController.getMyProfile (P1-3 2026-05-23 A05 内部 ID 不透传)
     // message 必须是固定常量, 不含 PARENT_A (内部 ULID)
     expect(caught!.message).toBe('PARENT_NOT_FOUND');
     expect(caught!.message).not.toContain(PARENT_A);
+  });
+});
+
+describe('CSideController.getFeedbackDetail — C 端反馈详情 family owner scope', () => {
+  let controller: CSideController;
+  let parentRepoMock: { findChildrenByParent: jest.Mock; findParentById: jest.Mock };
+  let csideRepoMock: { findFeedbackDetailForParent: jest.Mock };
+
+  const FEEDBACK_ID = 'fb000000000000000000000000000001';
+
+  beforeEach(async () => {
+    parentRepoMock = { findChildrenByParent: jest.fn(), findParentById: jest.fn() };
+    csideRepoMock = { findFeedbackDetailForParent: jest.fn() };
+
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [CSideController],
+      providers: [
+        { provide: ParentRepository, useValue: parentRepoMock },
+        { provide: CSideRepository, useValue: csideRepoMock },
+        { provide: AuditLogRepository, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        { provide: PgPoolService, useValue: { query: jest.fn() } },
+        { provide: ParentSelfGuard, useValue: { canActivate: () => true } },
+      ],
+    })
+      .overrideGuard(ParentSelfGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+
+    controller = module.get<CSideController>(CSideController);
+  });
+
+  function makeReqFeedback(parentId: string | null = PARENT_A): any {
+    return {
+      parent: parentId ? { sub: parentId, parentId, role: 'parent' } : undefined,
+      tenantSchema: `tenant_${TENANT_A}`,
+      headers: {},
+      ip: '127.0.0.1',
+    };
+  }
+
+  it('绑定孩子的反馈 → 返回详情，并按当前 tenant 的 active bindings scope 查询', async () => {
+    parentRepoMock.findChildrenByParent.mockResolvedValueOnce([
+      makeBinding(STUDENT_1, TENANT_A),
+      makeBinding(STUDENT_2, TENANT_B),
+    ]);
+    csideRepoMock.findFeedbackDetailForParent.mockResolvedValueOnce({
+      id: FEEDBACK_ID,
+      studentId: STUDENT_1,
+      teacherInternalNote: null,
+    });
+
+    const result = await controller.getFeedbackDetail(FEEDBACK_ID, makeReqFeedback());
+
+    expect(csideRepoMock.findFeedbackDetailForParent).toHaveBeenCalledWith(
+      `tenant_${TENANT_A}`,
+      FEEDBACK_ID,
+      [STUDENT_1],
+    );
+    expect(result).toMatchObject({ id: FEEDBACK_ID, studentId: STUDENT_1 });
+  });
+
+  it('反馈不存在或不属于该家长 → 403，不泄露资源是否存在', async () => {
+    parentRepoMock.findChildrenByParent.mockResolvedValueOnce([
+      makeBinding(STUDENT_1, TENANT_A),
+    ]);
+    csideRepoMock.findFeedbackDetailForParent.mockResolvedValueOnce(null);
+
+    await expect(
+      controller.getFeedbackDetail(FEEDBACK_ID, makeReqFeedback()),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('feedbackId 非 32 位 → 400', async () => {
+    await expect(
+      controller.getFeedbackDetail('bad-id', makeReqFeedback()),
+    ).rejects.toThrow(BadRequestException);
+    expect(parentRepoMock.findChildrenByParent).not.toHaveBeenCalled();
   });
 });
