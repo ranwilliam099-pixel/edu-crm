@@ -1285,6 +1285,27 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       ).rejects.toThrow(/tenantSchema required/);
       expect(kpi.getCourseSalesByPerson).not.toHaveBeenCalled();
     });
+
+    // 2026-06-02 D follow-up #5：by-person 与 Level-2 course-sales 校区一致（resolveRequiredCampusId）
+    it('admin body.campusId override（∈ 本租户）→ getCourseSalesByPerson 收 override campus（findById 校验）', async () => {
+      kpi.getCourseSalesByPerson.mockResolvedValueOnce({ productName: '英语 1v1', items: [] });
+      await controller.courseSalesByPerson(
+        { tenantSchema: TENANT_SCHEMA, courseProductId: PROD_1, campusId: CAMPUS_B },
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+      );
+      expect(campusRepo.findById).toHaveBeenCalledWith(TENANT_A, CAMPUS_B);
+      expect(kpi.getCourseSalesByPerson).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_B, PROD_1);
+    });
+
+    it('非 admin（boss）body.campusId override → 恒 JWT campusId（helper 忽略，不查 findById）', async () => {
+      kpi.getCourseSalesByPerson.mockResolvedValueOnce({ productName: null, items: [] });
+      await controller.courseSalesByPerson(
+        { tenantSchema: TENANT_SCHEMA, courseProductId: PROD_1, campusId: CAMPUS_B },
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+      );
+      expect(campusRepo.findById).not.toHaveBeenCalled();
+      expect(kpi.getCourseSalesByPerson).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_A, PROD_1);
+    });
   });
 
   // ============================================================

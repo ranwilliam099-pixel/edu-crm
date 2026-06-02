@@ -768,14 +768,16 @@ export class KpiController {
   @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async courseSalesByPerson(
-    @Body() body: { tenantSchema: string; courseProductId: string },
+    @Body() body: { tenantSchema: string; courseProductId: string; campusId?: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<CourseSalesByPersonResult> {
     if (!body?.tenantSchema) throw new BadRequestException('tenantSchema required');
     if (!body.courseProductId || body.courseProductId.length !== 32) {
       throw new BadRequestException('courseProductId must be 32-char ULID');
     }
-    const campusId = this.requireCampusId(req);
+    // 2026-06-02 D follow-up #5：与 Level-2 course-sales 校区一致（admin 选校区下钻 by-person 跟随）。
+    //   resolveRequiredCampusId：admin override 校验 ∈ 本租户 / 非 admin 恒 JWT.campusId。
+    const campusId = await this.resolveRequiredCampusId(req, body.campusId);
     return this.kpi.getCourseSalesByPerson(
       body.tenantSchema,
       campusId,
