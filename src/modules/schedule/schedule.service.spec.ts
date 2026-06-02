@@ -332,6 +332,94 @@ describe('ScheduleService - V8 BE-V8-1 PD §3 + 条目 31/32 (Wave 11 academic �
     });
   });
 
+  describe('previewScheduleConflictsInDb - 保存前批量冲突预检', () => {
+    it('同时返回老师冲突和学员冲突，供前端提前标灰时间卡', async () => {
+      const repo = {
+        findConflictsForTeacher: jest.fn().mockResolvedValueOnce([
+          {
+            id: ULID32_SCH2,
+            teacherId: ULID32_T1,
+            startAt: new Date('2026-05-15T10:00:00Z'),
+            durationMin: 60,
+            endAt: new Date('2026-05-15T11:00:00Z'),
+            status: '已排课',
+            source: 'one_off',
+            createdByUserId: ULID32_USER_ACADEMIC,
+            createdByRole: 'academic',
+          },
+        ]),
+        findConflictsForStudents: jest.fn().mockResolvedValueOnce([
+          {
+            id: ULID32_SCH2,
+            teacherId: ULID32_T2,
+            startAt: new Date('2026-05-15T10:30:00Z'),
+            durationMin: 60,
+            endAt: new Date('2026-05-15T11:30:00Z'),
+            status: '已排课',
+            source: 'one_off',
+            createdByUserId: ULID32_USER_ACADEMIC,
+            createdByRole: 'academic',
+            conflictStudentId: ULID32_S1,
+          },
+        ]),
+      };
+      const serviceWithRepo = new ScheduleService(repo as never);
+
+      const res = await serviceWithRepo.previewScheduleConflictsInDb(
+        {
+          teacherId: ULID32_T1,
+          studentIds: [ULID32_S1],
+          candidates: [
+            { key: 'slot_0_0', startAt: new Date('2026-05-15T10:30:00Z'), durationMin: 60 },
+          ],
+          callerRole: 'academic',
+        },
+        'tenant_demo',
+        schedulableTeachers,
+      );
+
+      expect(res).toHaveLength(1);
+      expect(res[0].conflict).toBe(true);
+      expect(res[0].teacherConflicts[0].id).toBe(ULID32_SCH2);
+      expect(res[0].studentConflicts[0].studentId).toBe(ULID32_S1);
+      expect(repo.findConflictsForTeacher).toHaveBeenCalledWith(
+        'tenant_demo',
+        ULID32_T1,
+        new Date('2026-05-15T10:30:00Z'),
+        new Date('2026-05-15T11:30:00Z'),
+      );
+      expect(repo.findConflictsForStudents).toHaveBeenCalledWith(
+        'tenant_demo',
+        [ULID32_S1],
+        new Date('2026-05-15T10:30:00Z'),
+        new Date('2026-05-15T11:30:00Z'),
+      );
+    });
+
+    it('非教务角色预检也直接 403，不绕过排课权限', async () => {
+      const serviceWithRepo = new ScheduleService({
+        findConflictsForTeacher: jest.fn(),
+        findConflictsForStudents: jest.fn(),
+      } as never);
+
+      await expect(
+        serviceWithRepo.previewScheduleConflictsInDb(
+          {
+            teacherId: ULID32_T1,
+            studentIds: [ULID32_S1],
+            candidates: [
+              { key: 'slot_0_0', startAt: new Date('2026-05-15T10:30:00Z'), durationMin: 60 },
+            ],
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            callerRole: 'sales' as any,
+          },
+          'tenant_demo',
+          schedulableTeachers,
+        ),
+      ).rejects.toThrow(/ONLY_ACADEMIC_CAN_CREATE_SCHEDULE/);
+    });
+  });
+
   describe('createSchedule - 输入校验', () => {
     const baseInput = {
       teacherId: ULID32_T1,

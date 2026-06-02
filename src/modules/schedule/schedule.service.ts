@@ -123,6 +123,30 @@ export interface CreateScheduleInput {
   maxStudents?: number;
 }
 
+export interface ScheduleConflictPreviewCandidate {
+  key: string;
+  startAt: Date;
+  durationMin: number;
+}
+
+export interface ScheduleConflictPreviewResult {
+  key: string;
+  conflict: boolean;
+  teacherConflicts: Array<{
+    id: string;
+    teacherId: string;
+    startAt: Date;
+    endAt: Date;
+  }>;
+  studentConflicts: Array<{
+    id: string;
+    studentId: string;
+    teacherId: string;
+    startAt: Date;
+    endAt: Date;
+  }>;
+}
+
 @Injectable()
 export class ScheduleService {
   private readonly logger = new Logger(ScheduleService.name);
@@ -321,6 +345,74 @@ export class ScheduleService {
   }
 
   /**
+   * 排课保存前批量冲突预检。
+   *
+   * 仍保留 createScheduleInDb 的事务内硬校验作为最终保险；本方法只用于前端提前
+   * 标出「老师已有课 / 学员已有课」，避免用户点保存才被 409 打回。
+   */
+  async previewScheduleConflictsInDb(
+    input: {
+      teacherId: string;
+      studentIds: ReadonlyArray<string>;
+      candidates: ReadonlyArray<ScheduleConflictPreviewCandidate>;
+      callerRole: SchedulerRole;
+    },
+    tenantSchema: string,
+    schedulableTeachers: ReadonlyArray<{ id: string; userId?: string }>,
+  ): Promise<ScheduleConflictPreviewResult[]> {
+    if (!this.repo) throw new BadRequestException('ScheduleRepository not available');
+    this.assertConflictPreviewInput(input);
+
+    if (!isSchedulerRole(input.callerRole)) {
+      throw new ForbiddenException(
+        `ONLY_ACADEMIC_CAN_CREATE_SCHEDULE: callerRole=${input.callerRole}`,
+      );
+    }
+    const teacher = schedulableTeachers.find((t) => t.id === input.teacherId);
+    if (!teacher) {
+      throw new ForbiddenException(
+        `TEACHER_NOT_IN_ACADEMIC_CAMPUS: teacher ${input.teacherId} not in academic's campus or not active`,
+      );
+    }
+
+    const results: ScheduleConflictPreviewResult[] = [];
+    for (const candidate of input.candidates) {
+      const endAt = new Date(candidate.startAt.getTime() + candidate.durationMin * 60 * 1000);
+      const teacherConflicts = await this.repo.findConflictsForTeacher(
+        tenantSchema,
+        input.teacherId,
+        candidate.startAt,
+        endAt,
+      );
+      const studentConflicts = await this.repo.findConflictsForStudents(
+        tenantSchema,
+        input.studentIds,
+        candidate.startAt,
+        endAt,
+      );
+
+      results.push({
+        key: candidate.key,
+        conflict: teacherConflicts.length > 0 || studentConflicts.length > 0,
+        teacherConflicts: teacherConflicts.map((c) => ({
+          id: c.id,
+          teacherId: c.teacherId,
+          startAt: c.startAt,
+          endAt: c.endAt,
+        })),
+        studentConflicts: studentConflicts.map((c) => ({
+          id: c.id,
+          studentId: c.conflictStudentId,
+          teacherId: c.teacherId,
+          startAt: c.startAt,
+          endAt: c.endAt,
+        })),
+      });
+    }
+    return results;
+  }
+
+  /**
    * 2026-06-01 教务/校长/admin 周课表（本校全部课 / admin 全租户）
    *
    * - 教务（academic / academic_admin）+ 校长（boss）→ 本校（campusId 必填，含他人老师的课）
@@ -436,6 +528,41 @@ export class ScheduleService {
     }
     if (!input.currentUser?.id || input.currentUser.id.length !== 32) {
       throw new BadRequestException('currentUser.id must be 32-char ULID');
+    }
+  }
+
+  private assertConflictPreviewInput(input: {
+    teacherId: string;
+    studentIds: ReadonlyArray<string>;
+    candidates: ReadonlyArray<ScheduleConflictPreviewCandidate>;
+  }): void {
+    if (!input.teacherId || input.teacherId.length !== 32) {
+      throw new BadRequestException('teacherId must be 32-char ULID');
+    }
+    if (!input.studentIds || input.studentIds.length === 0) {
+      throw new BadRequestException('studentIds required (>=1)');
+    }
+    for (const sid of input.studentIds) {
+      if (!sid || sid.length !== 32) {
+        throw new BadRequestException(`studentId ${sid} must be 32-char ULID`);
+      }
+    }
+    if (!Array.isArray(input.candidates) || input.candidates.length === 0) {
+      throw new BadRequestException('candidates required (>=1)');
+    }
+    if (input.candidates.length > 50) {
+      throw new BadRequestException('candidates must be <= 50');
+    }
+    for (const c of input.candidates) {
+      if (!c.key || typeof c.key !== 'string') {
+        throw new BadRequestException('candidate.key required');
+      }
+      if (!c.startAt || Number.isNaN(c.startAt.getTime())) {
+        throw new BadRequestException(`candidate ${c.key} startAt invalid`);
+      }
+      if (!c.durationMin || c.durationMin <= 0 || c.durationMin > 480) {
+        throw new BadRequestException(`candidate ${c.key} durationMin must be in (0, 480]`);
+      }
     }
   }
 

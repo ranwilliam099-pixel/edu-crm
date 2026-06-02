@@ -21,6 +21,7 @@ import {
   ScheduleCalendarItem,
   ScheduleStudent,
   CreateScheduleInput,
+  ScheduleConflictPreviewResult,
   AttendanceStatus,
   SchedulerRole,
   isSchedulerRole,
@@ -426,6 +427,49 @@ export class ScheduleController {
   }
 
   /**
+   * POST /api/schedules/db/conflict-preview
+   *
+   * 保存前批量冲突预检：一次传入候选时间，返回每个时间是否与老师/学员已有课冲突。
+   * 最终安全仍以 createScheduleInDb 的事务内硬校验为准；本接口只用于前端提前
+   * 标灰冲突时间，避免用户点保存后才看到 409。
+   */
+  @Post('db/conflict-preview')
+  @HttpCode(HttpStatus.OK)
+  async previewScheduleConflictsInDb(
+    @Body()
+    body: {
+      tenantSchema?: string;
+      teacherId: string;
+      studentIds: string[];
+      candidates: Array<{ key: string; startAt: string; durationMin: number }>;
+    },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<ScheduleConflictPreviewResult[]> {
+    const tenantSchema = this.resolveTenantSchema(body.tenantSchema, req);
+    const { callerRole, currentUser } = this.assertCallerRoleAndDeriveContext(req);
+    const schedulableTeachers = await this.deriveSchedulableTeachers(
+      tenantSchema,
+      callerRole,
+      currentUser,
+      req.user?.campusId ?? null,
+    );
+    return this.service.previewScheduleConflictsInDb(
+      {
+        teacherId: body.teacherId,
+        studentIds: body.studentIds || [],
+        candidates: (body.candidates || []).map((c) => ({
+          key: c.key,
+          startAt: new Date(c.startAt),
+          durationMin: c.durationMin,
+        })),
+        callerRole,
+      },
+      tenantSchema,
+      schedulableTeachers,
+    );
+  }
+
+  /**
    * POST /api/schedules/db/list-by-teacher
    *
    * Sprint B.4-1 round 3 (Sprint E backlog #7 — A01 hardening 2026-05-13):
@@ -742,6 +786,18 @@ export class ScheduleController {
         tenantId: jwt.tenantId ?? '',
       },
     };
+  }
+
+  private resolveTenantSchema(
+    bodyTenantSchema: string | undefined,
+    req: AuthenticatedRequest,
+  ): string {
+    const headerTenantSchema = req.headers?.['x-tenant-schema'];
+    const raw = bodyTenantSchema || req.tenantSchema || (
+      Array.isArray(headerTenantSchema) ? headerTenantSchema[0] : headerTenantSchema
+    );
+    if (!raw) throw new BadRequestException('tenantSchema required');
+    return String(raw);
   }
 
   /**

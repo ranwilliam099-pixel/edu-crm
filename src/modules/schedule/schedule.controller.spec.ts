@@ -41,6 +41,7 @@ describe('ScheduleController — Wave 11 academic 唯一创建', () => {
   let svc: {
     createSchedule: jest.Mock;
     createScheduleInDb: jest.Mock;
+    previewScheduleConflictsInDb: jest.Mock;
     cancelSchedule: jest.Mock;
     completeSchedule: jest.Mock;
     listByTeacherInDb: jest.Mock;
@@ -125,6 +126,7 @@ describe('ScheduleController — Wave 11 academic 唯一创建', () => {
     svc = {
       createSchedule: jest.fn(),
       createScheduleInDb: jest.fn(),
+      previewScheduleConflictsInDb: jest.fn(),
       cancelSchedule: jest.fn(),
       completeSchedule: jest.fn(),
       listByTeacherInDb: jest.fn(),
@@ -762,6 +764,78 @@ describe('ScheduleController — Wave 11 academic 唯一创建', () => {
           actorRole: 'academic_admin',
         }),
       );
+    });
+  });
+
+  describe('previewScheduleConflictsInDb — 保存前冲突预检', () => {
+    it('academic 调用 → 从 JWT 派生角色和本校老师范围，调用 service 批量预检', async () => {
+      teacherRepo.listActiveInTenant.mockResolvedValueOnce([
+        teacherT1Row,
+        teacherT2Row,
+        teacherT3OtherCampus,
+      ]);
+      svc.previewScheduleConflictsInDb.mockResolvedValueOnce([
+        {
+          key: 'slot_0_0',
+          conflict: true,
+          teacherConflicts: [],
+          studentConflicts: [],
+        },
+      ]);
+
+      const res = await controller.previewScheduleConflictsInDb(
+        {
+          teacherId: TEACHER_T1,
+          studentIds: [STUDENT_S1],
+          candidates: [
+            { key: 'slot_0_0', startAt: '2026-06-02T10:00:00.000Z', durationMin: 90 },
+          ],
+        },
+        mkReq({
+          tenantSchema: TENANT,
+          headers: { 'x-tenant-schema': TENANT, 'user-agent': 'WeChatMP/8.0' },
+        }),
+      );
+
+      expect(res[0].conflict).toBe(true);
+      expect(teacherRepo.listActiveInTenant).toHaveBeenCalledWith(TENANT);
+      const callArgs = svc.previewScheduleConflictsInDb.mock.calls[0];
+      expect(callArgs[0]).toEqual(
+        expect.objectContaining({
+          teacherId: TEACHER_T1,
+          studentIds: [STUDENT_S1],
+          callerRole: 'academic',
+        }),
+      );
+      expect(callArgs[0].candidates[0].startAt).toEqual(new Date('2026-06-02T10:00:00.000Z'));
+      expect(callArgs[1]).toBe(TENANT);
+      expect(callArgs[2].map((t: { id: string }) => t.id).sort()).toEqual(
+        [TEACHER_T1, TEACHER_T2].sort(),
+      );
+    });
+
+    it('JWT role=sales → 403，不允许用预检接口探课表冲突', async () => {
+      await expect(
+        controller.previewScheduleConflictsInDb(
+          {
+            tenantSchema: TENANT,
+            teacherId: TEACHER_T1,
+            studentIds: [STUDENT_S1],
+            candidates: [
+              { key: 'slot_0_0', startAt: '2026-06-02T10:00:00.000Z', durationMin: 90 },
+            ],
+          },
+          mkReq({
+            user: {
+              sub: USER_SALES,
+              role: 'sales',
+              tenantId: 'tenant-x',
+              campusId: CAMPUS_X,
+            },
+          }),
+        ),
+      ).rejects.toThrow(/ONLY_ACADEMIC_CAN_CREATE_SCHEDULE/);
+      expect(svc.previewScheduleConflictsInDb).not.toHaveBeenCalled();
     });
   });
 
