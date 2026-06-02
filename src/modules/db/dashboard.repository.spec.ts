@@ -130,8 +130,13 @@ describe('DashboardRepository', () => {
   });
 
   describe('getSalesFunnel', () => {
-    it('aggregates 5 stages from opportunities table', async () => {
-      // opportunities by stage
+    // 2026-06-02 SSOT §3.-2 C — 漏斗重设计为 3 状态（following / trial / deal）
+    //   following = 初步接触 + 需求诊断 + 已预约试听
+    //   trial     = 已试听待转化 + 已出方案 + 谈单中
+    //   deal      = 已报名
+    //   已失单    = 流失终态，不计入 3 状态（仅入 lossReasons）
+    it('aggregates 3 buckets from opportunities table (following/trial/deal)', async () => {
+      // opportunities by stage（含已失单 — 验证不计入 3 状态）
       pg.tenantQuery.mockResolvedValueOnce([
         { stage: '初步接触', count: '50' },
         { stage: '需求诊断', count: '20' },
@@ -140,6 +145,7 @@ describe('DashboardRepository', () => {
         { stage: '已出方案', count: '12' },
         { stage: '谈单中', count: '8' },
         { stage: '已报名', count: '15' },
+        { stage: '已失单', count: '99' }, // 终态流失，不入 3 状态
       ]);
       // loss reasons
       pg.tenantQuery.mockResolvedValueOnce([
@@ -147,20 +153,32 @@ describe('DashboardRepository', () => {
         { reason: '时间不合适', count: '6' },
       ]);
       const f = await repo.getSalesFunnel(TENANT);
-      expect(f.stages).toHaveLength(5);
-      expect(f.stages[0].key).toBe('consult');
-      expect(f.stages[0].count).toBe(70); // 50+20
-      expect(f.stages[4].key).toBe('paid');
-      expect(f.stages[4].count).toBe(15);
+      expect(f.stages).toHaveLength(3);
+      expect(f.stages[0].key).toBe('following');
+      expect(f.stages[0].label).toBe('跟进中');
+      expect(f.stages[0].count).toBe(110); // 50+20+40
+      expect(f.stages[1].key).toBe('trial');
+      expect(f.stages[1].label).toBe('已试听');
+      expect(f.stages[1].count).toBe(45); // 25+12+8
+      expect(f.stages[2].key).toBe('deal');
+      expect(f.stages[2].label).toBe('成交');
+      expect(f.stages[2].count).toBe(15); // 已报名
+      // 已失单(99) 未计入任一状态 → 3 桶合计 = 110+45+15 = 170（不含 99）
+      expect(f.stages.reduce((s, st) => s + st.count, 0)).toBe(170);
+      // conversionPct 相邻转化：following→trial = 45/110, trial→deal = 15/45
+      expect(f.stages[1].conversionPct).toBe(Math.round((45 * 100) / 110));
+      expect(f.stages[2].conversionPct).toBe(Math.round((15 * 100) / 45));
       expect(f.overallConversion).toBeGreaterThan(0);
       expect(f.lossReasons).toHaveLength(2);
       expect(f.lossReasons[0].reason).toBe('价格高');
     });
 
-    it('returns zero stages + empty loss reasons when opportunities table missing', async () => {
+    it('returns 3 zero buckets + empty loss reasons when opportunities table missing', async () => {
       pg.tenantQuery.mockRejectedValue(new Error('no table'));
       const f = await repo.getSalesFunnel(TENANT);
-      expect(f.stages).toHaveLength(5);
+      expect(f.stages).toHaveLength(3);
+      expect(f.stages.map((s) => s.key)).toEqual(['following', 'trial', 'deal']);
+      expect(f.stages.map((s) => s.label)).toEqual(['跟进中', '已试听', '成交']);
       expect(f.stages.every((s) => s.count === 0)).toBe(true);
       expect(f.lossReasons).toEqual([]);
     });

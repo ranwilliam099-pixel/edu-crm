@@ -26,8 +26,9 @@ export interface AdminKpi {
 }
 
 export interface SalesFunnelStage {
-  key: string;
-  label: string;
+  // 2026-06-02 SSOT §3.-2 C — 漏斗重设计为 3 状态：following / trial / deal
+  key: 'following' | 'trial' | 'deal' | string;
+  label: string; // 跟进中 / 已试听 / 成交
   count: number;
   conversionPct: number;
 }
@@ -238,7 +239,7 @@ export class DashboardRepository {
 
   // ===================== Sales Funnel =====================
   /**
-   * 销售漏斗聚合 — V2 opportunities 表 8 阶段折叠为 5 阶段展示
+   * 销售漏斗聚合 — V2 opportunities 表 8 阶段折叠为 3 状态展示
    *
    * 数据来源（必须真接 V2）：
    *   tenant_xxx.opportunities (PRIMARY KEY id, stage, lost_reason, ...)
@@ -246,27 +247,27 @@ export class DashboardRepository {
    *     初步接触 / 需求诊断 / 已预约试听 / 已试听待转化 /
    *     已出方案 / 谈单中 / 已报名 / 已失单
    *
-   * UI 5 阶段映射：
-   *   consult   = 初步接触 + 需求诊断
-   *   contacted = 已预约试听
-   *   trial     = 已试听待转化
-   *   quoted    = 已出方案 + 谈单中
-   *   paid      = 已报名
+   * UI 3 状态映射（2026-06-02 SSOT §3.-2 C 走查续批 II — 逆转原 5 阶段展示）：
+   *   following = 初步接触 + 需求诊断 + 已预约试听   （跟进中）
+   *   trial     = 已试听待转化 + 已出方案 + 谈单中    （已试听）
+   *   deal      = 已报名                              （成交）
+   *
+   *   已失单 = 流失终态，不入 3 状态（保留下方「流失原因」lossReasons 区单独统计）。
+   *
+   * conversionPct（相邻阶段转化率）对 3 状态自然适用：跟进中 → 已试听 → 成交。
    *
    * 错误兜底：
-   *   - 表存在但无数据 → 返回 5 阶段全 0
-   *   - 表不存在（旧租户 schema 缺迁移）→ 返回 5 阶段全 0 + lossReasons 空数组
+   *   - 表存在但无数据 → 返回 3 状态全 0
+   *   - 表不存在（旧租户 schema 缺迁移）→ 返回 3 状态全 0 + lossReasons 空数组
    */
   async getSalesFunnel(
     tenantSchema: string,
     options: { campusId?: string; ownerUserId?: string } = {},
   ): Promise<SalesFunnel> {
     const STAGE_MAP: Array<{ key: string; label: string; pgStages: string[] }> = [
-      { key: 'consult',   label: '咨询',   pgStages: ['初步接触', '需求诊断'] },
-      { key: 'contacted', label: '已联系', pgStages: ['已预约试听'] },
-      { key: 'trial',     label: '已试听', pgStages: ['已试听待转化'] },
-      { key: 'quoted',    label: '已报价', pgStages: ['已出方案', '谈单中'] },
-      { key: 'paid',      label: '已付费', pgStages: ['已报名'] },
+      { key: 'following', label: '跟进中', pgStages: ['初步接触', '需求诊断', '已预约试听'] },
+      { key: 'trial',     label: '已试听', pgStages: ['已试听待转化', '已出方案', '谈单中'] },
+      { key: 'deal',      label: '成交',   pgStages: ['已报名'] },
     ];
 
     let stages: SalesFunnelStage[] = [];
@@ -305,7 +306,7 @@ export class DashboardRepository {
         stageCounts.set(r.stage, parseInt(r.count, 10));
       }
 
-      // 聚合 5 阶段
+      // 聚合 3 状态
       const stageNumbers = STAGE_MAP.map((m) => ({
         key: m.key,
         label: m.label,
@@ -328,11 +329,9 @@ export class DashboardRepository {
       // opportunities 表不存在 → 返回零值（新租户尚未启用销售漏斗）
       this.logger.debug(`[FUNNEL] ${tenantSchema}: ${(e as Error).message}`);
       stages = [
-        { key: 'consult',   label: '咨询',   count: 0, conversionPct: 0 },
-        { key: 'contacted', label: '已联系', count: 0, conversionPct: 0 },
+        { key: 'following', label: '跟进中', count: 0, conversionPct: 0 },
         { key: 'trial',     label: '已试听', count: 0, conversionPct: 0 },
-        { key: 'quoted',    label: '已报价', count: 0, conversionPct: 0 },
-        { key: 'paid',      label: '已付费', count: 0, conversionPct: 0 },
+        { key: 'deal',      label: '成交',   count: 0, conversionPct: 0 },
       ];
     }
 
