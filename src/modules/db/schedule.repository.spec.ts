@@ -333,3 +333,96 @@ describe('ScheduleRepository — V32 insertWithStudents class_type + max_student
     });
   });
 });
+
+// ============================================================
+// 2026-06-02 listLessonsByStudent — 「从学员页写反馈」页中页数据源
+//   - schedule_students JOIN schedules + LEFT JOIN lesson_feedbacks(hasFeedback/feedbackId)
+//   - LEFT JOIN teachers(teacherName) + course_products(subject)
+//   - ORDER BY start_at DESC / limit 默认 50 上限 200（controller 钳制，repo 默认 50）
+// ============================================================
+describe('ScheduleRepository — listLessonsByStudent (by-student 课次 + 反馈状态)', () => {
+  let repo: ScheduleRepository;
+  let pg: { tenantQuery: jest.Mock; query: jest.Mock; withClient: jest.Mock; transaction: jest.Mock };
+
+  const TENANT = 'tenant_lessons_aaaa';
+  const STUDENT = 'stu00000000000000000000000000S01';
+
+  beforeEach(async () => {
+    pg = { tenantQuery: jest.fn(), query: jest.fn(), withClient: jest.fn(), transaction: jest.fn() };
+    const m = await Test.createTestingModule({
+      providers: [ScheduleRepository, { provide: PgPoolService, useValue: pg }],
+    }).compile();
+    repo = m.get(ScheduleRepository);
+  });
+
+  it('映射 hasFeedback/feedbackId/subject/teacherName + SQL 含 LEFT JOIN lesson_feedbacks + ORDER BY start_at DESC', async () => {
+    const start1 = new Date('2026-06-01T10:00:00Z');
+    const start2 = new Date('2026-05-20T10:00:00Z');
+    pg.tenantQuery.mockResolvedValueOnce([
+      // 已写反馈 → feedback_id 非空 → hasFeedback true
+      {
+        id: 'sch00000000000000000000000000S01',
+        start_at: start1,
+        duration_min: 60,
+        teacher_name: '周老师',
+        subject: '小学数学一对一',
+        feedback_id: 'lf000000000000000000000000000F01',
+      },
+      // 未写反馈 → feedback_id NULL → hasFeedback false；teacher/course 缺失 → null
+      {
+        id: 'sch00000000000000000000000000S02',
+        start_at: start2,
+        duration_min: 90,
+        teacher_name: null,
+        subject: null,
+        feedback_id: null,
+      },
+    ]);
+
+    const items = await repo.listLessonsByStudent(TENANT, STUDENT);
+
+    expect(items).toEqual([
+      {
+        scheduleId: 'sch00000000000000000000000000S01',
+        startAt: start1,
+        subject: '小学数学一对一',
+        teacherName: '周老师',
+        durationMin: 60,
+        hasFeedback: true,
+        feedbackId: 'lf000000000000000000000000000F01',
+      },
+      {
+        scheduleId: 'sch00000000000000000000000000S02',
+        startAt: start2,
+        subject: null,
+        teacherName: null,
+        durationMin: 90,
+        hasFeedback: false,
+        feedbackId: null,
+      },
+    ]);
+
+    // SQL 形态校验：tenantSchema 透传 + 参数化 studentId/limit/offset + 关键 JOIN/ORDER
+    expect(pg.tenantQuery).toHaveBeenCalledTimes(1);
+    const [schemaArg, sql, params] = pg.tenantQuery.mock.calls[0];
+    expect(schemaArg).toBe(TENANT);
+    expect(sql).toMatch(/FROM schedule_students ss/);
+    expect(sql).toMatch(/JOIN schedules s ON s\.id = ss\.schedule_id/);
+    expect(sql).toMatch(/LEFT JOIN lesson_feedbacks lf/);
+    expect(sql).toMatch(/lf\.schedule_id = ss\.schedule_id/);
+    expect(sql).toMatch(/lf\.student_id = ss\.student_id/);
+    expect(sql).toMatch(/LEFT JOIN teachers t ON t\.id = s\.teacher_id/);
+    expect(sql).toMatch(/ORDER BY s\.start_at DESC/);
+    expect(sql).toMatch(/WHERE ss\.student_id = \$1/);
+    // 默认 limit 50 / offset 0
+    expect(params).toEqual([STUDENT, 50, 0]);
+  });
+
+  it('limit/offset 透传到参数（controller 已钳制，repo 原样下发）', async () => {
+    pg.tenantQuery.mockResolvedValueOnce([]);
+    const items = await repo.listLessonsByStudent(TENANT, STUDENT, { limit: 200, offset: 40 });
+    expect(items).toEqual([]);
+    const [, , params] = pg.tenantQuery.mock.calls[0];
+    expect(params).toEqual([STUDENT, 200, 40]);
+  });
+});

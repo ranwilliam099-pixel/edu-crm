@@ -17,6 +17,7 @@ import { MonthlyReportService } from './monthly-report.service';
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
 import { ParentRepository } from '../db/parent.repository';
+import { ScheduleRepository } from '../db/schedule.repository';
 import { AuditLogRepository } from '../db/audit-log.repository';
 import { ContentModerationService } from '../security/content-moderation.service';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
@@ -1118,6 +1119,142 @@ describe('FeedbackController — Sprint B self-check', () => {
         expect(parentRepo.findChildrenByParent).not.toHaveBeenCalled();
         expect(reportSvc.markParentReadInDb).toHaveBeenCalledTimes(1);
       });
+    });
+  });
+
+  // ============================================================
+  // 2026-06-02 listLessonsByStudentInDb — 「从学员页写反馈」by-student 课次列表
+  //   - owner-scope（同款 assertByStudentScope）：teacher own-class / academic 本校；越权 403
+  //   - hasFeedback 标注正确（来自 repo LEFT JOIN lesson_feedbacks，controller 原样透传）
+  //   - limit/offset 钳制（默认 50 / 上限 200）
+  // ============================================================
+  describe('listLessonsByStudentInDb — by-student 课次 + 反馈状态', () => {
+    const STUDENT = 'stu00000000000000000000000000S001';
+    const SALES_A = 'salesA0000000000000000000000A001';
+    let scheduleRepo: { listLessonsByStudent: jest.Mock };
+    let ctrl: FeedbackController;
+
+    const ITEMS = [
+      {
+        scheduleId: 'sch00000000000000000000000000S01',
+        startAt: new Date('2026-06-01T10:00:00Z'),
+        subject: '小学数学一对一',
+        teacherName: '周老师',
+        durationMin: 60,
+        hasFeedback: true,
+        feedbackId: 'lf000000000000000000000000000F01',
+      },
+      {
+        scheduleId: 'sch00000000000000000000000000S02',
+        startAt: new Date('2026-05-20T10:00:00Z'),
+        subject: null,
+        teacherName: '周老师',
+        durationMin: 90,
+        hasFeedback: false,
+        feedbackId: null,
+      },
+    ];
+
+    function mockStudent(
+      overrides: Partial<{ ownerSalesId: string | null; assignedTeacherId: string | null }> = {},
+    ) {
+      studentRepo.findBrief.mockResolvedValueOnce({
+        id: STUDENT,
+        studentName: '小明',
+        customerId: 'cust00000000000000000000000000A1',
+        ownerSalesId: SALES_A,
+        assignedTeacherId: TEACHER_T1,
+        ownerChangedAt: null,
+        ownerChangeReason: null,
+        gradeOrAge: null,
+        currentGrade: null,
+        gradeBaseYear: null,
+        intendedSubject: null,
+        ...overrides,
+      });
+    }
+
+    const body = { tenantSchema: TENANT };
+
+    beforeEach(() => {
+      scheduleRepo = { listLessonsByStudent: jest.fn().mockResolvedValue(ITEMS) };
+      // 含 scheduleRepo 的 controller（第 9 位参数）；shared controller(8 参) scheduleRepo=undefined。
+      ctrl = new FeedbackController(
+        feedbackSvc as unknown as LessonFeedbackService,
+        consumptionSvc as unknown as CourseConsumptionService,
+        reportSvc as unknown as MonthlyReportService,
+        teacherRepo as unknown as TeacherRepository,
+        contentModeration as unknown as ContentModerationService,
+        auditLog as unknown as AuditLogRepository,
+        studentRepo as unknown as StudentRepository,
+        parentRepo as unknown as ParentRepository,
+        scheduleRepo as unknown as ScheduleRepository,
+      );
+    });
+
+    it('teacher 自己班学员 → 放行 + hasFeedback 标注正确（透传 repo）', async () => {
+      mockStudent({ assignedTeacherId: TEACHER_T1 });
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1); // U1 → T1
+
+      const r = await ctrl.listLessonsByStudentInDb(STUDENT, body, mkReq());
+
+      expect(r).toEqual({ items: ITEMS });
+      // hasFeedback 标注：第 1 节已写(true)、第 2 节未写(false) → 与 repo LEFT JOIN 结果一致
+      expect(r.items[0].hasFeedback).toBe(true);
+      expect(r.items[0].feedbackId).toBe('lf000000000000000000000000000F01');
+      expect(r.items[1].hasFeedback).toBe(false);
+      expect(r.items[1].feedbackId).toBeNull();
+      // 默认 limit 50 / offset 0
+      expect(scheduleRepo.listLessonsByStudent).toHaveBeenCalledWith(TENANT, STUDENT, {
+        limit: 50,
+        offset: 0,
+      });
+    });
+
+    it('teacher 非自己班学员（assignedTeacherId !== 反查 teachers.id）→ 403，不查课次', async () => {
+      mockStudent({ assignedTeacherId: TEACHER_T2 }); // 学员归 T2
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1); // 调用者反查得 T1
+      await expect(
+        ctrl.listLessonsByStudentInDb(STUDENT, body, mkReq()),
+      ).rejects.toThrow(ForbiddenException);
+      expect(scheduleRepo.listLessonsByStudent).not.toHaveBeenCalled();
+    });
+
+    it('academic 本校任意学员 → 放行（不 owner 收口）', async () => {
+      mockStudent({ ownerSalesId: 'salesB', assignedTeacherId: TEACHER_T2 });
+      const r = await ctrl.listLessonsByStudentInDb(
+        STUDENT,
+        body,
+        mkReq({ user: { sub: 'acd000000000000000000000000A001', role: 'academic', tenantId: 't', campusId: 'c' } }),
+      );
+      expect(r.items).toEqual(ITEMS);
+      expect(scheduleRepo.listLessonsByStudent).toHaveBeenCalledTimes(1);
+      // academic 不走 teacher own-class 反查
+      expect(teacherRepo.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it('limit 钳制：>200 → 200；offset 透传', async () => {
+      mockStudent({ assignedTeacherId: TEACHER_T2 });
+      await ctrl.listLessonsByStudentInDb(
+        STUDENT,
+        { tenantSchema: TENANT, limit: 9999, offset: 30 },
+        mkReq({ user: { sub: 'adm000000000000000000000000A001', role: 'admin', tenantId: null, campusId: null } }),
+      );
+      expect(scheduleRepo.listLessonsByStudent).toHaveBeenCalledWith(TENANT, STUDENT, {
+        limit: 200,
+        offset: 30,
+      });
+    });
+
+    it('学员不存在（findBrief=null）→ 放行（避免 enumeration 侧信道，返空 items）', async () => {
+      studentRepo.findBrief.mockResolvedValueOnce(null);
+      const r = await ctrl.listLessonsByStudentInDb(
+        STUDENT,
+        body,
+        mkReq({ user: { sub: 'adm000000000000000000000000A001', role: 'admin', tenantId: null, campusId: null } }),
+      );
+      // findBrief=null → scope helper 跳过；scheduleRepo 仍被调用返回 ITEMS（mock），证明放行
+      expect(r.items).toEqual(ITEMS);
     });
   });
 });

@@ -461,6 +461,71 @@ export class ScheduleRepository {
     };
   }
 
+  /**
+   * 2026-06-02 「从学员页写反馈」页中页数据源（Sprint Y by-student 排课接口缺口补齐）
+   *
+   * 列某学员的所有课次（schedule_students JOIN schedules）+ 每节是否已写该生反馈：
+   *   - LEFT JOIN lesson_feedbacks (同 schedule_id + student_id) → hasFeedback / feedbackId
+   *     （lesson_feedbacks UNIQUE(schedule_id, student_id)，故 LEFT JOIN 至多 1 行，不放大行数）
+   *   - LEFT JOIN teachers 取 teacherName（schedules.teacher_id → teachers.id，仿 findByIdWithRoster；
+   *     teacher 档案被删/缺失 → teacher_name NULL → teacherName=null，前端显「—」）
+   *   - subject 取课程产品名（COALESCE(course_products.product_name)；临时辅导无产品 → null），
+   *     与 lesson roster / 预览的「科目/课程」口径一致（schedules 表本身无独立 subject 列）
+   *
+   * 排序 start_at DESC（最近的课在前，前端从学员页选最近一节去补反馈）。
+   * 已取消课（status='已取消'）一并返回（老师可能要看历史；如需过滤前端按 status 处理）。
+   *
+   * 安全：owner-scope 在 controller 层（assertStudentByStudentScope）已收口，repo 仅按 studentId
+   *   参数化查询；tenantQuery 保证租户 schema 隔离。limit/offset 由 controller 钳制（默认 50 / 上限 200）。
+   */
+  async listLessonsByStudent(
+    tenantSchema: string,
+    studentId: string,
+    options: { limit?: number; offset?: number } = {},
+  ): Promise<
+    Array<{
+      scheduleId: string;
+      startAt: Date;
+      subject: string | null;
+      teacherName: string | null;
+      durationMin: number;
+      hasFeedback: boolean;
+      feedbackId: string | null;
+    }>
+  > {
+    const limit = options.limit ?? 50;
+    const offset = options.offset ?? 0;
+    const rows = await this.pg.tenantQuery<any>(
+      tenantSchema,
+      `SELECT s.id,
+              s.start_at,
+              s.duration_min,
+              t.name AS teacher_name,
+              cp.product_name AS subject,
+              lf.id AS feedback_id
+         FROM schedule_students ss
+         JOIN schedules s ON s.id = ss.schedule_id
+         LEFT JOIN teachers t ON t.id = s.teacher_id
+         LEFT JOIN course_products cp ON cp.id = s.course_product_id
+         LEFT JOIN lesson_feedbacks lf
+                ON lf.schedule_id = ss.schedule_id
+               AND lf.student_id = ss.student_id
+        WHERE ss.student_id = $1
+        ORDER BY s.start_at DESC
+        LIMIT $2 OFFSET $3`,
+      [studentId, limit, offset],
+    );
+    return rows.map((r) => ({
+      scheduleId: r.id,
+      startAt: r.start_at,
+      subject: r.subject ?? null,
+      teacherName: r.teacher_name ?? null,
+      durationMin: Number(r.duration_min),
+      hasFeedback: r.feedback_id != null,
+      feedbackId: r.feedback_id ?? null,
+    }));
+  }
+
   async listByTeacher(
     tenantSchema: string,
     teacherId: string,

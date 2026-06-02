@@ -43,6 +43,7 @@ import { ActorRole, AuditLogRepository, normalizeActorRole } from '../db/audit-l
 import { TeacherRepository } from '../db/teacher.repository';
 import { StudentRepository } from '../db/student.repository';
 import { ParentRepository } from '../db/parent.repository';
+import { ScheduleRepository } from '../db/schedule.repository';
 import { ContentModerationService } from '../security/content-moderation.service';
 // 2026-06-01 同租户 by-student IDOR 修复：listByStudent 缺 owner-scope（teacher 可读非自己班、
 //   sales 可读非自己客户学员反馈）→ 复用 contract by-student 同款 scope（抽成共享 helper）。
@@ -89,6 +90,11 @@ export class FeedbackController {
     //   middleware 仅验 parent↔租户，本 helper 补 parent↔student。@Optional + 构造末尾不破坏现有 spec
     //   （第 8 参 undefined）；由 @Global DbModule 注入，生产 / e2e 必有。
     @Optional() private readonly parentRepo?: ParentRepository,
+    // 2026-06-02 「从学员页写反馈」页中页：列某学员课次 + 每节反馈状态（by-student 排课接口）。
+    //   排课查询属 ScheduleRepository 职责（schedule_students/schedules/lesson_feedbacks），
+    //   非 feedback 脱敏逻辑 → 直接注入 repo。@Optional + 构造末尾不破坏现有 spec（第 9 参 undefined）；
+    //   由 @Global DbModule 注入（已 export），生产 / e2e 必有。
+    @Optional() private readonly scheduleRepo?: ScheduleRepository,
   ) {}
 
   /**
@@ -491,6 +497,65 @@ export class FeedbackController {
       { limit: body.limit, offset: body.offset },
       req.user?.role,
     );
+  }
+
+  /**
+   * POST db/students/:studentId/lessons — 列某学员的课次（含反馈状态）
+   *
+   * 2026-06-02 「从学员详情页写反馈」页中页数据源（Sprint Y by-student 排课接口缺口补齐）：
+   *   老师反馈按「课次(schedule) × 学员」写（lesson_feedbacks(schedule_id, student_id)）。前端从学员页
+   *   发起写反馈，需先列出该学员的所有课次 + 每节是否已写反馈，老师选一节去填/改。
+   *   返回 { items: [{ scheduleId, startAt, subject, teacherName, durationMin, hasFeedback, feedbackId }] }。
+   *
+   * RBAC（SSOT §4.1 / §5.1）：仅「学员线 + 反馈相关」角色：
+   *   - teacher（自己班）/ academic / academic_admin / boss / admin
+   *   - **sales / sales_manager / finance / hr / marketing 不放**（不写反馈、不需此页中页；
+   *     与 feedbacks by-student 端点的 marketing「只读学习表现」不同——此端点是写反馈的入口选课列表，
+   *     非学习表现展示，故收窄到反馈相关角色）。
+   *
+   * owner-scope（与 students/:id/feedbacks 同款 assertByStudentScope，同租户 IDOR 收口）：
+   *   - teacher 只看自己班学员（assignedTeacherId === 反查 teachers.id）；
+   *   - academic / academic_admin / admin / boss 本校放行；
+   *   - 越权（传他人班学员 studentId）→ ForbiddenException（detailed reason 落服务端日志，不回 client）。
+   *   注：parent c 端无此端点（@Roles 无 parent，且 isParentDbPath 不含本路径），故 parent 分支不触发。
+   */
+  @Post('db/students/:studentId/lessons')
+  @UseGuards(TenantScopeGuard, RbacGuard)
+  @Roles('teacher', 'academic', 'academic_admin', 'admin', 'boss')
+  @HttpCode(HttpStatus.OK)
+  async listLessonsByStudentInDb(
+    @Param('studentId') studentId: string,
+    @Body() body: { tenantSchema: string; limit?: number; offset?: number },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{
+    items: Array<{
+      scheduleId: string;
+      startAt: Date;
+      subject: string | null;
+      teacherName: string | null;
+      durationMin: number;
+      hasFeedback: boolean;
+      feedbackId: string | null;
+    }>;
+  }> {
+    // 2026-06-02 同租户 by-student IDOR 收口（复用 feedbacks/homework 同款 helper）
+    //   - teacher 只看自己班；academic/academic_admin/admin/boss 本校放行；越权 → 403
+    await this.assertByStudentScope(studentId, body.tenantSchema, req, 'student-lessons');
+
+    if (!this.scheduleRepo) {
+      // isolated module unit spec 兜底（生产 / e2e @Global DbModule 必有）
+      return { items: [] };
+    }
+    // limit 默认 50 / 上限 200（防大查询）；offset 非负
+    const limit = Math.min(Math.max(Number(body.limit) || 50, 1), 200);
+    const offset = Math.max(Number(body.offset) || 0, 0);
+    // repo 方法签名 (tenantSchema, studentId, options)
+    const items = await this.scheduleRepo.listLessonsByStudent(
+      body.tenantSchema,
+      studentId,
+      { limit, offset },
+    );
+    return { items };
   }
 
   /**
