@@ -79,8 +79,10 @@ describe('CourseProductRepository (V29 R6)', () => {
       pg.tenantQuery.mockResolvedValueOnce([]);
       await repo.list(TENANT);
       const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      // 2026-06-02 业务审 BLOCKER 修：在售优先用 CASE（collation 无关），不用 status DESC
+      //   （'上架' E4B88A < '下架' E4B88B，DESC 会把下架排前 → 与「在售优先」相反）
       expect(sql).toMatch(
-        /ORDER BY cp\.status DESC,\s*COALESCE\(sc\.sales_count, 0\) DESC,\s*cp\.created_at DESC/,
+        /ORDER BY \(CASE WHEN cp\.status = '上架' THEN 0 ELSE 1 END\),\s*COALESCE\(sc\.sales_count, 0\) DESC,\s*cp\.created_at DESC/,
       );
     });
 

@@ -135,7 +135,7 @@ export class CourseProductRepository {
             GROUP BY course_product_id
          ) sc ON sc.course_product_id = cp.id
          ${where}
-         ORDER BY cp.status DESC, COALESCE(sc.sales_count, 0) DESC, cp.created_at DESC
+         ORDER BY (CASE WHEN cp.status = '上架' THEN 0 ELSE 1 END), COALESCE(sc.sales_count, 0) DESC, cp.created_at DESC
          LIMIT $1 OFFSET $2`,
       [limit, offset],
     );
