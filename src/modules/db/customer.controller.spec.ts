@@ -20,6 +20,7 @@ import { CustomerRepository, Customer, CreateCustomerResult } from './customer.r
 import { AuthenticatedRequest, JwtPayload, TenantRole } from '../auth/jwt-payload.interface';
 import { AuditLogRepository } from './audit-log.repository';
 import { ContentModerationService } from '../security/content-moderation.service';
+import { CampusRepository } from './campus.repository';
 
 describe('CustomerController (Sprint B.3 字段级权限)', () => {
   let controller: CustomerController;
@@ -31,16 +32,23 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
     listFollowLog: jest.Mock;
   };
   let contentModeration: { enforceStaffText: jest.Mock };
+  // 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2）：admin override ∈ 本租户 campuses 校验
+  let campusRepo: { findById: jest.Mock };
 
   const TENANT_A = 'TENANTA00000000000000000000000A1';
   const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const CAMPUS_A = 'campus_A0000000000000000000000A01';
+  const CAMPUS_B = 'campusB00000000000000000000000B1';
   const SALES_A = 'salesA00000000000000000000000A01';
   const SALES_B = 'salesB00000000000000000000000A02';
   const CUSTOMER_ID = 'opp00000000000000000000000000A01';
 
-  function jwt(role: TenantRole, sub = SALES_A): JwtPayload {
-    return { sub, tenantId: TENANT_A, role, campusId: CAMPUS_A };
+  function jwt(
+    role: TenantRole,
+    sub = SALES_A,
+    campusId: string | null = CAMPUS_A,
+  ): JwtPayload {
+    return { sub, tenantId: TENANT_A, role, campusId };
   }
 
   function req(user?: JwtPayload): AuthenticatedRequest {
@@ -82,9 +90,24 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
       listFollowLog: jest.fn(),
     } as any;
     contentModeration = { enforceStaffText: jest.fn().mockResolvedValue(undefined) };
+    // §3.-2 D: 默认 findById 命中本租户校区 → admin override 校验通过；
+    //   不存在/跨租户场景在用例内 mockResolvedValueOnce(null)。
+    campusRepo = {
+      findById: jest.fn().mockImplementation((tenantId: string, id: string) =>
+        Promise.resolve(
+          tenantId === TENANT_A
+            ? { id, tenantId: TENANT_A, name: '分校区', status: 'active' }
+            : null,
+        ),
+      ),
+    };
     controller = new CustomerController(
       repo as unknown as CustomerRepository,
       contentModeration as unknown as ContentModerationService,
+      // auditLog @Optional (位置 3) — 本批不验 / parentService @Optional (位置 4)
+      undefined,
+      undefined,
+      campusRepo as unknown as CampusRepository,
     );
   });
 
@@ -325,9 +348,10 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
       ]);
       const r = await controller.listPool(
         TENANT_SCHEMA,
-        undefined,
-        undefined,
-        undefined,
+        undefined, // source
+        undefined, // campusId (§3.-2 D 增量 2)
+        undefined, // limit
+        undefined, // offset
         req(jwt('sales', SALES_A)),
       );
       expect(r.items[0].phone).toBe('13800138000');
@@ -338,12 +362,142 @@ describe('CustomerController (Sprint B.3 字段级权限)', () => {
       repo.listPool.mockResolvedValueOnce([customerFixture({ ownerUserId: null })]);
       const r = await controller.listPool(
         TENANT_SCHEMA,
-        undefined,
-        undefined,
-        undefined,
+        undefined, // source
+        undefined, // campusId (§3.-2 D 增量 2)
+        undefined, // limit
+        undefined, // offset
         req(jwt('admin')),
       );
       expect(r.items[0].phone).toBe('13800138000');
+    });
+  });
+
+  // ============================================================
+  // 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2）
+  //   - admin 经 @Query('campusId') 选具体校区 override（校验 ∈ 本租户 campuses）
+  //   - 非 admin（含 sales_manager/sales/boss）恒用 JWT.campusId（A04 防越权选他校）
+  //   验证 repo 收到的 effective campusId（all/pool 两端点）。
+  // ============================================================
+  describe('§3.-2 D campus override (listAllForBoss / listPool)', () => {
+    it('listAllForBoss admin override 单校（∈ 本租户）→ repo 收 campusId=override（查 repo）', async () => {
+      repo.listAllForBoss.mockResolvedValueOnce([]);
+      await controller.listAllForBoss(
+        TENANT_SCHEMA,
+        undefined, // ownerFilter
+        undefined, // stage
+        CAMPUS_B, // campusId override
+        undefined, // limit
+        undefined, // offset
+        req(jwt('admin', 'adminUid000000000000000000000A01', CAMPUS_A)),
+      );
+      expect(campusRepo.findById).toHaveBeenCalledWith(TENANT_A, CAMPUS_B);
+      expect(repo.listAllForBoss).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({ campusId: CAMPUS_B }),
+      );
+    });
+
+    it('listAllForBoss admin override 校区不存在（findById null）→ 回退 JWT.campusId', async () => {
+      campusRepo.findById.mockResolvedValueOnce(null);
+      repo.listAllForBoss.mockResolvedValueOnce([]);
+      await controller.listAllForBoss(
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        CAMPUS_B,
+        undefined,
+        undefined,
+        req(jwt('admin', 'adminUid000000000000000000000A01', CAMPUS_A)),
+      );
+      expect(repo.listAllForBoss).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({ campusId: CAMPUS_A }),
+      );
+    });
+
+    it('listAllForBoss admin JWT.campusId=null + 无 override → repo 收 campusId=undefined（全返兜底）', async () => {
+      repo.listAllForBoss.mockResolvedValueOnce([]);
+      await controller.listAllForBoss(
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        req(jwt('admin', 'adminUid000000000000000000000A01', null)),
+      );
+      expect(repo.listAllForBoss).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({ campusId: undefined }),
+      );
+    });
+
+    it('listAllForBoss sales_manager 传 override → 忽略 override 恒 JWT.campusId（不查 repo）', async () => {
+      repo.listAllForBoss.mockResolvedValueOnce([]);
+      await controller.listAllForBoss(
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        CAMPUS_B, // sales_manager 传他校 campusId
+        undefined,
+        undefined,
+        req(jwt('sales_manager', SALES_A, CAMPUS_A)),
+      );
+      expect(campusRepo.findById).not.toHaveBeenCalled();
+      expect(repo.listAllForBoss).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({ campusId: CAMPUS_A }),
+      );
+    });
+
+    it('listPool admin override 单校（∈ 本租户）→ repo 收 campusId=override（查 repo）', async () => {
+      repo.listPool.mockResolvedValueOnce([]);
+      await controller.listPool(
+        TENANT_SCHEMA,
+        undefined, // source
+        CAMPUS_B, // campusId override
+        undefined, // limit
+        undefined, // offset
+        req(jwt('admin', 'adminUid000000000000000000000A01', CAMPUS_A)),
+      );
+      expect(campusRepo.findById).toHaveBeenCalledWith(TENANT_A, CAMPUS_B);
+      expect(repo.listPool).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({ campusId: CAMPUS_B }),
+      );
+    });
+
+    it('listPool sales 传 override → 忽略 override 恒 JWT.campusId（本校公海，不查 repo）', async () => {
+      repo.listPool.mockResolvedValueOnce([]);
+      await controller.listPool(
+        TENANT_SCHEMA,
+        undefined,
+        CAMPUS_B, // sales 传他校 campusId
+        undefined,
+        undefined,
+        req(jwt('sales', SALES_A, CAMPUS_A)),
+      );
+      expect(campusRepo.findById).not.toHaveBeenCalled();
+      expect(repo.listPool).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({ campusId: CAMPUS_A }),
+      );
+    });
+
+    it('listPool admin JWT.campusId=null + 无 override → repo 收 campusId=undefined（全返兜底）', async () => {
+      repo.listPool.mockResolvedValueOnce([]);
+      await controller.listPool(
+        TENANT_SCHEMA,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        req(jwt('admin', 'adminUid000000000000000000000A01', null)),
+      );
+      expect(repo.listPool).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        expect.objectContaining({ campusId: undefined }),
+      );
     });
   });
 

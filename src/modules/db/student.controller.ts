@@ -43,6 +43,11 @@ import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.r
 //   - 显式 @UseInterceptors 仅语义标注（与 parent-binding/teacher-showcase 写端点一致约定）
 //   - 前端 onLoad 生成稳定 contractId + 复用同一 Idempotency-Key → 命中缓存返首次结果，不重复落库
 import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
+// 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2 主 list 端点）：
+//   admin 可经 body.campusId 选具体校区 override（校验 ∈ 本租户 campuses）；
+//   非 admin（含 boss）恒用 JWT.campusId（A04 防越权选他校）。
+import { CampusRepository } from './campus.repository';
+import { resolveEffectiveCampusId } from '../../common/campus-scope/resolve-effective-campus';
 
 /**
  * StudentController — V28 学生归属转移 HTTP 暴露
@@ -74,6 +79,9 @@ export class StudentController {
     //   - @Optional：unit spec 直接 new 不传也能跑（兼容现有 spec 测试）
     //   - fail-open：log() 写失败不阻塞主业务
     @Optional() private readonly auditLog?: AuditLogRepository,
+    // 2026-06-02 SSOT §3.-2 D：校验 admin override ∈ 本租户 campuses
+    //   @Optional isolated unit spec 不传 → resolveEffectiveCampusId 回退 JWT.campusId
+    @Optional() private readonly campusRepo?: CampusRepository,
   ) {}
 
   /**
@@ -414,13 +422,25 @@ export class StudentController {
       assignedTeacherId = ownTeacher.id;
     }
 
+    // 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2）：替代 #18「前端裸传 body.campusId」。
+    //   - admin 在首页选具体校区 → body.campusId override（校验 ∈ 本租户 campuses）。
+    //   - 非 admin（含 boss/academic/academic_admin/sales/sales_manager/marketing/teacher）恒用
+    //     JWT.campusId（A04 防越权选他校；这些角色均单校必有 campusId，helper 忽略 override）。
+    //   - owner/teacher scope（上方 ownerSalesId / assignedTeacherId）与 campus 正交，不受影响。
+    //   - effective 为 null（admin 跨校 JWT.campusId=null 且无 override）→ campusId=undefined
+    //     （既有「不加 WHERE 全返」兜底；明心 admin 单校 JWT.campusId 非 null → 本校）。
+    const effectiveCampusId = await resolveEffectiveCampusId(
+      req,
+      body.campusId,
+      this.campusRepo,
+    );
+
     const items = await this.repo.listAll(body.tenantSchema, {
       limit: body.limit ? Math.min(body.limit, 200) : 100,
       offset: body.offset || 0,
       ownerSalesId,
       assignedTeacherId,
-      // 2026-05-30 #18: 透传 campusId（不传 → repo 不加 WHERE，全返）
-      campusId: body.campusId,
+      campusId: effectiveCampusId ?? undefined,
     });
     return { items };
   }

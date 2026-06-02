@@ -5,6 +5,7 @@ import {
   Headers,
   HttpCode,
   HttpStatus,
+  Optional,
   Query,
   Req,
   UseGuards,
@@ -23,6 +24,11 @@ import { TenantScopeGuard } from '../../guards/tenant-scope.guard';
 import { RbacGuard } from '../../guards/rbac.guard';
 import { Roles } from '../../guards/rbac.decorator';
 import { AuthenticatedRequest } from '../auth/jwt-payload.interface';
+// 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2 主 list 端点）：
+//   admin 可经 @Query('campusId') 选具体校区 override（校验 ∈ 本租户 campuses）；
+//   非 admin（含 boss / sales）恒用 JWT.campusId（A04 防越权选他校）。
+import { CampusRepository } from './campus.repository';
+import { resolveEffectiveCampusId } from '../../common/campus-scope/resolve-effective-campus';
 
 /**
  * DashboardController — V19 KPI 看板 + V20 早鸟门槛探测钩子
@@ -44,6 +50,9 @@ export class DashboardController {
   constructor(
     private readonly dashRepo: DashboardRepository,
     private readonly promoEligibility: PromotionEligibilityService,
+    // 2026-06-02 SSOT §3.-2 D：校验 admin override ∈ 本租户 campuses
+    //   @Optional isolated unit spec 不传 → resolveEffectiveCampusId 回退 JWT.campusId
+    @Optional() private readonly campusRepo?: CampusRepository,
   ) {}
 
   @Get('admin')
@@ -106,15 +115,22 @@ export class DashboardController {
     if (!tenantSchema) {
       throw new BadRequestException('x-tenant-schema header required');
     }
-    // V26 老板视角校区切换：admin 切到具体校区时传 campusId 过滤；
-    // boss / sales 等单校 role 由前端从 jwt.campusId 自动带上。
-    //
-    // 2026-05-25 #3 闭环 — owner filter（销售看自己的漏斗，老板看全机构）：
-    //   owner === 'me' → 从 JWT 取 req.user.sub 作为 ownerUserId filter
-    //   其他值（如显式 userId）不解析（防止越权看他人漏斗）— 仅支持 'me' 一种语义
-    //   缺省（admin/boss）→ 不过滤，看全机构
+    // 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2）：替代 V26「前端裸传 campusId」。
+    //   - admin 在首页选具体校区 → @Query('campusId') override（校验 ∈ 本租户 campuses）。
+    //   - 非 admin（含 boss / sales）恒用 JWT.campusId（A04 防越权选他校；helper 忽略 override）。
+    //   - effective 为 null（admin 跨校 JWT.campusId=null 且无 override）→ 不传 campus 过滤
+    //     （既有「全机构」兜底；明心 admin 单校 JWT.campusId 非 null → 本校）。
+    //   sales 仍 owner-scope：owner==='me' → ownerUserId=sub（owner filter 与 campus 正交，不变）。
+    const effectiveCampusId = await resolveEffectiveCampusId(
+      req,
+      campusId,
+      this.campusRepo,
+    );
     const ownerUserId = owner === 'me' ? req?.user?.sub : undefined;
-    return this.dashRepo.getSalesFunnel(tenantSchema, { campusId, ownerUserId });
+    return this.dashRepo.getSalesFunnel(tenantSchema, {
+      campusId: effectiveCampusId ?? undefined,
+      ownerUserId,
+    });
   }
 
   @Get('teacher-leaderboard')

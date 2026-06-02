@@ -40,6 +40,11 @@ import { maskCustomer, canAccessCustomer, actorGroupOf } from '../../common/role
 import { ActorRole, AuditLogRepository, normalizeActorRole } from './audit-log.repository';
 // #24 (2026-05-30): B 端自由文本内容安全统一收口（@Global SecurityModule 注入，生产必有）
 import { ContentModerationService } from '../security/content-moderation.service';
+// 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2 主 list 端点）：
+//   admin 可经 @Query('campusId') 选具体校区 override（校验 ∈ 本租户 campuses）；
+//   非 admin（含 boss / sales / sales_manager）恒用 JWT.campusId（A04 防越权选他校）。
+import { CampusRepository } from './campus.repository';
+import { resolveEffectiveCampusId } from '../../common/campus-scope/resolve-effective-campus';
 
 /**
  * 阶段 B（2026-05-31 SSOT §6 customer.bulkUpload）：市场批量入公海单次上限。
@@ -93,6 +98,9 @@ export class CustomerController {
     // § 12B (2026-05-21): 设为家长端账户联动需要 ParentService
     //   - @Optional：unit spec 兼容；正常注入由 CustomerModule 注册 ParentModule
     @Optional() private readonly parentService?: ParentService,
+    // 2026-06-02 SSOT §3.-2 D：校验 admin override ∈ 本租户 campuses
+    //   @Optional isolated unit spec 不传 → resolveEffectiveCampusId 回退 JWT.campusId
+    @Optional() private readonly campusRepo?: CampusRepository,
   ) {}
 
   /**
@@ -656,10 +664,19 @@ export class CustomerController {
     @Req() req?: AuthenticatedRequest,
   ): Promise<{ items: Customer[] }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    // 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2）：替代 V26「前端裸传 campusId」。
+    //   - admin 在首页选具体校区 → @Query('campusId') override（校验 ∈ 本租户 campuses）。
+    //   - 非 admin（这里 = sales_manager 单校）恒用 JWT.campusId（A04 防越权选他校）。
+    //   - effective 为 null（admin 跨校 JWT.campusId=null 且无 override）→ campusId=undefined
+    //     （既有「全部校区」兜底；明心 admin 单校 JWT.campusId 非 null → 本校）。
+    //   req 缺失（孤立单测不传 @Req）→ 回退裸 campusId（helper 不可用，保留既有行为）。
+    const effectiveCampusId = req
+      ? await resolveEffectiveCampusId(req, campusId, this.campusRepo)
+      : (campusId ?? null);
     const items = await this.repo.listAllForBoss(tenantSchema, {
       ownerFilter,
       stage: stage as any,
-      campusId,
+      campusId: effectiveCampusId ?? undefined,
       limit: limit ? Math.min(parseInt(limit, 10), 500) : 200,
       offset: offset ? parseInt(offset, 10) : 0,
     });
@@ -684,13 +701,24 @@ export class CustomerController {
   async listPool(
     @Query('tenantSchema') tenantSchema: string,
     @Query('source') source?: string,
+    @Query('campusId') campusId?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
     @Req() req?: AuthenticatedRequest,
   ): Promise<{ items: Customer[] }> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
+    // 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2）：公海按校区过滤。
+    //   - admin 在首页选具体校区 → @Query('campusId') override（校验 ∈ 本租户 campuses）。
+    //   - 非 admin（sales/sales_manager/boss 单校）恒用 JWT.campusId（A04 防越权选他校）→
+    //     销售只见本校公海（多校区按校区分池；明心单校无可见变化）。
+    //   - effective 为 null（admin 跨校 JWT.campusId=null 且无 override）→ campusId=undefined
+    //     （既有「全部校区」兜底）。req 缺失（孤立单测）→ 回退裸 campusId。
+    const effectiveCampusId = req
+      ? await resolveEffectiveCampusId(req, campusId, this.campusRepo)
+      : (campusId ?? null);
     const items = await this.repo.listPool(tenantSchema, {
       source,
+      campusId: effectiveCampusId ?? undefined,
       limit: limit ? Math.min(parseInt(limit, 10), 200) : 100,
       offset: offset ? parseInt(offset, 10) : 0,
     });

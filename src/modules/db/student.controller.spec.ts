@@ -19,23 +19,31 @@ import { TeacherRepository } from './teacher.repository';
 import { ContractRepository } from './contract.repository';
 import { AuthenticatedRequest, JwtPayload, TenantRole } from '../auth/jwt-payload.interface';
 import { AuditLogRepository } from './audit-log.repository';
+import { CampusRepository } from './campus.repository';
 
 describe('StudentController (Sprint B.3 范围过滤)', () => {
   let controller: StudentController;
   let repo: { listAll: jest.Mock; listByTeacher: jest.Mock };
   let teacherRepo: { findByUserId: jest.Mock };
   let contractRepo: { create: jest.Mock };
+  // 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2）：admin override ∈ 本租户 campuses 校验
+  let campusRepo: { findById: jest.Mock };
 
   const TENANT_A = 'TENANTA00000000000000000000000A1';
   const TENANT_SCHEMA = 'tenant_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
   const CAMPUS_A = 'campus_A0000000000000000000000A01';
+  const CAMPUS_B = 'campusB00000000000000000000000B1';
   const SALES_A = 'salesA00000000000000000000000A01';
   const SALES_B = 'salesB00000000000000000000000A02';
   const TEACHER_USER_A = 'teacherUser00000000000000000A01';
   const TEACHER_ID_A = 'teacherID000000000000000000000A1';
 
-  function jwt(role: TenantRole, sub = SALES_A): JwtPayload {
-    return { sub, tenantId: TENANT_A, role, campusId: CAMPUS_A };
+  function jwt(
+    role: TenantRole,
+    sub = SALES_A,
+    campusId: string | null = CAMPUS_A,
+  ): JwtPayload {
+    return { sub, tenantId: TENANT_A, role, campusId };
   }
 
   function req(user?: JwtPayload): AuthenticatedRequest {
@@ -64,10 +72,24 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
     repo = { listAll: jest.fn(), listByTeacher: jest.fn() };
     teacherRepo = { findByUserId: jest.fn() };
     contractRepo = { create: jest.fn() };
+    // §3.-2 D: 默认 findById 命中本租户校区 → admin override 校验通过；
+    //   不存在/跨租户场景在用例内 mockResolvedValueOnce(null)。
+    campusRepo = {
+      findById: jest.fn().mockImplementation((tenantId: string, id: string) =>
+        Promise.resolve(
+          tenantId === TENANT_A
+            ? { id, tenantId: TENANT_A, name: '分校区', status: 'active' }
+            : null,
+        ),
+      ),
+    };
     controller = new StudentController(
       repo as unknown as StudentRepository,
       teacherRepo as unknown as TeacherRepository,
       contractRepo as unknown as ContractRepository,
+      // auditLog @Optional (位置 4) — 本批不验，传 undefined
+      undefined,
+      campusRepo as unknown as CampusRepository,
     );
   });
 
@@ -86,11 +108,13 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
         req(jwt('sales', SALES_A)),
       );
       // 验 repo.listAll 收到的 ownerSalesId = req.user.sub = SALES_A
+      // §3.-2 D：sales 非 admin → campusId 恒 JWT.campusId（CAMPUS_A），与 owner-scope 正交
       expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
         limit: 100,
         offset: 0,
         ownerSalesId: SALES_A, // 覆盖了 body.ownerSalesId
         assignedTeacherId: undefined,
+        campusId: CAMPUS_A,
       });
     });
 
@@ -107,11 +131,13 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
         req(jwt('teacher', TEACHER_USER_A)),
       );
       expect(teacherRepo.findByUserId).toHaveBeenCalledWith(TENANT_SCHEMA, TEACHER_USER_A);
+      // §3.-2 D：teacher 非 admin → campusId 恒 JWT.campusId（CAMPUS_A），与 teacher-scope 正交
       expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
         limit: 100,
         offset: 0,
         ownerSalesId: undefined,
         assignedTeacherId: TEACHER_ID_A,
+        campusId: CAMPUS_A,
       });
     });
 
@@ -126,7 +152,7 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
       expect(repo.listAll).not.toHaveBeenCalled();
     });
 
-    it('admin → 按 body 传值过滤（不强制覆盖）', async () => {
+    it('admin（JWT 单校）+ 不传 campusId override → 用 JWT.campusId（不强制覆盖 owner/teacher）', async () => {
       repo.listAll.mockResolvedValueOnce([studentBriefFixture()]);
       await controller.listAll(
         {
@@ -136,29 +162,35 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
         },
         req(jwt('admin')),
       );
+      // §3.-2 D：admin 无 override → campusId = JWT.campusId（CAMPUS_A）；owner/teacher 仍按 body
       expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
         limit: 100,
         offset: 0,
         ownerSalesId: SALES_B, // admin 不被强制覆盖
         assignedTeacherId: 'OTHER_TEACHER_0000000000000A01',
+        campusId: CAMPUS_A,
       });
     });
 
-    it('boss → 按 body 传值过滤', async () => {
+    it('boss → campusId 恒 JWT.campusId（非 admin 忽略 override）', async () => {
       repo.listAll.mockResolvedValueOnce([]);
       await controller.listAll(
-        { tenantSchema: TENANT_SCHEMA, ownerSalesId: SALES_B },
+        // boss 即便 body 传他校 campusId 也被 helper 忽略
+        { tenantSchema: TENANT_SCHEMA, ownerSalesId: SALES_B, campusId: CAMPUS_B },
         req(jwt('boss')),
       );
+      // §3.-2 D：boss 非 admin → campusId = JWT.campusId（CAMPUS_A），override 不查 repo
+      expect(campusRepo.findById).not.toHaveBeenCalled();
       expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
         limit: 100,
         offset: 0,
         ownerSalesId: SALES_B,
         assignedTeacherId: undefined,
+        campusId: CAMPUS_A,
       });
     });
 
-    it('academic → 按 body 传值过滤（全本校学生）', async () => {
+    it('academic → campusId 恒 JWT.campusId（全本校学生）', async () => {
       repo.listAll.mockResolvedValueOnce([studentBriefFixture()]);
       await controller.listAll(
         { tenantSchema: TENANT_SCHEMA },
@@ -169,6 +201,7 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
         offset: 0,
         ownerSalesId: undefined,
         assignedTeacherId: undefined,
+        campusId: CAMPUS_A,
       });
     });
 
@@ -184,15 +217,17 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
         req(jwt('sales_director' as never, SALES_A)),
       );
       // sales_director 落入 unknown group，scope filter 不强制覆盖（与 admin 等同）
+      // §3.-2 D：非 admin（legacy role）→ campusId 恒 JWT.campusId（CAMPUS_A）
       expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
         limit: 100,
         offset: 0,
         ownerSalesId: SALES_B,
         assignedTeacherId: undefined,
+        campusId: CAMPUS_A,
       });
     });
 
-    it('sales_manager → admin group 不强制覆盖', async () => {
+    it('sales_manager → 不强制覆盖 owner，campusId 恒 JWT.campusId', async () => {
       repo.listAll.mockResolvedValueOnce([studentBriefFixture()]);
       await controller.listAll(
         { tenantSchema: TENANT_SCHEMA, ownerSalesId: SALES_B },
@@ -203,6 +238,7 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
         offset: 0,
         ownerSalesId: SALES_B,
         assignedTeacherId: undefined,
+        campusId: CAMPUS_A,
       });
     });
 
@@ -215,11 +251,79 @@ describe('StudentController (Sprint B.3 范围过滤)', () => {
         req(jwt('marketing', SALES_A)),
       );
       // marketing 走 academic group → 不强制覆盖（与 academic/sales_manager 等同）
+      // §3.-2 D：marketing 非 admin → campusId 恒 JWT.campusId（CAMPUS_A）
       expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
         limit: 100,
         offset: 0,
         ownerSalesId: SALES_B,
         assignedTeacherId: undefined,
+        campusId: CAMPUS_A,
+      });
+    });
+
+    // ============================================================
+    // 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2）专项用例
+    // ============================================================
+    it('admin override 单校（∈ 本租户）→ campusId=override（校验 findById 调用）', async () => {
+      repo.listAll.mockResolvedValueOnce([studentBriefFixture()]);
+      await controller.listAll(
+        { tenantSchema: TENANT_SCHEMA, campusId: CAMPUS_B },
+        req(jwt('admin', SALES_A, CAMPUS_A)),
+      );
+      expect(campusRepo.findById).toHaveBeenCalledWith(TENANT_A, CAMPUS_B);
+      expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        limit: 100,
+        offset: 0,
+        ownerSalesId: undefined,
+        assignedTeacherId: undefined,
+        campusId: CAMPUS_B,
+      });
+    });
+
+    it('admin override 校区不存在（findById null）→ 回退 JWT.campusId', async () => {
+      campusRepo.findById.mockResolvedValueOnce(null);
+      repo.listAll.mockResolvedValueOnce([studentBriefFixture()]);
+      await controller.listAll(
+        { tenantSchema: TENANT_SCHEMA, campusId: CAMPUS_B },
+        req(jwt('admin', SALES_A, CAMPUS_A)),
+      );
+      expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        limit: 100,
+        offset: 0,
+        ownerSalesId: undefined,
+        assignedTeacherId: undefined,
+        campusId: CAMPUS_A,
+      });
+    });
+
+    it('admin JWT.campusId=null（跨校）+ 无 override → campusId=undefined（既有全返兜底）', async () => {
+      repo.listAll.mockResolvedValueOnce([studentBriefFixture()]);
+      await controller.listAll(
+        { tenantSchema: TENANT_SCHEMA },
+        req(jwt('admin', SALES_A, null)),
+      );
+      expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        limit: 100,
+        offset: 0,
+        ownerSalesId: undefined,
+        assignedTeacherId: undefined,
+        campusId: undefined,
+      });
+    });
+
+    it('非 admin（sales）传 campusId override → 忽略 override 恒 JWT.campusId（不查 repo）', async () => {
+      repo.listAll.mockResolvedValueOnce([studentBriefFixture({ ownerSalesId: SALES_A })]);
+      await controller.listAll(
+        { tenantSchema: TENANT_SCHEMA, campusId: CAMPUS_B },
+        req(jwt('sales', SALES_A, CAMPUS_A)),
+      );
+      expect(campusRepo.findById).not.toHaveBeenCalled();
+      expect(repo.listAll).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        limit: 100,
+        offset: 0,
+        ownerSalesId: SALES_A, // sales owner-scope 强制 me（与 campus 正交）
+        assignedTeacherId: undefined,
+        campusId: CAMPUS_A,
       });
     });
   });

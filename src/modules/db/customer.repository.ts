@@ -762,35 +762,43 @@ export class CustomerRepository {
 
   async listPool(
     tenantSchema: string,
-    options: { source?: string; limit?: number; offset?: number } = {},
+    options: {
+      source?: string;
+      // 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2）：可选 campus-scope 公海。
+      //   undefined = 全部校区（向后兼容既有调用方）；传值 → WHERE o.campus_id = $N
+      //   （opportunities.campus_id 与 listAllForBoss 同源）。controller 经
+      //   resolveEffectiveCampusId 决定值：admin override / 非 admin 恒 JWT.campusId。
+      campusId?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
   ): Promise<Customer[]> {
     const limit = options.limit ?? 100;
     const offset = options.offset ?? 0;
+    // 动态拼 WHERE：owner_user_id IS NULL（公海）+ stage 排除 + 可选 source/campusId 过滤。
+    const where: string[] = [
+      `o.owner_user_id IS NULL`,
+      `o.stage NOT IN ('已报名','已失单')`,
+    ];
+    const params: any[] = [];
     if (options.source) {
-      const rows = await this.pg.tenantQuery<PgRow>(
-        tenantSchema,
-        `SELECT o.*, s.student_name, s.grade_or_age, s.intended_subject
-           FROM opportunities o
-           LEFT JOIN students s ON s.id = o.student_id
-          WHERE o.owner_user_id IS NULL
-            AND o.stage NOT IN ('已报名','已失单')
-            AND o.source = $1
-          ORDER BY o.urgent DESC, o.entered_pool_at ASC
-          LIMIT $2 OFFSET $3`,
-        [options.source, limit, offset],
-      );
-      return rows.map((r) => this.mapCustomerRow(r));
+      params.push(options.source);
+      where.push(`o.source = $${params.length}`);
     }
+    if (options.campusId) {
+      params.push(options.campusId);
+      where.push(`o.campus_id = $${params.length}`);
+    }
+    params.push(limit, offset);
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
       `SELECT o.*, s.student_name, s.grade_or_age, s.intended_subject
          FROM opportunities o
          LEFT JOIN students s ON s.id = o.student_id
-        WHERE o.owner_user_id IS NULL
-          AND o.stage NOT IN ('已报名','已失单')
+        WHERE ${where.join(' AND ')}
         ORDER BY o.urgent DESC, o.entered_pool_at ASC
-        LIMIT $1 OFFSET $2`,
-      [limit, offset],
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
     );
     return rows.map((r) => this.mapCustomerRow(r));
   }

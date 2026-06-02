@@ -118,6 +118,15 @@ export class CourseProductController {
     }
   }
 
+  /**
+   * GET /db/course-products — 课程产品列表（在售优先 + salesCount 累计）
+   *
+   * 2026-06-02 SSOT §3.-2 D 全局校区筛选（增量 2 边界说明）：本端点**不接 campus 过滤**。
+   *   课程产品（course_products）= **租户级目录**（表无 campus_id，跨校区共享同一套课程库，
+   *   见 §3.-2 D「主页面… 课程」+ §3.-2 B「tenant-wide 目录视图」）。salesCount 仍按
+   *   tenant-wide 累计 COUNT contracts by course_product_id，不随首页校区筛选器收窄。
+   *   （admin 选校区只影响 students/customers/sales-funnel/home-KPI 等 campus-scoped 视图。）
+   */
   @Get()
   @HttpCode(HttpStatus.OK)
   async list(
