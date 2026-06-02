@@ -160,6 +160,7 @@ export class TrialRepository {
       campusId?: string;
       assignedAcademicId?: string;
       teacherId?: string;
+      initiatedBy?: string;
       status?: TrialStatus;
       assignedIsNull?: boolean;
       limit?: number;
@@ -183,6 +184,10 @@ export class TrialRepository {
     if (filter.teacherId) {
       params.push(filter.teacherId);
       where.push(`teacher_id = $${params.length}`);
+    }
+    if (filter.initiatedBy) {
+      params.push(filter.initiatedBy);
+      where.push(`initiated_by = $${params.length}`);
     }
     if (filter.status) {
       params.push(filter.status);

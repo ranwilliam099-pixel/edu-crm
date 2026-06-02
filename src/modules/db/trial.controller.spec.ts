@@ -578,6 +578,13 @@ describe('TrialController (V64 Phase 4 试听课流程)', () => {
       expect(roles).toEqual(['academic', 'academic_admin']);
     });
 
+    it('my-initiated → 用 initiatedBy=自己（JWT.sub）过滤（销售闭环 owner-scope）', async () => {
+      await controller.myInitiated({ tenantSchema: TENANT_SCHEMA }, req(jwt('sales', SALES)));
+      expect(trialRepo.list.mock.calls[0][1].initiatedBy).toBe(SALES);
+      const roles = Reflect.getMetadata(ROLES_METADATA_KEY, TrialController.prototype.myInitiated);
+      expect(roles).toEqual(['sales', 'sales_manager']);
+    });
+
     it('pending-assignment → 本校 campusId(JWT) + assignedIsNull', async () => {
       await controller.pendingAssignment({ tenantSchema: TENANT_SCHEMA }, req(jwt('boss', BOSS)));
       const f = trialRepo.list.mock.calls[0][1];

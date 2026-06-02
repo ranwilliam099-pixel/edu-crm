@@ -84,6 +84,15 @@ describe('TrialRepository (V64 Phase 4)', () => {
       expect(params).toContain('scheduled');
     });
 
+    it('initiatedBy → WHERE initiated_by 参数化（销售闭环 my-initiated）', async () => {
+      pg.tenantQuery.mockResolvedValue([]);
+      await repo.list(TENANT, { initiatedBy: 'salesUser000000000000000000000S1' });
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      const params = pg.tenantQuery.mock.calls[0][2] as unknown[];
+      expect(sql).toContain('initiated_by = $1');
+      expect(params).toContain('salesUser000000000000000000000S1');
+    });
+
     it('limit 上限 200', async () => {
       pg.tenantQuery.mockResolvedValue([]);
       await repo.list(TENANT, { limit: 9999 });

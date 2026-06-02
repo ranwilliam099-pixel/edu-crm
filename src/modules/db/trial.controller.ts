@@ -341,6 +341,34 @@ export class TrialController {
   }
 
   // ============================================================
+  // 2b. 销售「我发起的试听」（闭环：追踪转化 + done 定结果，SSOT §5.3.2 销售闭环）
+  // ============================================================
+  /**
+   * POST /db/trials/my-initiated  body: { tenantSchema, status?, limit?, offset? }
+   *   owner-scope：销售只看**自己发起**的试听（initiated_by = JWT.sub）；
+   *   sales_manager 同样按本人 sub（团队视图走 team-performance，非本端点）。
+   *   配合既有 POST /db/trials/:id/result（@Roles 含 sales/sales_manager）闭合「发起→转化/流失」环。
+   */
+  @Post('my-initiated')
+  @Roles('sales', 'sales_manager')
+  @HttpCode(HttpStatus.OK)
+  async myInitiated(
+    @Body()
+    body: { tenantSchema: string; status?: TrialStatus; limit?: number; offset?: number },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ items: Trial[] }> {
+    if (!body?.tenantSchema) throw new BadRequestException('tenantSchema required');
+    const userId = this.requireUserId(req);
+    const items = await this.trialRepo.list(body.tenantSchema, {
+      initiatedBy: userId,
+      status: body.status,
+      limit: body.limit,
+      offset: body.offset,
+    });
+    return { items };
+  }
+
+  // ============================================================
   // 3. 校长本校待分配（assigned IS NULL）
   // ============================================================
   @Post('pending-assignment')
