@@ -12,6 +12,7 @@ import {
 } from './kpi.service';
 import { AuditLogRepository } from './audit-log.repository';
 import { ContentModerationService } from '../security/content-moderation.service';
+import { CampusRepository } from './campus.repository';
 import { ROLES_METADATA_KEY } from '../../guards/rbac.decorator';
 import {
   AuthenticatedRequest,
@@ -50,6 +51,8 @@ describe('KpiController (P4-X 2026-05-20)', () => {
   };
   let auditLog: { log: jest.Mock };
   let contentModeration: { enforceStaffText: jest.Mock };
+  // 2026-06-02 SSOT §3.-2 D 全局校区筛选：admin override ∈ 本租户 campuses 校验
+  let campusRepo: { findById: jest.Mock };
 
   const TENANT_A = 'TENANTA00000000000000000000000A1';
   const TENANT_SCHEMA = 'tenant_tenanta00000000000000000000000a1';
@@ -196,42 +199,107 @@ describe('KpiController (P4-X 2026-05-20)', () => {
     contentModeration = {
       enforceStaffText: jest.fn().mockResolvedValue(undefined),
     };
+    // 2026-06-02 §3.-2 D: 默认 findById 命中本租户校区（CAMPUS_A/B 均属 TENANT_A）→
+    //   admin override 校验通过；不存在/跨租户场景在用例内 mockResolvedValueOnce(null)。
+    campusRepo = {
+      findById: jest.fn().mockImplementation((tenantId: string, id: string) =>
+        Promise.resolve(
+          tenantId === TENANT_A
+            ? {
+                id,
+                tenantId: TENANT_A,
+                name: '分校区',
+                studentCount: 0,
+                teacherCount: 0,
+                status: 'active',
+                isHq: false,
+                createdAt: new Date(),
+              }
+            : null,
+        ),
+      ),
+    };
     controller = new KpiController(
       kpi as unknown as KpiService,
       contentModeration as unknown as ContentModerationService,
       auditLog as unknown as AuditLogRepository,
+      // redis: §3.-2 D 不涉及，传 undefined（@Optional 位置 4）
+      undefined,
+      campusRepo as unknown as CampusRepository,
     );
   });
 
   // ============================================================
   // GET /db/kpi/signed
   // ============================================================
-  describe('signedKpi GET /db/kpi/signed', () => {
-    it('happy path admin: 不传 campusId → service campusIds=null', async () => {
+  // 2026-06-02 SSOT §3.-2 D: signed/renewal/consumption 改用 resolveEffectiveCampusId —
+  //   admin 可经 @Query('campusId') 选**单个**校区 override（校验 ∈ 本租户 campuses）；
+  //   非 admin（含 boss）恒忽略 override 用 JWT.campusId（A04 防越权选他校，不再 403）。
+  //   effective campusId → campusIds = [campusId] / null（admin JWT.campusId 为 null 时）。
+  describe('signedKpi GET /db/kpi/signed (§3.-2 D campus override)', () => {
+    it('admin JWT 单校 + 不传 override → 用 JWT.campusId（campusIds=[jwt]）', async () => {
       kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
       const r = await controller.signedKpi(
         TENANT_SCHEMA,
-        req(jwt('admin', ADMIN_SUB, null)),
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
       );
       expect(r.total.amount).toBe('128,560');
+      expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        campusIds: [CAMPUS_A],
+      });
+    });
+
+    it('admin JWT.campusId=null（跨校）+ 不传 override → campusIds=null（既有「全部校区」兜底）', async () => {
+      kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
+      await controller.signedKpi(
+        TENANT_SCHEMA,
+        req(jwt('admin', ADMIN_SUB, null)),
+      );
       expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
         campusIds: null,
       });
     });
 
-    it('happy path admin: campusId csv → service 收 [A,B]', async () => {
+    it('admin override 单校（∈ 本租户）→ campusIds=[override]（校验 findById 调用）', async () => {
       kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
       await controller.signedKpi(
         TENANT_SCHEMA,
-        req(jwt('admin', ADMIN_SUB, null)),
-        `${CAMPUS_A},${CAMPUS_B}`,
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+        CAMPUS_B,
       );
+      expect(campusRepo.findById).toHaveBeenCalledWith(TENANT_A, CAMPUS_B);
       expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
-        campusIds: [CAMPUS_A, CAMPUS_B],
+        campusIds: [CAMPUS_B],
       });
     });
 
-    it('happy path boss: 不传 campusId → service 强制 = [jwt.campusId]', async () => {
+    it('admin override 校区不存在（findById null）→ 回退 JWT.campusId', async () => {
+      campusRepo.findById.mockResolvedValueOnce(null);
+      kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
+      await controller.signedKpi(
+        TENANT_SCHEMA,
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+        CAMPUS_B,
+      );
+      expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        campusIds: [CAMPUS_A],
+      });
+    });
+
+    it('admin override 脏值（非 ULID）→ 不抛错 + 回退 JWT.campusId + 不查 repo', async () => {
+      kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
+      await controller.signedKpi(
+        TENANT_SCHEMA,
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+        'not-a-ulid',
+      );
+      expect(campusRepo.findById).not.toHaveBeenCalled();
+      expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        campusIds: [CAMPUS_A],
+      });
+    });
+
+    it('happy path boss: 不传 override → 用 JWT.campusId（campusIds=[jwt]）', async () => {
       kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
       await controller.signedKpi(
         TENANT_SCHEMA,
@@ -242,101 +310,48 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       });
     });
 
-    it('boss campusId 传同值 → 允许 + service 收 [jwt.campusId]', async () => {
+    it('boss override 传他校 → 忽略 override，恒用 JWT.campusId（不 403，A04 防越权）', async () => {
       kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
       await controller.signedKpi(
         TENANT_SCHEMA,
         req(jwt('boss', BOSS_SUB, CAMPUS_A)),
-        CAMPUS_A,
+        CAMPUS_B,
       );
+      // boss 锁本校：override 被 helper 直接忽略，连 repo 都不查
+      expect(campusRepo.findById).not.toHaveBeenCalled();
       expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
         campusIds: [CAMPUS_A],
       });
     });
 
-    it('boss campusId 传他校 → ForbiddenException FORBIDDEN_CAMPUS_MISMATCH', async () => {
-      await expect(
-        controller.signedKpi(
-          TENANT_SCHEMA,
-          req(jwt('boss', BOSS_SUB, CAMPUS_A)),
-          CAMPUS_B,
-        ),
-      ).rejects.toThrow(ForbiddenException);
-      await expect(
-        controller.signedKpi(
-          TENANT_SCHEMA,
-          req(jwt('boss', BOSS_SUB, CAMPUS_A)),
-          CAMPUS_B,
-        ),
-      ).rejects.toThrow(/FORBIDDEN_CAMPUS_MISMATCH/);
-      expect(kpi.getSignedKpi).not.toHaveBeenCalled();
-    });
-
-    it('boss campusId 混合自校 + 他校 → 拒（他校字符串 trigger 403）', async () => {
-      await expect(
-        controller.signedKpi(
-          TENANT_SCHEMA,
-          req(jwt('boss', BOSS_SUB, CAMPUS_A)),
-          `${CAMPUS_A},${CAMPUS_B}`,
-        ),
-      ).rejects.toThrow(ForbiddenException);
-    });
-
-    it('boss jwt.campusId=null → ForbiddenException BOSS_MISSING_CAMPUS_ID', async () => {
-      await expect(
-        controller.signedKpi(
-          TENANT_SCHEMA,
-          req(jwt('boss', BOSS_SUB, null)),
-        ),
-      ).rejects.toThrow(ForbiddenException);
-      await expect(
-        controller.signedKpi(
-          TENANT_SCHEMA,
-          req(jwt('boss', BOSS_SUB, null)),
-        ),
-      ).rejects.toThrow(/BOSS_MISSING_CAMPUS_ID/);
+    it('boss jwt.campusId=null + 无 override → campusIds=null（不再 403；既有 null 兜底）', async () => {
+      kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
+      await controller.signedKpi(
+        TENANT_SCHEMA,
+        req(jwt('boss', BOSS_SUB, null)),
+      );
+      expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        campusIds: null,
+      });
     });
 
     it('缺 tenantSchema → BadRequest', async () => {
       await expect(
-        controller.signedKpi('', req(jwt('admin', ADMIN_SUB, null))),
+        controller.signedKpi('', req(jwt('admin', ADMIN_SUB, CAMPUS_A))),
       ).rejects.toThrow(BadRequestException);
       expect(kpi.getSignedKpi).not.toHaveBeenCalled();
     });
 
-    it('其他 role 通过 service（兜底空 []）— RBAC 由 RbacGuard 拦截，本测试模拟绕过', async () => {
+    it('非 admin（sales）有 override → 恒用 JWT.campusId（helper 忽略 override）', async () => {
       kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
       await controller.signedKpi(
         TENANT_SCHEMA,
         req(jwt('sales' as TenantRole, ADMIN_SUB, CAMPUS_A)),
+        CAMPUS_B,
       );
-      // sales/teacher/etc 直接走 fallback path 返 []，service.campusIds=[]
+      expect(campusRepo.findById).not.toHaveBeenCalled();
       expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
-        campusIds: [],
-      });
-    });
-
-    it('admin campusId csv 含空白条目 → trim 过滤', async () => {
-      kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
-      await controller.signedKpi(
-        TENANT_SCHEMA,
-        req(jwt('admin', ADMIN_SUB, null)),
-        ` ${CAMPUS_A} , , ${CAMPUS_B} `,
-      );
-      expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
-        campusIds: [CAMPUS_A, CAMPUS_B],
-      });
-    });
-
-    it('admin campusId 空字符串 → null', async () => {
-      kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
-      await controller.signedKpi(
-        TENANT_SCHEMA,
-        req(jwt('admin', ADMIN_SUB, null)),
-        '',
-      );
-      expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
-        campusIds: null,
+        campusIds: [CAMPUS_A],
       });
     });
   });
@@ -369,14 +384,29 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       });
     });
 
-    it('boss 传他校 campusId → ForbiddenException', async () => {
-      await expect(
-        controller.renewalKpi(
-          TENANT_SCHEMA,
-          req(jwt('boss', BOSS_SUB, CAMPUS_A)),
-          CAMPUS_B,
-        ),
-      ).rejects.toThrow(ForbiddenException);
+    it('boss override 传他校 → 忽略 override，恒用 JWT.campusId（§3.-2 D，不再 403）', async () => {
+      kpi.getRenewalKpi.mockResolvedValueOnce(renewalFixture());
+      await controller.renewalKpi(
+        TENANT_SCHEMA,
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+        CAMPUS_B,
+      );
+      expect(campusRepo.findById).not.toHaveBeenCalled();
+      expect(kpi.getRenewalKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        campusIds: [CAMPUS_A],
+      });
+    });
+
+    it('admin override 单校（∈ 本租户）→ campusIds=[override]', async () => {
+      kpi.getRenewalKpi.mockResolvedValueOnce(renewalFixture());
+      await controller.renewalKpi(
+        TENANT_SCHEMA,
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+        CAMPUS_B,
+      );
+      expect(kpi.getRenewalKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        campusIds: [CAMPUS_B],
+      });
     });
 
     it('缺 tenantSchema → BadRequest', async () => {
@@ -414,14 +444,29 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       });
     });
 
-    it('boss 他校 campusId → 403', async () => {
-      await expect(
-        controller.consumptionKpi(
-          TENANT_SCHEMA,
-          req(jwt('boss', BOSS_SUB, CAMPUS_A)),
-          CAMPUS_B,
-        ),
-      ).rejects.toThrow(ForbiddenException);
+    it('boss override 传他校 → 忽略 override，恒用 JWT.campusId（§3.-2 D，不再 403）', async () => {
+      kpi.getConsumptionKpi.mockResolvedValueOnce(consumptionFixture());
+      await controller.consumptionKpi(
+        TENANT_SCHEMA,
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+        CAMPUS_B,
+      );
+      expect(campusRepo.findById).not.toHaveBeenCalled();
+      expect(kpi.getConsumptionKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        campusIds: [CAMPUS_A],
+      });
+    });
+
+    it('admin override 单校（∈ 本租户）→ campusIds=[override]', async () => {
+      kpi.getConsumptionKpi.mockResolvedValueOnce(consumptionFixture());
+      await controller.consumptionKpi(
+        TENANT_SCHEMA,
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+        CAMPUS_B,
+      );
+      expect(kpi.getConsumptionKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
+        campusIds: [CAMPUS_B],
+      });
     });
 
     it('缺 tenantSchema → BadRequest', async () => {
@@ -492,8 +537,11 @@ describe('KpiController (P4-X 2026-05-20)', () => {
   // ============================================================
   // 跨 endpoint 共性：resolveCampusScope edge cases
   // ============================================================
-  describe('resolveCampusScope edge cases (跨 4 endpoint)', () => {
-    it('admin role + campusId=undefined → null', async () => {
+  // 2026-06-02 §3.-2 D: signed/renewal/consumption 改用 resolveEffectiveCampusId 后的
+  //   edge cases（admin JWT.campusId=null + 无效 override 均回退 → null）。
+  //   注：signed/items 等 Level-3 list 端点仍用旧 resolveCampusScope（本批不碰）。
+  describe('effective campus edge cases (signed/renewal/consumption)', () => {
+    it('admin role + campusId=undefined + JWT.campusId=null → null', async () => {
       kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
       await controller.signedKpi(
         TENANT_SCHEMA,
@@ -505,7 +553,7 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       });
     });
 
-    it('admin role + campusId=" " (空白) → null', async () => {
+    it('admin role + override=" " (空白脏值) + JWT.campusId=null → null（格式不过回退 JWT=null）', async () => {
       kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
       await controller.signedKpi(
         TENANT_SCHEMA,
@@ -517,13 +565,13 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       });
     });
 
-    it('req.user 缺失 → role=undefined fallback path 返 []（不会到 service）', async () => {
-      // controller 不抛 401（由 framework middleware 处理），仅 sales/teacher fallback
+    it('req.user 缺失 → role=undefined（非 admin 分支）→ campusIds=null（不到 service scope）', async () => {
+      // controller 不抛 401（由 framework middleware 处理）；helper 非 admin 分支返 jwtCampusId=null
       kpi.getSignedKpi.mockResolvedValueOnce(signedFixture());
       const noUserReq = req(undefined);
       await controller.signedKpi(TENANT_SCHEMA, noUserReq);
       expect(kpi.getSignedKpi).toHaveBeenCalledWith(TENANT_SCHEMA, {
-        campusIds: [],
+        campusIds: null,
       });
     });
   });
@@ -1127,6 +1175,48 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       ).rejects.toThrow(BadRequestException);
       expect(kpi.getCourseSales).not.toHaveBeenCalled();
     });
+
+    // 2026-06-02 §3.-2 D: admin 可经 body.campusId override（校验 ∈ 本租户）
+    it('admin body.campusId override（∈ 本租户）→ 用 override（findById 校验）', async () => {
+      kpi.getCourseSales.mockResolvedValueOnce({ total: 0, items: [] });
+      await controller.courseSales(
+        { tenantSchema: TENANT_SCHEMA, campusId: CAMPUS_B },
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+      );
+      expect(campusRepo.findById).toHaveBeenCalledWith(TENANT_A, CAMPUS_B);
+      expect(kpi.getCourseSales).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_B);
+    });
+
+    it('admin override 校区不存在 → 回退 JWT.campusId', async () => {
+      campusRepo.findById.mockResolvedValueOnce(null);
+      kpi.getCourseSales.mockResolvedValueOnce({ total: 0, items: [] });
+      await controller.courseSales(
+        { tenantSchema: TENANT_SCHEMA, campusId: CAMPUS_B },
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+      );
+      expect(kpi.getCourseSales).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_A);
+    });
+
+    it('boss body.campusId override 传他校 → 忽略 override，恒用 JWT.campusId', async () => {
+      kpi.getCourseSales.mockResolvedValueOnce({ total: 0, items: [] });
+      await controller.courseSales(
+        { tenantSchema: TENANT_SCHEMA, campusId: CAMPUS_B },
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+      );
+      expect(campusRepo.findById).not.toHaveBeenCalled();
+      expect(kpi.getCourseSales).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_A);
+    });
+
+    it('admin override 但 JWT.campusId=null + override 校验不过 → KPI_NO_CAMPUS 403', async () => {
+      campusRepo.findById.mockResolvedValueOnce(null);
+      await expect(
+        controller.courseSales(
+          { tenantSchema: TENANT_SCHEMA, campusId: CAMPUS_B },
+          req(jwt('admin', ADMIN_SUB, null)),
+        ),
+      ).rejects.toThrow(/KPI_NO_CAMPUS/);
+      expect(kpi.getCourseSales).not.toHaveBeenCalled();
+    });
   });
 
   // ============================================================
@@ -1277,6 +1367,27 @@ describe('KpiController (P4-X 2026-05-20)', () => {
         KpiController.prototype.consumptionRanking,
       );
       expect(roles).toEqual(['admin', 'boss']);
+    });
+
+    // 2026-06-02 §3.-2 D: admin 可经 body.campusId override（校验 ∈ 本租户）
+    it('admin body.campusId override（∈ 本租户）→ 用 override（findById 校验）', async () => {
+      kpi.getConsumptionRanking.mockResolvedValueOnce({ teacher: [], academic: [] });
+      await controller.consumptionRanking(
+        { tenantSchema: TENANT_SCHEMA, campusId: CAMPUS_B },
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+      );
+      expect(campusRepo.findById).toHaveBeenCalledWith(TENANT_A, CAMPUS_B);
+      expect(kpi.getConsumptionRanking).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_B);
+    });
+
+    it('boss body.campusId override 传他校 → 忽略 override，恒用 JWT.campusId', async () => {
+      kpi.getConsumptionRanking.mockResolvedValueOnce({ teacher: [], academic: [] });
+      await controller.consumptionRanking(
+        { tenantSchema: TENANT_SCHEMA, campusId: CAMPUS_B },
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+      );
+      expect(campusRepo.findById).not.toHaveBeenCalled();
+      expect(kpi.getConsumptionRanking).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_A);
     });
   });
 });

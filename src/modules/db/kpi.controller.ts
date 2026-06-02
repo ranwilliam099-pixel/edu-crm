@@ -45,6 +45,9 @@ import {
 import { RedisService } from '../redis/redis.service';
 // #24: B 端自由文本内容安全统一收口（@Global SecurityModule 注入）
 import { ContentModerationService } from '../security/content-moderation.service';
+// 2026-06-02 SSOT §3.-2 D 全局校区筛选：admin override / 非 admin 恒 JWT.campusId
+import { CampusRepository } from './campus.repository';
+import { resolveEffectiveCampusId } from '../../common/campus-scope/resolve-effective-campus';
 
 /**
  * KpiController — 4 KPI dashboard endpoint（2026-05-20 P4-X 拍板）
@@ -89,6 +92,9 @@ export class KpiController {
     @Optional() private readonly auditLog?: AuditLogRepository,
     // 2026-05-22 SSOT §6.9 Redis 5min KPI cache (fail-open PG 兜底)
     @Optional() private readonly redis?: RedisService,
+    // 2026-06-02 SSOT §3.-2 D 全局校区筛选：校验 admin override ∈ 本租户 campuses
+    // @Optional isolated unit spec 不传 → resolveEffectiveCampusId 回退 JWT.campusId
+    @Optional() private readonly campusRepo?: CampusRepository,
   ) {}
 
   /**
@@ -181,6 +187,31 @@ export class KpiController {
    */
   private requireCampusId(req: AuthenticatedRequest): string {
     const campusId = req.user?.campusId;
+    if (!campusId) {
+      throw new ForbiddenException(
+        'KPI_NO_CAMPUS: caller must have a campusId scope (course-sales 强制本校)',
+      );
+    }
+    return campusId;
+  }
+
+  /**
+   * 2026-06-02 SSOT §3.-2 D 全局校区筛选 — POST 单校 scope 端点专用
+   *
+   * 解析 effective campusId（admin 可经 body.campusId override ∈ 本租户 campuses；
+   * 非 admin 含 boss 恒用 JWT.campusId），再强制非空（保留既有 KPI_NO_CAMPUS 403 兜底）。
+   *
+   * 用于 course-sales / course-sales/by-person / consumption-ranking（强制本校单值）。
+   */
+  private async resolveRequiredCampusId(
+    req: AuthenticatedRequest,
+    overrideCampusId: string | undefined,
+  ): Promise<string> {
+    const campusId = await resolveEffectiveCampusId(
+      req,
+      overrideCampusId,
+      this.campusRepo,
+    );
     if (!campusId) {
       throw new ForbiddenException(
         'KPI_NO_CAMPUS: caller must have a campusId scope (course-sales 强制本校)',
@@ -599,8 +630,32 @@ export class KpiController {
   }
 
   /**
+   * 2026-06-02 SSOT §3.-2 D 全局校区筛选 — GET KPI 聚合端点专用
+   *
+   * 把 effective campusId（admin 可经 @Query('campusId') override ∈ 本租户 campuses；
+   * 非 admin 含 boss 恒用 JWT.campusId）转成 service 期望的 campusIds 形状：
+   *   - 命中具体校区 → [campusId]（本校聚合）
+   *   - null（admin JWT.campusId 为 null 且无 override）→ null（既有「全部校区」兜底，
+   *     跨校聚合后续 follow-up；明心单校 admin 的 JWT.campusId 非 null → [campusId]）
+   *
+   * 替代旧 resolveCampusScope（csv 多选）：§3.-2 D MVP「选具体校区」单值，
+   * 非 admin override 由 helper 直接忽略恒 JWT（A04 防越权选他校）。
+   */
+  private async resolveCampusIdsScope(
+    req: AuthenticatedRequest,
+    overrideCampusId: string | undefined,
+  ): Promise<string[] | null> {
+    const campusId = await resolveEffectiveCampusId(
+      req,
+      overrideCampusId,
+      this.campusRepo,
+    );
+    return campusId ? [campusId] : null;
+  }
+
+  /**
    * GET /db/kpi/signed — 本月新签聚合
-   * Query: tenantSchema (必填) + campusId (csv, admin 可选 / boss 仅本校)
+   * Query: tenantSchema (必填) + campusId (§3.-2 D: admin override ∈ 本租户 / 非 admin 恒 JWT)
    */
   @Get('signed')
   @Roles('admin', 'boss')
@@ -608,20 +663,16 @@ export class KpiController {
   async signedKpi(
     @Query('tenantSchema') tenantSchema: string,
     @Req() req: AuthenticatedRequest,
-    @Query('campusId') campusIdCsv?: string,
+    @Query('campusId') campusId?: string,
   ): Promise<SignedKpiResult> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    const campusIds = this.resolveCampusScope(
-      req.user?.role,
-      req.user?.campusId,
-      campusIdCsv,
-    );
+    const campusIds = await this.resolveCampusIdsScope(req, campusId);
     return this.kpi.getSignedKpi(tenantSchema, { campusIds });
   }
 
   /**
    * GET /db/kpi/renewal — 本月续约聚合
-   * Query: tenantSchema (必填) + campusId (csv)
+   * Query: tenantSchema (必填) + campusId (§3.-2 D)
    */
   @Get('renewal')
   @Roles('admin', 'boss')
@@ -629,20 +680,16 @@ export class KpiController {
   async renewalKpi(
     @Query('tenantSchema') tenantSchema: string,
     @Req() req: AuthenticatedRequest,
-    @Query('campusId') campusIdCsv?: string,
+    @Query('campusId') campusId?: string,
   ): Promise<RenewalKpiResult> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    const campusIds = this.resolveCampusScope(
-      req.user?.role,
-      req.user?.campusId,
-      campusIdCsv,
-    );
+    const campusIds = await this.resolveCampusIdsScope(req, campusId);
     return this.kpi.getRenewalKpi(tenantSchema, { campusIds });
   }
 
   /**
    * GET /db/kpi/consumption — 本月消课聚合（仅 academic 维度）
-   * Query: tenantSchema (必填) + campusId (csv)
+   * Query: tenantSchema (必填) + campusId (§3.-2 D)
    */
   @Get('consumption')
   @Roles('admin', 'boss')
@@ -650,14 +697,10 @@ export class KpiController {
   async consumptionKpi(
     @Query('tenantSchema') tenantSchema: string,
     @Req() req: AuthenticatedRequest,
-    @Query('campusId') campusIdCsv?: string,
+    @Query('campusId') campusId?: string,
   ): Promise<ConsumptionKpiResult> {
     if (!tenantSchema) throw new BadRequestException('tenantSchema required');
-    const campusIds = this.resolveCampusScope(
-      req.user?.role,
-      req.user?.campusId,
-      campusIdCsv,
-    );
+    const campusIds = await this.resolveCampusIdsScope(req, campusId);
     return this.kpi.getConsumptionKpi(tenantSchema, { campusIds });
   }
 
@@ -703,11 +746,12 @@ export class KpiController {
   @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async courseSales(
-    @Body() body: { tenantSchema: string },
+    @Body() body: { tenantSchema: string; campusId?: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<CourseSalesResult> {
     if (!body?.tenantSchema) throw new BadRequestException('tenantSchema required');
-    const campusId = this.requireCampusId(req);
+    // §3.-2 D: admin 可经 body.campusId override（校验 ∈ 本租户）；非 admin 恒 JWT.campusId
+    const campusId = await this.resolveRequiredCampusId(req, body.campusId);
     return this.kpi.getCourseSales(body.tenantSchema, campusId);
   }
 
@@ -764,11 +808,12 @@ export class KpiController {
   @Roles('admin', 'boss')
   @HttpCode(HttpStatus.OK)
   async consumptionRanking(
-    @Body() body: { tenantSchema: string },
+    @Body() body: { tenantSchema: string; campusId?: string },
     @Req() req: AuthenticatedRequest,
   ): Promise<ConsumptionRankingResult> {
     if (!body?.tenantSchema) throw new BadRequestException('tenantSchema required');
-    const campusId = this.requireCampusId(req);
+    // §3.-2 D: admin 可经 body.campusId override（校验 ∈ 本租户）；非 admin 恒 JWT.campusId
+    const campusId = await this.resolveRequiredCampusId(req, body.campusId);
     return this.kpi.getConsumptionRanking(body.tenantSchema, campusId);
   }
 
