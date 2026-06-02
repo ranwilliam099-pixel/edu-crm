@@ -32,26 +32,62 @@ describe('CourseProductRepository (V29 R6)', () => {
   });
 
   describe('list', () => {
-    it('默认仅上架（销售下拉用）', async () => {
+    it('默认仅上架（销售下拉用）— WHERE cp.status=上架（表已别名 cp）', async () => {
       pg.tenantQuery.mockResolvedValueOnce([ROW]);
       await repo.list(TENANT);
       const sql = pg.tenantQuery.mock.calls[0][1] as string;
-      expect(sql).toContain(`WHERE status = '上架'`);
+      expect(sql).toContain(`WHERE cp.status = '上架'`);
     });
 
-    it('includeOffShelf 列全部含下架', async () => {
+    it('includeOffShelf 列全部含下架 — 外层无 WHERE cp.status 过滤', async () => {
       pg.tenantQuery.mockResolvedValueOnce([]);
       await repo.list(TENANT, { includeOffShelf: true });
       const sql = pg.tenantQuery.mock.calls[0][1] as string;
-      expect(sql).not.toContain('WHERE status');
+      // 外层产品过滤已去除（子查询的 WHERE status NOT IN 是销量聚合的，不算外层过滤）
+      expect(sql).not.toContain(`WHERE cp.status = '上架'`);
     });
 
-    it('mapRow 字段', async () => {
-      pg.tenantQuery.mockResolvedValueOnce([ROW]);
+    it('mapRow 字段（含 §3.-2 B salesCount）', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ ...ROW, sales_count: '7' }]);
       const r = await repo.list(TENANT);
       expect(r[0].productName).toBe('英语 1v1 30 课时');
       expect(r[0].standardPrice).toBe(6000);
       expect(r[0].status).toBe('上架');
+      expect(r[0].salesCount).toBe(7);
+    });
+
+    // ============================================================
+    // 2026-06-02 SSOT §3.-2 B：列表加「累计销量」+ 按销量降序
+    // ============================================================
+    it('§3.-2 B SQL：LEFT JOIN 销量子查询 + status∉{cancelled,refunded} + deleted_at IS NULL + tenant-wide 不限 campus', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.list(TENANT);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      // LEFT JOIN 预聚合子查询（GROUP BY course_product_id）
+      expect(sql).toMatch(/LEFT JOIN\s*\(/);
+      expect(sql).toMatch(/COUNT\(\*\) AS sales_count/);
+      expect(sql).toMatch(/GROUP BY course_product_id/);
+      // 累计口径：曾有效签约计入，cancelled/refunded 不计
+      expect(sql).toContain(`status NOT IN ('cancelled','refunded')`);
+      expect(sql).toContain('deleted_at IS NULL');
+      expect(sql).toContain('course_product_id IS NOT NULL');
+      // 目录视图不限 campus（子查询无 campus_id 过滤）
+      expect(sql).not.toContain('campus_id');
+    });
+
+    it('§3.-2 B SQL：排序 = 在售优先 → 销量降序 → 新建优先', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await repo.list(TENANT);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toMatch(
+        /ORDER BY cp\.status DESC,\s*COALESCE\(sc\.sales_count, 0\) DESC,\s*cp\.created_at DESC/,
+      );
+    });
+
+    it('§3.-2 B：无合同产品 sales_count NULL → COALESCE 0', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([{ ...ROW, sales_count: null }]);
+      const r = await repo.list(TENANT);
+      expect(r[0].salesCount).toBe(0);
     });
   });
 

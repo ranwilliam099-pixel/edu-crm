@@ -240,6 +240,44 @@ export interface FinanceHomeKpiResult {
 }
 
 /**
+ * 2026-06-02 SSOT §3.-2 A「课程销量」— admin/boss 经营首页组 4 替换「学员状态」
+ *
+ * Level 2（课程销量排名）数据契约：
+ *   - 本月（date_trunc('month', NOW()) 当前自然月）+ status ∉ {cancelled,refunded}
+ *     + deleted_at IS NULL + campus_id = JWT.campusId（强制本校 scope，禁信前端）
+ *   - GROUP BY course_product_id → salesCount DESC
+ *   - total = Σ salesCount（= home Level1 KPI「本月课程销量 N」）
+ *
+ * 安全：campusId 一律 JWT；缺 campusId → controller 403（仿 trial.requireCampusId）。
+ */
+export interface CourseSalesItem {
+  courseProductId: string | null;
+  productName: string | null;
+  salesCount: number;
+}
+export interface CourseSalesResult {
+  total: number;
+  items: CourseSalesItem[];
+}
+
+/**
+ * 2026-06-02 SSOT §3.-2 A Level 3（某课程的人员销量）数据契约：
+ *   - 同窗口/campus-scope，但 WHERE course_product_id = $courseProductId
+ *   - GROUP BY owner_user_id → salesCount DESC，LEFT JOIN users 取 salesName
+ *   - salesName 用 users.name（非一级 PII，对齐既有 salesName 先例）
+ *   - owner_user_id 为 null 的合同归「系统」
+ */
+export interface CourseSalesByPersonItem {
+  salesUserId: string | null;
+  salesName: string;
+  salesCount: number;
+}
+export interface CourseSalesByPersonResult {
+  productName: string | null;
+  items: CourseSalesByPersonItem[];
+}
+
+/**
  * 2026-05-22 SSOT §6.8 校长下发月度目标 DTO
  */
 export interface SetMonthlyTargetDto {
@@ -2006,5 +2044,142 @@ export class KpiService {
       id: rows[0]?.id || id,
       updated: rows[0]?.existing || false,
     };
+  }
+
+  // ============================================================
+  // 2026-06-02 SSOT §3.-2 A「课程销量」— admin/boss 经营首页组 4
+  // ============================================================
+
+  /**
+   * A-Level2 课程销量排名（本月 + 本校 scope）
+   *
+   * 口径（SSOT §3.-2 A + §3.3「曾有效签约计入、cancelled/refunded 不计」）：
+   *   - 本月 = signed_at 落当前自然月（date_trunc('month', NOW()) 起点，与
+   *     personalSigned/computeSalesMonthlyRank 排名口径一致）
+   *   - status NOT IN ('cancelled','refunded')（contracts.status 枚举无 'refunded'，
+   *     保留字面与 rank 查询对齐 + 未来加该态自然生效；当前永不命中无副作用）
+   *   - deleted_at IS NULL
+   *   - campus_id = $1（强制本校 scope，campusId 由 controller 从 JWT 透传，禁信前端）
+   *   - GROUP BY course_product_id，LEFT JOIN course_products 取 product_name
+   *     （course_product_id 可能 NULL — V29 销售自填名合同；归一行 productName=null）
+   *
+   * 返回 items 按 salesCount DESC；total = Σ salesCount（= home Level1 KPI 数）。
+   * fail-open：聚合失败 → { total: 0, items: [] }（不破坏 home 渲染）。
+   */
+  async getCourseSales(
+    tenantSchema: string,
+    campusId: string,
+  ): Promise<CourseSalesResult> {
+    try {
+      const rows = await this.pg.tenantQuery<{
+        course_product_id: string | null;
+        product_name: string | null;
+        sales_count: string;
+      }>(
+        tenantSchema,
+        `SELECT
+           c.course_product_id          AS course_product_id,
+           cp.product_name              AS product_name,
+           COUNT(*)                     AS sales_count
+         FROM contracts c
+         LEFT JOIN course_products cp ON cp.id = c.course_product_id
+         WHERE c.signed_at >= date_trunc('month', NOW())
+           AND c.signed_at < date_trunc('month', NOW()) + INTERVAL '1 month'
+           AND c.status NOT IN ('cancelled','refunded')
+           AND c.deleted_at IS NULL
+           AND c.campus_id = $1
+         GROUP BY c.course_product_id, cp.product_name
+         ORDER BY sales_count DESC`,
+        [campusId],
+      );
+
+      let total = 0;
+      const items: CourseSalesItem[] = rows.map((r) => {
+        const salesCount = parseInt(r.sales_count, 10) || 0;
+        total += salesCount;
+        return {
+          courseProductId: r.course_product_id ?? null,
+          productName: r.product_name ?? null,
+          salesCount,
+        };
+      });
+
+      return { total, items };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-course-sales] ${tenantSchema}: ${(e as Error).message}`,
+      );
+      return { total: 0, items: [] };
+    }
+  }
+
+  /**
+   * A-Level3 某课程的人员销量（本月 + 本校 scope）
+   *
+   * 同 getCourseSales 窗口/scope，但 WHERE course_product_id = $courseProductId：
+   *   - GROUP BY owner_user_id，LEFT JOIN users 取 salesName（users.name，非一级 PII，
+   *     对齐既有 salesName 先例 — contract/customer repository）
+   *   - owner_user_id 为 null 的合同归「系统」
+   *   - productName 从 course_products 单独取（即使该课程本月零销量也返产品名）
+   *
+   * 返回 items 按 salesCount DESC。
+   * fail-open：聚合失败 → { productName: null, items: [] }。
+   */
+  async getCourseSalesByPerson(
+    tenantSchema: string,
+    campusId: string,
+    courseProductId: string,
+  ): Promise<CourseSalesByPersonResult> {
+    try {
+      // productName 单查（与人员聚合解耦：零销量课程也能显示标题）
+      let productName: string | null = null;
+      try {
+        const pRows = await this.pg.tenantQuery<{ product_name: string | null }>(
+          tenantSchema,
+          `SELECT product_name FROM course_products WHERE id = $1`,
+          [courseProductId],
+        );
+        productName = pRows[0]?.product_name ?? null;
+      } catch {
+        // product_name 取不到不阻塞人员聚合（fail-open）
+      }
+
+      const rows = await this.pg.tenantQuery<{
+        owner_user_id: string | null;
+        owner_name: string | null;
+        sales_count: string;
+      }>(
+        tenantSchema,
+        `SELECT
+           c.owner_user_id              AS owner_user_id,
+           u.name                       AS owner_name,
+           COUNT(*)                     AS sales_count
+         FROM contracts c
+         LEFT JOIN users u ON u.id = c.owner_user_id
+         WHERE c.course_product_id = $1
+           AND c.signed_at >= date_trunc('month', NOW())
+           AND c.signed_at < date_trunc('month', NOW()) + INTERVAL '1 month'
+           AND c.status NOT IN ('cancelled','refunded')
+           AND c.deleted_at IS NULL
+           AND c.campus_id = $2
+         GROUP BY c.owner_user_id, u.name
+         ORDER BY sales_count DESC`,
+        [courseProductId, campusId],
+      );
+
+      const items: CourseSalesByPersonItem[] = rows.map((r) => ({
+        salesUserId: r.owner_user_id ?? null,
+        // owner_user_id 为 null → 「系统」；非 null 但 users 已删/无名 → '未知'
+        salesName: r.owner_user_id ? (r.owner_name ?? '未知') : '系统',
+        salesCount: parseInt(r.sales_count, 10) || 0,
+      }));
+
+      return { productName, items };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-course-sales-by-person] ${tenantSchema}: ${(e as Error).message}`,
+      );
+      return { productName: null, items: [] };
+    }
   }
 }

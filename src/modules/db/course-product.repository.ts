@@ -21,6 +21,13 @@ export interface CourseProduct {
   status: '上架' | '下架';
   createdAt: string;
   updatedAt: string;
+  /**
+   * 2026-06-02 SSOT §3.-2 B「课程产品列表加销量」
+   *   累计 COUNT(contracts) WHERE course_product_id=该产品 AND status ∉ {cancelled,refunded}
+   *   AND deleted_at IS NULL（tenant-wide 目录视图，不限 campus）。
+   *   仅 list() 计算并填充；findById/create/setStatus 路径不带销量（默认 0）。
+   */
+  salesCount: number;
 }
 
 /**
@@ -95,6 +102,8 @@ export class CourseProductRepository {
       status: r.status as '上架' | '下架',
       createdAt: new Date(r.created_at).toISOString(),
       updatedAt: new Date(r.updated_at).toISOString(),
+      // 2026-06-02 §3.-2 B：仅 list() SELECT 带 sales_count；其他路径无该列 → 0
+      salesCount: r.sales_count == null ? 0 : parseInt(String(r.sales_count), 10) || 0,
     };
   }
 
@@ -107,12 +116,26 @@ export class CourseProductRepository {
   ): Promise<CourseProduct[]> {
     const limit = options.limit ?? 100;
     const offset = options.offset ?? 0;
-    const where = options.includeOffShelf ? '' : `WHERE status = '上架'`;
+    const where = options.includeOffShelf ? '' : `WHERE cp.status = '上架'`;
+    // 2026-06-02 SSOT §3.-2 B：列表加「累计销量」+ 排序在售优先 → 销量降序 → 新建优先
+    //   sales_count = COUNT(contracts) by course_product_id（status ∉ {cancelled,refunded}
+    //   + deleted_at IS NULL；tenant-wide 目录视图不限 campus）。
+    //   用 LEFT JOIN 预聚合子查询（GROUP BY course_product_id）避免相关子查询每行扫；
+    //   无合同的产品 → sc.sales_count NULL → COALESCE 0。
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT * FROM course_products
+      `SELECT cp.*, COALESCE(sc.sales_count, 0) AS sales_count
+         FROM course_products cp
+         LEFT JOIN (
+           SELECT course_product_id, COUNT(*) AS sales_count
+             FROM contracts
+            WHERE status NOT IN ('cancelled','refunded')
+              AND deleted_at IS NULL
+              AND course_product_id IS NOT NULL
+            GROUP BY course_product_id
+         ) sc ON sc.course_product_id = cp.id
          ${where}
-         ORDER BY status DESC, created_at DESC
+         ORDER BY cp.status DESC, COALESCE(sc.sales_count, 0) DESC, cp.created_at DESC
          LIMIT $1 OFFSET $2`,
       [limit, offset],
     );

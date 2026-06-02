@@ -41,6 +41,9 @@ describe('KpiController (P4-X 2026-05-20)', () => {
     listRenewalContracts: jest.Mock;
     listConsumptionItems: jest.Mock;
     listStudentActivity: jest.Mock;
+    // 2026-06-02 SSOT §3.-2 A 课程销量
+    getCourseSales: jest.Mock;
+    getCourseSalesByPerson: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
   let contentModeration: { enforceStaffText: jest.Mock };
@@ -176,6 +179,11 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       listRenewalContracts: jest.fn().mockResolvedValue({ items: [], total: 0 }),
       listConsumptionItems: jest.fn().mockResolvedValue({ items: [], total: 0 }),
       listStudentActivity: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+      // 2026-06-02 SSOT §3.-2 A 课程销量 mock
+      getCourseSales: jest.fn().mockResolvedValue({ total: 0, items: [] }),
+      getCourseSalesByPerson: jest
+        .fn()
+        .mockResolvedValue({ productName: null, items: [] }),
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     contentModeration = {
@@ -1045,6 +1053,140 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       await expect(
         controller.signedItems('', req(jwt('admin', ADMIN_SUB, null))),
       ).rejects.toThrow(/tenantSchema required/);
+    });
+  });
+
+  // ============================================================
+  // 2026-06-02 SSOT §3.-2 A「课程销量」— POST /db/kpi/course-sales
+  // ============================================================
+  describe('courseSales POST /db/kpi/course-sales (A-Level2)', () => {
+    const PROD_1 = 'prod0000000000000000000000000P01';
+
+    it('happy path admin（本租户单校必有 campusId）→ campusId 从 JWT 透传 service', async () => {
+      kpi.getCourseSales.mockResolvedValueOnce({
+        total: 8,
+        items: [{ courseProductId: PROD_1, productName: '英语 1v1', salesCount: 8 }],
+      });
+      const r = await controller.courseSales(
+        { tenantSchema: TENANT_SCHEMA },
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+      );
+      expect(r.total).toBe(8);
+      expect(r.items[0].salesCount).toBe(8);
+      // campusId 一律 JWT（禁信前端）
+      expect(kpi.getCourseSales).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_A);
+    });
+
+    it('happy path boss → 用自己 JWT campusId', async () => {
+      kpi.getCourseSales.mockResolvedValueOnce({ total: 0, items: [] });
+      await controller.courseSales(
+        { tenantSchema: TENANT_SCHEMA },
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+      );
+      expect(kpi.getCourseSales).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_A);
+    });
+
+    it('空结果透传 → { total:0, items:[] }', async () => {
+      kpi.getCourseSales.mockResolvedValueOnce({ total: 0, items: [] });
+      const r = await controller.courseSales(
+        { tenantSchema: TENANT_SCHEMA },
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+      );
+      expect(r).toEqual({ total: 0, items: [] });
+    });
+
+    it('campus-scope 403：JWT 无 campusId → ForbiddenException KPI_NO_CAMPUS（不调 service）', async () => {
+      await expect(
+        controller.courseSales(
+          { tenantSchema: TENANT_SCHEMA },
+          req(jwt('admin', ADMIN_SUB, null)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        controller.courseSales(
+          { tenantSchema: TENANT_SCHEMA },
+          req(jwt('admin', ADMIN_SUB, null)),
+        ),
+      ).rejects.toThrow(/KPI_NO_CAMPUS/);
+      expect(kpi.getCourseSales).not.toHaveBeenCalled();
+    });
+
+    it('缺 tenantSchema → BadRequest + 不调 service', async () => {
+      await expect(
+        controller.courseSales(
+          { tenantSchema: '' },
+          req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(kpi.getCourseSales).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // 2026-06-02 SSOT §3.-2 A「课程销量」— POST /db/kpi/course-sales/by-person
+  // ============================================================
+  describe('courseSalesByPerson POST /db/kpi/course-sales/by-person (A-Level3)', () => {
+    const PROD_1 = 'prod0000000000000000000000000P01';
+
+    it('happy path admin → campusId(JWT) + courseProductId 透传 service（人员维度）', async () => {
+      kpi.getCourseSalesByPerson.mockResolvedValueOnce({
+        productName: '英语 1v1',
+        items: [{ salesUserId: 'sales1', salesName: '李雷', salesCount: 4 }],
+      });
+      const r = await controller.courseSalesByPerson(
+        { tenantSchema: TENANT_SCHEMA, courseProductId: PROD_1 },
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+      );
+      expect(r.productName).toBe('英语 1v1');
+      expect(r.items[0].salesName).toBe('李雷');
+      expect(kpi.getCourseSalesByPerson).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        CAMPUS_A,
+        PROD_1,
+      );
+    });
+
+    it('happy path boss → 用自己 JWT campusId', async () => {
+      kpi.getCourseSalesByPerson.mockResolvedValueOnce({ productName: null, items: [] });
+      await controller.courseSalesByPerson(
+        { tenantSchema: TENANT_SCHEMA, courseProductId: PROD_1 },
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+      );
+      expect(kpi.getCourseSalesByPerson).toHaveBeenCalledWith(
+        TENANT_SCHEMA,
+        CAMPUS_A,
+        PROD_1,
+      );
+    });
+
+    it('campus-scope 403：JWT 无 campusId → ForbiddenException（不调 service）', async () => {
+      await expect(
+        controller.courseSalesByPerson(
+          { tenantSchema: TENANT_SCHEMA, courseProductId: PROD_1 },
+          req(jwt('boss', BOSS_SUB, null)),
+        ),
+      ).rejects.toThrow(/KPI_NO_CAMPUS/);
+      expect(kpi.getCourseSalesByPerson).not.toHaveBeenCalled();
+    });
+
+    it('courseProductId 非 32-char → BadRequest（先于 campus 校验，不调 service）', async () => {
+      await expect(
+        controller.courseSalesByPerson(
+          { tenantSchema: TENANT_SCHEMA, courseProductId: 'short' },
+          req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+        ),
+      ).rejects.toThrow(/courseProductId must be 32-char ULID/);
+      expect(kpi.getCourseSalesByPerson).not.toHaveBeenCalled();
+    });
+
+    it('缺 tenantSchema → BadRequest + 不调 service', async () => {
+      await expect(
+        controller.courseSalesByPerson(
+          { tenantSchema: '', courseProductId: PROD_1 },
+          req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+        ),
+      ).rejects.toThrow(/tenantSchema required/);
+      expect(kpi.getCourseSalesByPerson).not.toHaveBeenCalled();
     });
   });
 });

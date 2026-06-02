@@ -856,4 +856,159 @@ describe('KpiService (P4-X 2026-05-20)', () => {
       expect(r.trialRate).toEqual({ rate: '0', total: 0 });
     });
   });
+
+  // ============================================================
+  // 2026-06-02 SSOT §3.-2 A「课程销量」— getCourseSales (Level2)
+  // ============================================================
+  describe('getCourseSales (A-Level2 课程销量排名)', () => {
+    const PROD_1 = 'prod0000000000000000000000000P01';
+    const PROD_2 = 'prod0000000000000000000000000P02';
+
+    it('SQL 校验：本月 date_trunc + status∉{cancelled,refunded} + deleted_at + campus_id=$1 + GROUP BY course_product_id + LEFT JOIN course_products + 排序 salesCount DESC', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      await svc.getCourseSales(TENANT, CAMPUS_A);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      const params = pg.tenantQuery.mock.calls[0][2];
+      expect(sql).toContain(`date_trunc('month', NOW())`);
+      expect(sql).toContain(`c.status NOT IN ('cancelled','refunded')`);
+      expect(sql).toContain('c.deleted_at IS NULL');
+      expect(sql).toContain('c.campus_id = $1');
+      expect(sql).toContain('GROUP BY c.course_product_id, cp.product_name');
+      expect(sql).toContain('LEFT JOIN course_products cp ON cp.id = c.course_product_id');
+      expect(sql).toMatch(/ORDER BY sales_count DESC/);
+      expect(params).toEqual([CAMPUS_A]);
+    });
+
+    it('happy path：2 课程聚合 → items 按 salesCount DESC + total=Σ', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { course_product_id: PROD_1, product_name: '英语 1v1', sales_count: '5' },
+        { course_product_id: PROD_2, product_name: '数学小班', sales_count: '3' },
+      ]);
+      const r = await svc.getCourseSales(TENANT, CAMPUS_A);
+      expect(r.total).toBe(8);
+      expect(r.items).toHaveLength(2);
+      expect(r.items[0]).toEqual({
+        courseProductId: PROD_1,
+        productName: '英语 1v1',
+        salesCount: 5,
+      });
+      expect(r.items[1].salesCount).toBe(3);
+    });
+
+    it('course_product_id 为 null（V29 自填名合同）→ productName/courseProductId 归 null', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([
+        { course_product_id: null, product_name: null, sales_count: '2' },
+      ]);
+      const r = await svc.getCourseSales(TENANT, CAMPUS_A);
+      expect(r.items[0]).toEqual({
+        courseProductId: null,
+        productName: null,
+        salesCount: 2,
+      });
+      expect(r.total).toBe(2);
+    });
+
+    it('空结果 → { total:0, items:[] }', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]);
+      const r = await svc.getCourseSales(TENANT, CAMPUS_A);
+      expect(r).toEqual({ total: 0, items: [] });
+    });
+
+    it('查询抛错 → fail-open { total:0, items:[] }', async () => {
+      pg.tenantQuery.mockRejectedValueOnce(new Error('boom'));
+      const r = await svc.getCourseSales(TENANT, CAMPUS_A);
+      expect(r).toEqual({ total: 0, items: [] });
+    });
+  });
+
+  // ============================================================
+  // 2026-06-02 SSOT §3.-2 A「课程销量」— getCourseSalesByPerson (Level3)
+  // ============================================================
+  describe('getCourseSalesByPerson (A-Level3 某课程人员销量)', () => {
+    const PROD_1 = 'prod0000000000000000000000000P01';
+
+    it('SQL 校验：product_name 单查 + 人员聚合 WHERE course_product_id=$1 + campus_id=$2 + GROUP BY owner_user_id + LEFT JOIN users + salesCount DESC', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ product_name: '英语 1v1' }]) // productName 单查
+        .mockResolvedValueOnce([]); // 人员聚合
+      await svc.getCourseSalesByPerson(TENANT, CAMPUS_A, PROD_1);
+
+      const prodSql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(prodSql).toContain('SELECT product_name FROM course_products WHERE id = $1');
+      expect(pg.tenantQuery.mock.calls[0][2]).toEqual([PROD_1]);
+
+      const sql = pg.tenantQuery.mock.calls[1][1] as string;
+      const params = pg.tenantQuery.mock.calls[1][2];
+      expect(sql).toContain('c.course_product_id = $1');
+      expect(sql).toContain('c.campus_id = $2');
+      expect(sql).toContain(`c.status NOT IN ('cancelled','refunded')`);
+      expect(sql).toContain('c.deleted_at IS NULL');
+      expect(sql).toContain(`date_trunc('month', NOW())`);
+      expect(sql).toContain('GROUP BY c.owner_user_id, u.name');
+      expect(sql).toContain('LEFT JOIN users u ON u.id = c.owner_user_id');
+      expect(sql).toMatch(/ORDER BY sales_count DESC/);
+      expect(params).toEqual([PROD_1, CAMPUS_A]);
+    });
+
+    it('happy path：2 销售人员 → items 按 salesCount DESC + productName 透传', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ product_name: '英语 1v1' }])
+        .mockResolvedValueOnce([
+          { owner_user_id: SALES_1, owner_name: '李雷', sales_count: '4' },
+          { owner_user_id: SALES_2, owner_name: '韩梅', sales_count: '2' },
+        ]);
+      const r = await svc.getCourseSalesByPerson(TENANT, CAMPUS_A, PROD_1);
+      expect(r.productName).toBe('英语 1v1');
+      expect(r.items).toHaveLength(2);
+      expect(r.items[0]).toEqual({
+        salesUserId: SALES_1,
+        salesName: '李雷',
+        salesCount: 4,
+      });
+      expect(r.items[1].salesName).toBe('韩梅');
+    });
+
+    it('owner_user_id 为 null → salesName 归「系统」', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ product_name: '英语 1v1' }])
+        .mockResolvedValueOnce([
+          { owner_user_id: null, owner_name: null, sales_count: '1' },
+        ]);
+      const r = await svc.getCourseSalesByPerson(TENANT, CAMPUS_A, PROD_1);
+      expect(r.items[0]).toEqual({
+        salesUserId: null,
+        salesName: '系统',
+        salesCount: 1,
+      });
+    });
+
+    it('owner_user_id 非空但 users 无名 → salesName 兜底「未知」', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ product_name: '英语 1v1' }])
+        .mockResolvedValueOnce([
+          { owner_user_id: SALES_1, owner_name: null, sales_count: '1' },
+        ]);
+      const r = await svc.getCourseSalesByPerson(TENANT, CAMPUS_A, PROD_1);
+      expect(r.items[0].salesName).toBe('未知');
+    });
+
+    it('productName 单查抛错 → 不阻塞人员聚合（productName=null + items 正常）', async () => {
+      pg.tenantQuery
+        .mockRejectedValueOnce(new Error('prod boom')) // productName 单查 fail
+        .mockResolvedValueOnce([
+          { owner_user_id: SALES_1, owner_name: '李雷', sales_count: '3' },
+        ]);
+      const r = await svc.getCourseSalesByPerson(TENANT, CAMPUS_A, PROD_1);
+      expect(r.productName).toBeNull();
+      expect(r.items[0].salesCount).toBe(3);
+    });
+
+    it('人员聚合抛错 → fail-open { productName:null, items:[] }', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([{ product_name: '英语 1v1' }])
+        .mockRejectedValueOnce(new Error('agg boom'));
+      const r = await svc.getCourseSalesByPerson(TENANT, CAMPUS_A, PROD_1);
+      expect(r).toEqual({ productName: null, items: [] });
+    });
+  });
 });

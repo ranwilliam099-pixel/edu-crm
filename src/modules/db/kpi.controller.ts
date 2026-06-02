@@ -32,6 +32,8 @@ import {
   KpiConsumptionItem,
   KpiStudentActivityItem,
   KpiListResult,
+  CourseSalesResult,
+  CourseSalesByPersonResult,
 } from './kpi.service';
 import {
   ActorRole,
@@ -167,6 +169,23 @@ export class KpiController {
 
     // 其他 role 理论被 @Roles 挡住，但兜底防御：返 [] 让 SQL where false 命中无数据
     return [];
+  }
+
+  /**
+   * 2026-06-02 SSOT §3.-2 A「课程销量」专用 campus-scope（强制 JWT，禁信前端）
+   *
+   * 与 resolveCampusScope（admin 可 null 跨校）不同：course-sales 是「本月本校课程销量」
+   * 经营首页 KPI，必须强制本校 scope。campusId 一律取自 JWT；缺失 → 403（仿
+   * trial.requireCampusId）。admin（本租户单校 boss/admin 必有 campusId）+ boss 均适用。
+   */
+  private requireCampusId(req: AuthenticatedRequest): string {
+    const campusId = req.user?.campusId;
+    if (!campusId) {
+      throw new ForbiddenException(
+        'KPI_NO_CAMPUS: caller must have a campusId scope (course-sales 强制本校)',
+      );
+    }
+    return campusId;
   }
 
   /**
@@ -660,6 +679,63 @@ export class KpiController {
       campusIdCsv,
     );
     return this.kpi.getStudentActivityKpi(tenantSchema, { campusIds });
+  }
+
+  // ============================================================
+  // 2026-06-02 SSOT §3.-2 A「课程销量」— admin/boss 经营首页组 4 替换「学员状态」
+  //   全 POST（body.tenantSchema 经 tenant.middleware 回填）+ 强制本校 campus-scope
+  // ============================================================
+
+  /**
+   * POST /db/kpi/course-sales — A-Level2 课程销量排名（本月 + 本校 scope）
+   *   Body: { tenantSchema }（tenantSchema 由 middleware 从 header 回填）
+   *   RBAC: @Roles('admin', 'boss')（经营首页 = 老板/校长视角）
+   *   campusId 一律 JWT（缺 → 403）；GROUP BY course_product_id，salesCount DESC
+   *
+   *   返 { total, items: [{ courseProductId, productName, salesCount }] }
+   *   total = Σ salesCount（= home Level1 KPI「本月课程销量 N」）
+   *
+   *   不写 audit_log：与既有 signed/renewal/consumption 一致（高频 KPI 读路径，
+   *   越权由 RbacGuard + TenantScopeGuard + 强制 campus-scope 三层兜住）。
+   */
+  @Post('course-sales')
+  @Roles('admin', 'boss')
+  @HttpCode(HttpStatus.OK)
+  async courseSales(
+    @Body() body: { tenantSchema: string },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<CourseSalesResult> {
+    if (!body?.tenantSchema) throw new BadRequestException('tenantSchema required');
+    const campusId = this.requireCampusId(req);
+    return this.kpi.getCourseSales(body.tenantSchema, campusId);
+  }
+
+  /**
+   * POST /db/kpi/course-sales/by-person — A-Level3 某课程的人员销量（本月 + 本校 scope）
+   *   Body: { tenantSchema, courseProductId }
+   *   RBAC: @Roles('admin', 'boss')；campusId 一律 JWT（缺 → 403）
+   *   同窗口/scope，WHERE course_product_id = $courseProductId，GROUP BY owner_user_id
+   *
+   *   返 { productName, items: [{ salesUserId, salesName, salesCount }] }（salesCount DESC）
+   *   salesName 用 users.name（非一级 PII）；owner_user_id 为 null 归「系统」
+   */
+  @Post('course-sales/by-person')
+  @Roles('admin', 'boss')
+  @HttpCode(HttpStatus.OK)
+  async courseSalesByPerson(
+    @Body() body: { tenantSchema: string; courseProductId: string },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<CourseSalesByPersonResult> {
+    if (!body?.tenantSchema) throw new BadRequestException('tenantSchema required');
+    if (!body.courseProductId || body.courseProductId.length !== 32) {
+      throw new BadRequestException('courseProductId must be 32-char ULID');
+    }
+    const campusId = this.requireCampusId(req);
+    return this.kpi.getCourseSalesByPerson(
+      body.tenantSchema,
+      campusId,
+      body.courseProductId,
+    );
   }
 
   // ============================================================
