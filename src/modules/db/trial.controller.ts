@@ -505,9 +505,11 @@ export class TrialController {
         `TRIAL_ARRANGE_CROSS_CAMPUS: trial campus=${trial.campusId} != caller campus=${campusId}`,
       );
     }
-    if (trial.status !== 'pending_teacher') {
+    // 2026-06-02 走查 A：放开「改约」——pending_teacher（首次排课）+ scheduled（试听前换老师/时间）。
+    //   done/converted/lost（已试听/已结果）仍拒。冲突校验已排除自身 id（重排幂等安全）。
+    if (trial.status !== 'pending_teacher' && trial.status !== 'scheduled') {
       throw new BadRequestException(
-        `TRIAL_INVALID_TRANSITION: arrange requires status='pending_teacher', got '${trial.status}'`,
+        `TRIAL_INVALID_TRANSITION: arrange/re-arrange requires status 'pending_teacher' or 'scheduled', got '${trial.status}'`,
       );
     }
 
@@ -552,7 +554,7 @@ export class TrialController {
     );
     if (!updated) {
       throw new BadRequestException(
-        `TRIAL_INVALID_TRANSITION: trial ${id} no longer in 'pending_teacher'`,
+        `TRIAL_INVALID_TRANSITION: trial ${id} no longer arrangeable (not in 'pending_teacher'/'scheduled')`,
       );
     }
 

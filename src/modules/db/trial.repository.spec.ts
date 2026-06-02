@@ -100,6 +100,22 @@ describe('TrialRepository (V64 Phase 4)', () => {
       // 倒数第二个参数为 limit
       expect(params[params.length - 2]).toBe(200);
     });
+
+    // 2026-06-02 走查 A：读路径 LEFT JOIN teachers 取 teacher_name（排课后能看到老师）
+    it('LEFT JOIN teachers 取 teacher_name；mapRow 映射 teacherName', async () => {
+      pg.tenantQuery.mockResolvedValue([row({ teacher_id: TEACHER, teacher_name: '王老师' })]);
+      const list = await repo.list(TENANT, { campusId: CAMPUS });
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('LEFT JOIN teachers te ON te.id = t.teacher_id');
+      expect(sql).toContain('te.name AS teacher_name');
+      expect(list[0].teacherName).toBe('王老师');
+    });
+
+    it('未排老师（teacher_id NULL）→ teacherName=null（0 编造）', async () => {
+      pg.tenantQuery.mockResolvedValue([row({ teacher_id: null, teacher_name: null })]);
+      const list = await repo.list(TENANT, { campusId: CAMPUS });
+      expect(list[0].teacherName).toBeNull();
+    });
   });
 
   describe('状态机 UPDATE — WHERE status 二次兜底', () => {
@@ -118,12 +134,13 @@ describe('TrialRepository (V64 Phase 4)', () => {
       expect(t).toBeNull();
     });
 
-    it('arrange：set scheduled WHERE status=pending_teacher', async () => {
+    // 2026-06-02 走查 A：arrange 放开「改约」→ WHERE 含 pending_teacher + scheduled
+    it('arrange：set scheduled WHERE status IN (pending_teacher, scheduled)（含改约）', async () => {
       pg.tenantQuery.mockResolvedValue([row({ status: 'scheduled' })]);
       await repo.arrange(TENANT, TRIAL, TEACHER, new Date('2026-06-10T02:00:00Z'));
       const sql = pg.tenantQuery.mock.calls[0][1] as string;
       expect(sql).toContain("status = 'scheduled'");
-      expect(sql).toContain("WHERE id = $3 AND status = 'pending_teacher'");
+      expect(sql).toContain("WHERE id = $3 AND status IN ('pending_teacher', 'scheduled')");
     });
 
     it('complete：set done WHERE status=scheduled', async () => {

@@ -73,6 +73,7 @@ describe('TrialController (V64 Phase 4 试听课流程)', () => {
       status: 'pending_assign',
       assignedAcademicId: null,
       teacherId: null,
+      teacherName: null,
       campusId: CAMPUS,
       initiatedBy: SALES,
       resultNote: null,
@@ -381,6 +382,35 @@ describe('TrialController (V64 Phase 4 试听课流程)', () => {
       expect(conflictArgs[1]).toBe(TEACHER);
       expect(conflictArgs[5]).toBe(TRIAL_ID);
       expect(auditLog.log.mock.calls[0][1].action).toBe('trial.arrange');
+    });
+
+    // 2026-06-02 走查 A：改约——scheduled 状态可重新排老师/时间（试听前换）。
+    it('scheduled（已排课·试听前）+ 无冲突 → 改约成功（仍 scheduled）+ audit', async () => {
+      trialRepo.requireExists.mockResolvedValue(
+        trialFixture({ status: 'scheduled', teacherId: 'oldTeacher000000000000000000T0', scheduledAt: '2026-06-09T02:00:00.000Z' }),
+      );
+      trialRepo.findTeacherConflicts.mockResolvedValue([]);
+      trialRepo.arrange.mockResolvedValue(
+        trialFixture({ status: 'scheduled', teacherId: TEACHER, scheduledAt: body.scheduledAt }),
+      );
+      const r = await controller.arrange(TRIAL_ID, body, req(jwt('academic', ACADEMIC)));
+      expect(r.status).toBe('scheduled');
+      expect(trialRepo.arrange).toHaveBeenCalled();
+      // 冲突校验仍排除自身（重排不与旧时段冲突）
+      expect(trialRepo.findTeacherConflicts.mock.calls[0][5]).toBe(TRIAL_ID);
+      // before 捕获旧老师/时段，after 新值
+      const audit = auditLog.log.mock.calls[0][1];
+      expect(audit.action).toBe('trial.arrange');
+      expect(audit.before.teacherId).toBe('oldTeacher000000000000000000T0');
+      expect(audit.after.teacherId).toBe(TEACHER);
+    });
+
+    it('done（已试听）→ 400 非法转移（不可改约）', async () => {
+      trialRepo.requireExists.mockResolvedValue(trialFixture({ status: 'done' }));
+      await expect(
+        controller.arrange(TRIAL_ID, body, req(jwt('academic', ACADEMIC))),
+      ).rejects.toThrow(/TRIAL_INVALID_TRANSITION/);
+      expect(trialRepo.findTeacherConflicts).not.toHaveBeenCalled();
     });
 
     it('老师该时段已被占用（schedules/trials）→ 400 含冲突信息', async () => {

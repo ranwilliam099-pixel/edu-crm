@@ -43,6 +43,8 @@ export interface Trial {
   status: TrialStatus;
   assignedAcademicId: string | null;
   teacherId: string | null;
+  /** 排定老师姓名（读路径 LEFT JOIN teachers 派生；写 RETURNING 不含 → null，前端用已选老师名注入乐观更新）。 */
+  teacherName: string | null;
   campusId: string;
   initiatedBy: string;
   resultNote: string | null;
@@ -74,6 +76,7 @@ export class TrialRepository {
       status: row.status as TrialStatus,
       assignedAcademicId: row.assigned_academic_id ?? null,
       teacherId: row.teacher_id ?? null,
+      teacherName: row.teacher_name ?? null,
       campusId: row.campus_id,
       initiatedBy: row.initiated_by,
       resultNote: row.result_note ?? null,
@@ -90,6 +93,17 @@ export class TrialRepository {
   private static readonly COLS = `id, customer_id, student_name, subject, preferred_time,
               scheduled_at, status, assigned_academic_id, teacher_id, campus_id,
               initiated_by, result_note, converted_contract_id, created_at, updated_at`;
+
+  /**
+   * 读路径列（t. 前缀 + LEFT JOIN teachers 取 teacher_name），与 READ_FROM 配套。
+   *   写动作 RETURNING 仍用裸 COLS（UPDATE…RETURNING 不能 JOIN；teacherName 写回为 null，
+   *   前端排课/改约后用「已选老师名」注入乐观更新，页面下次拉列表即由 JOIN 回填权威值）。
+   */
+  private static readonly COLS_T = `t.id, t.customer_id, t.student_name, t.subject, t.preferred_time,
+              t.scheduled_at, t.status, t.assigned_academic_id, t.teacher_id, t.campus_id,
+              t.initiated_by, t.result_note, t.converted_contract_id, t.created_at, t.updated_at,
+              te.name AS teacher_name`;
+  private static readonly READ_FROM = `FROM trials t LEFT JOIN teachers te ON te.id = t.teacher_id`;
 
   // ============================================================
   // 写：create（销售发起，初始 pending_assign）
@@ -136,7 +150,7 @@ export class TrialRepository {
   async findById(tenantSchema: string, id: string): Promise<Trial | null> {
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT ${TrialRepository.COLS} FROM trials WHERE id = $1`,
+      `SELECT ${TrialRepository.COLS_T} ${TrialRepository.READ_FROM} WHERE t.id = $1`,
       [id],
     );
     return rows.length === 0 ? null : TrialRepository.mapRow(rows[0]);
@@ -172,26 +186,26 @@ export class TrialRepository {
 
     if (filter.campusId) {
       params.push(filter.campusId);
-      where.push(`campus_id = $${params.length}`);
+      where.push(`t.campus_id = $${params.length}`);
     }
     if (filter.assignedAcademicId) {
       params.push(filter.assignedAcademicId);
-      where.push(`assigned_academic_id = $${params.length}`);
+      where.push(`t.assigned_academic_id = $${params.length}`);
     }
     if (filter.assignedIsNull) {
-      where.push(`assigned_academic_id IS NULL`);
+      where.push(`t.assigned_academic_id IS NULL`);
     }
     if (filter.teacherId) {
       params.push(filter.teacherId);
-      where.push(`teacher_id = $${params.length}`);
+      where.push(`t.teacher_id = $${params.length}`);
     }
     if (filter.initiatedBy) {
       params.push(filter.initiatedBy);
-      where.push(`initiated_by = $${params.length}`);
+      where.push(`t.initiated_by = $${params.length}`);
     }
     if (filter.status) {
       params.push(filter.status);
-      where.push(`status = $${params.length}`);
+      where.push(`t.status = $${params.length}`);
     }
 
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -204,9 +218,9 @@ export class TrialRepository {
 
     const rows = await this.pg.tenantQuery<PgRow>(
       tenantSchema,
-      `SELECT ${TrialRepository.COLS} FROM trials
+      `SELECT ${TrialRepository.COLS_T} ${TrialRepository.READ_FROM}
          ${whereClause}
-        ORDER BY created_at DESC
+        ORDER BY t.created_at DESC
         LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       params,
     );
@@ -242,7 +256,10 @@ export class TrialRepository {
   // ============================================================
   /**
    * 设 teacher_id + scheduled_at + status='scheduled'。
-   *   WHERE status='pending_teacher' 二次兜底（仅待排老师可排；并发安全）。
+   *   WHERE status IN ('pending_teacher','scheduled') 二次兜底（首次排课 + 改约；并发安全）。
+   *   2026-06-02 走查 A：放开 'scheduled' 以支持「改约」（试听前换老师/时间）——
+   *     状态保持 scheduled（幂等），冲突校验由 controller 先调 findTeacherConflicts（已排除自身 id）。
+   *     'done'/'converted'/'lost' 仍拒（已试听不可改约；由 controller 状态校验 + 此 WHERE 双门）。
    *   老师时段冲突校验由 controller 先调 findTeacherConflicts（本方法只落库）。
    */
   async arrange(
@@ -255,7 +272,7 @@ export class TrialRepository {
       tenantSchema,
       `UPDATE trials
           SET teacher_id = $1, scheduled_at = $2, status = 'scheduled', updated_at = NOW()
-        WHERE id = $3 AND status = 'pending_teacher'
+        WHERE id = $3 AND status IN ('pending_teacher', 'scheduled')
       RETURNING ${TrialRepository.COLS}`,
       [teacherId, scheduledAt, id],
     );
