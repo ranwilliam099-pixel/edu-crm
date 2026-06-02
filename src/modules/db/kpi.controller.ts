@@ -34,6 +34,7 @@ import {
   KpiListResult,
   CourseSalesResult,
   CourseSalesByPersonResult,
+  ConsumptionRankingResult,
 } from './kpi.service';
 import {
   ActorRole,
@@ -736,6 +737,39 @@ export class KpiController {
       campusId,
       body.courseProductId,
     );
+  }
+
+  // ============================================================
+  // 2026-06-02 SSOT §3.-2 E「消课数据双维度排名」— admin/boss 经营首页
+  //   原「老师业绩榜·本月」(teacher-leaderboard) 改为消课数据，分 教务 / 老师 两 tab
+  // ============================================================
+
+  /**
+   * POST /db/kpi/consumption-ranking — E 消课数据双维度排名（本月 + 本校 scope）
+   *   Body: { tenantSchema }（tenantSchema 由 middleware 从 header 回填）
+   *   RBAC: @Roles('admin', 'boss')（经营首页 = 老板/校长视角）
+   *   campusId 一律 JWT（缺 → 403 KPI_NO_CAMPUS）；禁信前端
+   *
+   *   返 { teacher: [{ id, name, lessonCount }], academic: [...] }（各 lessonCount DESC）
+   *     - teacher 维：GROUP BY schedules.teacher_id（谁教的）
+   *     - academic 维：GROUP BY schedules.created_by_user_id WHERE created_by_role ∈
+   *       (academic, academic_admin)（谁排的课；admin/boss 自排不计入教务维）
+   *   数据源 course_consumptions（status='confirmed' + confirmed_at 本月）JOIN schedules。
+   *
+   *   不写 audit_log：与既有 signed/renewal/consumption/course-sales 一致（高频 KPI
+   *   读路径，越权由 RbacGuard + TenantScopeGuard + 强制 campus-scope 三层兜住）。
+   *   fail-open：聚合失败 → { teacher: [], academic: [] }（不破坏 home）。
+   */
+  @Post('consumption-ranking')
+  @Roles('admin', 'boss')
+  @HttpCode(HttpStatus.OK)
+  async consumptionRanking(
+    @Body() body: { tenantSchema: string },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<ConsumptionRankingResult> {
+    if (!body?.tenantSchema) throw new BadRequestException('tenantSchema required');
+    const campusId = this.requireCampusId(req);
+    return this.kpi.getConsumptionRanking(body.tenantSchema, campusId);
   }
 
   // ============================================================

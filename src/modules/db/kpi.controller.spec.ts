@@ -12,6 +12,7 @@ import {
 } from './kpi.service';
 import { AuditLogRepository } from './audit-log.repository';
 import { ContentModerationService } from '../security/content-moderation.service';
+import { ROLES_METADATA_KEY } from '../../guards/rbac.decorator';
 import {
   AuthenticatedRequest,
   JwtPayload,
@@ -44,6 +45,8 @@ describe('KpiController (P4-X 2026-05-20)', () => {
     // 2026-06-02 SSOT §3.-2 A 课程销量
     getCourseSales: jest.Mock;
     getCourseSalesByPerson: jest.Mock;
+    // 2026-06-02 SSOT §3.-2 E 消课数据双维度排名
+    getConsumptionRanking: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
   let contentModeration: { enforceStaffText: jest.Mock };
@@ -184,6 +187,10 @@ describe('KpiController (P4-X 2026-05-20)', () => {
       getCourseSalesByPerson: jest
         .fn()
         .mockResolvedValue({ productName: null, items: [] }),
+      // 2026-06-02 SSOT §3.-2 E 消课数据双维度排名 mock
+      getConsumptionRanking: jest
+        .fn()
+        .mockResolvedValue({ teacher: [], academic: [] }),
     };
     auditLog = { log: jest.fn().mockResolvedValue(undefined) };
     contentModeration = {
@@ -1187,6 +1194,89 @@ describe('KpiController (P4-X 2026-05-20)', () => {
         ),
       ).rejects.toThrow(/tenantSchema required/);
       expect(kpi.getCourseSalesByPerson).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // 2026-06-02 SSOT §3.-2 E「消课数据双维度排名」— POST /db/kpi/consumption-ranking
+  // ============================================================
+  describe('consumptionRanking POST /db/kpi/consumption-ranking (E)', () => {
+    it('happy path teacher 维 + academic 维：双维度透传 + campusId 从 JWT', async () => {
+      kpi.getConsumptionRanking.mockResolvedValueOnce({
+        teacher: [
+          { id: 'tch1', name: '周勇', lessonCount: 12 },
+          { id: 'tch2', name: '吴敏', lessonCount: 7 },
+        ],
+        academic: [{ id: 'acad1', name: '赵丽', lessonCount: 9 }],
+      });
+      const r = await controller.consumptionRanking(
+        { tenantSchema: TENANT_SCHEMA },
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+      );
+      // teacher 维 DESC
+      expect(r.teacher).toHaveLength(2);
+      expect(r.teacher[0]).toEqual({ id: 'tch1', name: '周勇', lessonCount: 12 });
+      expect(r.teacher[1].lessonCount).toBe(7);
+      // academic 维
+      expect(r.academic).toHaveLength(1);
+      expect(r.academic[0].name).toBe('赵丽');
+      // campusId 一律 JWT（禁信前端）
+      expect(kpi.getConsumptionRanking).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_A);
+    });
+
+    it('happy path admin（本租户单校必有 campusId）→ campusId 从 JWT 透传', async () => {
+      kpi.getConsumptionRanking.mockResolvedValueOnce({
+        teacher: [{ id: 'tch1', name: '周勇', lessonCount: 3 }],
+        academic: [],
+      });
+      await controller.consumptionRanking(
+        { tenantSchema: TENANT_SCHEMA },
+        req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+      );
+      expect(kpi.getConsumptionRanking).toHaveBeenCalledWith(TENANT_SCHEMA, CAMPUS_A);
+    });
+
+    it('空结果透传 → { teacher:[], academic:[] }', async () => {
+      kpi.getConsumptionRanking.mockResolvedValueOnce({ teacher: [], academic: [] });
+      const r = await controller.consumptionRanking(
+        { tenantSchema: TENANT_SCHEMA },
+        req(jwt('boss', BOSS_SUB, CAMPUS_A)),
+      );
+      expect(r).toEqual({ teacher: [], academic: [] });
+    });
+
+    it('campus-scope 403：JWT 无 campusId → ForbiddenException KPI_NO_CAMPUS（不调 service）', async () => {
+      await expect(
+        controller.consumptionRanking(
+          { tenantSchema: TENANT_SCHEMA },
+          req(jwt('boss', BOSS_SUB, null)),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        controller.consumptionRanking(
+          { tenantSchema: TENANT_SCHEMA },
+          req(jwt('boss', BOSS_SUB, null)),
+        ),
+      ).rejects.toThrow(/KPI_NO_CAMPUS/);
+      expect(kpi.getConsumptionRanking).not.toHaveBeenCalled();
+    });
+
+    it('缺 tenantSchema → BadRequest + 不调 service', async () => {
+      await expect(
+        controller.consumptionRanking(
+          { tenantSchema: '' },
+          req(jwt('admin', ADMIN_SUB, CAMPUS_A)),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(kpi.getConsumptionRanking).not.toHaveBeenCalled();
+    });
+
+    it('@Roles 元数据 = [admin, boss]（RbacGuard 据此 403 其他角色）', () => {
+      const roles = Reflect.getMetadata(
+        ROLES_METADATA_KEY,
+        KpiController.prototype.consumptionRanking,
+      );
+      expect(roles).toEqual(['admin', 'boss']);
     });
   });
 });

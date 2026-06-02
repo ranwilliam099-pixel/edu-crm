@@ -1011,4 +1011,104 @@ describe('KpiService (P4-X 2026-05-20)', () => {
       expect(r).toEqual({ productName: null, items: [] });
     });
   });
+
+  // ============================================================
+  // 2026-06-02 SSOT §3.-2 E「消课数据双维度排名」— getConsumptionRanking
+  // ============================================================
+  describe('getConsumptionRanking (E 消课双维度排名)', () => {
+    const TCH_1 = 'tch00000000000000000000000000T01';
+    const TCH_2 = 'tch00000000000000000000000000T02';
+
+    it('teacher 维 SQL：confirmed + 本月 date_trunc + JOIN schedules + GROUP BY teacher_id + LEFT JOIN teachers + campus_id=$1 + DESC', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([]) // teacher 维
+        .mockResolvedValueOnce([]); // academic 维
+      await svc.getConsumptionRanking(TENANT, CAMPUS_A);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      const params = pg.tenantQuery.mock.calls[0][2];
+      expect(sql).toContain(`cc.status = 'confirmed'`);
+      expect(sql).toContain(`date_trunc('month', NOW())`);
+      expect(sql).toContain('JOIN schedules sc ON sc.id = cc.schedule_id');
+      expect(sql).toContain('LEFT JOIN teachers t ON t.id = sc.teacher_id');
+      expect(sql).toContain('GROUP BY sc.teacher_id, t.name');
+      expect(sql).toContain('sc.campus_id = $1');
+      expect(sql).toMatch(/ORDER BY lesson_count DESC/);
+      expect(params).toEqual([CAMPUS_A]);
+    });
+
+    it('academic 维 SQL：GROUP BY created_by_user_id + WHERE created_by_role IN (academic,academic_admin) + LEFT JOIN users + campus_id=$1', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([]) // teacher 维
+        .mockResolvedValueOnce([]); // academic 维
+      await svc.getConsumptionRanking(TENANT, CAMPUS_A);
+      const sql = pg.tenantQuery.mock.calls[1][1] as string;
+      const params = pg.tenantQuery.mock.calls[1][2];
+      expect(sql).toContain(`cc.status = 'confirmed'`);
+      expect(sql).toContain('GROUP BY sc.created_by_user_id, u.name');
+      expect(sql).toContain(`sc.created_by_role IN ('academic','academic_admin')`);
+      expect(sql).toContain('LEFT JOIN users u ON u.id = sc.created_by_user_id');
+      expect(sql).toContain('sc.campus_id = $1');
+      expect(sql).toMatch(/ORDER BY lesson_count DESC/);
+      expect(params).toEqual([CAMPUS_A]);
+    });
+
+    it('happy path：teacher 维 2 老师 DESC + academic 维 1 教务（每条 confirmed 计 1 节）', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([
+          { teacher_id: TCH_1, teacher_name: '周勇', lesson_count: '12' },
+          { teacher_id: TCH_2, teacher_name: '吴敏', lesson_count: '5' },
+        ])
+        .mockResolvedValueOnce([
+          { user_id: ACADEMIC_1, user_name: '赵丽', lesson_count: '9' },
+        ]);
+      const r = await svc.getConsumptionRanking(TENANT, CAMPUS_A);
+      expect(r.teacher).toHaveLength(2);
+      expect(r.teacher[0]).toEqual({ id: TCH_1, name: '周勇', lessonCount: 12 });
+      expect(r.teacher[1]).toEqual({ id: TCH_2, name: '吴敏', lessonCount: 5 });
+      expect(r.academic).toHaveLength(1);
+      expect(r.academic[0]).toEqual({ id: ACADEMIC_1, name: '赵丽', lessonCount: 9 });
+    });
+
+    it('teacher_id 为 null（孤儿）→ name 兜底「未知」', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([
+          { teacher_id: null, teacher_name: null, lesson_count: '2' },
+        ])
+        .mockResolvedValueOnce([]);
+      const r = await svc.getConsumptionRanking(TENANT, CAMPUS_A);
+      expect(r.teacher[0]).toEqual({ id: null, name: '未知', lessonCount: 2 });
+    });
+
+    it('teacher_id 非空但 teachers 无名 → name 兜底「未知」', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([
+          { teacher_id: TCH_1, teacher_name: null, lesson_count: '3' },
+        ])
+        .mockResolvedValueOnce([]);
+      const r = await svc.getConsumptionRanking(TENANT, CAMPUS_A);
+      expect(r.teacher[0]).toEqual({ id: TCH_1, name: '未知', lessonCount: 3 });
+    });
+
+    it('academic 维 user_id 为 null → name 兜底「未知」', async () => {
+      pg.tenantQuery
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { user_id: null, user_name: null, lesson_count: '4' },
+        ]);
+      const r = await svc.getConsumptionRanking(TENANT, CAMPUS_A);
+      expect(r.academic[0]).toEqual({ id: null, name: '未知', lessonCount: 4 });
+    });
+
+    it('空结果 → { teacher:[], academic:[] }', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+      const r = await svc.getConsumptionRanking(TENANT, CAMPUS_A);
+      expect(r).toEqual({ teacher: [], academic: [] });
+    });
+
+    it('查询抛错 → fail-open { teacher:[], academic:[] }', async () => {
+      pg.tenantQuery.mockRejectedValueOnce(new Error('boom'));
+      const r = await svc.getConsumptionRanking(TENANT, CAMPUS_A);
+      expect(r).toEqual({ teacher: [], academic: [] });
+    });
+  });
 });

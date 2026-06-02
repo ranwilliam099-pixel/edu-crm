@@ -278,6 +278,26 @@ export interface CourseSalesByPersonResult {
 }
 
 /**
+ * 2026-06-02 SSOT §3.-2 E「消课数据双维度排名」数据契约：
+ *   本月（confirmed_at 落自然月）+ course_consumptions.status='confirmed' + 本校 campus-scope
+ *   两维度（tab 切换），各按 lessonCount DESC：
+ *     - teacher：GROUP BY schedules.teacher_id（谁教的，LEFT JOIN teachers 取 name）
+ *     - academic：GROUP BY schedules.created_by_user_id WHERE created_by_role ∈
+ *       (academic, academic_admin)（谁排的课；admin/boss 自排不计入教务维度），
+ *       LEFT JOIN users 取 name
+ *   每条 confirmed consumption 计 1 节（lessonCount）。id/teacher_id 为 null 兜底「未知」。
+ */
+export interface ConsumptionRankingItem {
+  id: string | null;
+  name: string;
+  lessonCount: number;
+}
+export interface ConsumptionRankingResult {
+  teacher: ConsumptionRankingItem[];
+  academic: ConsumptionRankingItem[];
+}
+
+/**
  * 2026-05-22 SSOT §6.8 校长下发月度目标 DTO
  */
 export interface SetMonthlyTargetDto {
@@ -2180,6 +2200,106 @@ export class KpiService {
         `[KPI-course-sales-by-person] ${tenantSchema}: ${(e as Error).message}`,
       );
       return { productName: null, items: [] };
+    }
+  }
+
+  // ============================================================
+  // 2026-06-02 SSOT §3.-2 E「消课数据双维度排名」— admin/boss 经营首页
+  //   原「老师业绩榜·本月」改为消课数据，分 教务 / 老师 两 tab 的本月消课量
+  // ============================================================
+
+  /**
+   * E 消课数据双维度排名（本月 + 本校 scope）
+   *
+   * 口径（SSOT §3.-2 E + 既有「本月消课 list」join 路径）：
+   *   - 本月 = confirmed_at 落当前自然月（date_trunc('month', NOW()) 起点，与
+   *     course-sales personalSigned 排名口径一致，对齐「本月四象」窗口）
+   *   - course_consumptions.status = 'confirmed'
+   *   - campus 过滤 = schedules.campus_id = $1（与既有 consumption KPI getConsumptionKpi
+   *     口径一致；campusId 由 controller 从 JWT 透传，禁信前端）
+   *   - 数据源：course_consumptions cc JOIN schedules sc ON sc.id = cc.schedule_id
+   *
+   *   teacher 维：GROUP BY sc.teacher_id，LEFT JOIN teachers t 取 name。
+   *     每条 confirmed consumption 计 1 节（COUNT(*)）。
+   *   academic 维：GROUP BY sc.created_by_user_id WHERE sc.created_by_role IN
+   *     ('academic','academic_admin')（谁排的课；admin/boss 自排不计入教务维），
+   *     LEFT JOIN users u 取 name。
+   *     - created_by_role 历史值可能含 'teacher'/'sales'（5/12 之前旧数据），
+   *       本聚合用 created_by_role 过滤（与 getConsumptionKpi 用 users.role 二次校验
+   *       同精神，此处直接按排课时落库的 role 维度，符合 §3.-2 E「谁排的课」语义）。
+   *
+   * 两维各按 lessonCount DESC。id/teacher_id 为 null 兜底 name='未知'。
+   * fail-open：聚合失败 → { teacher: [], academic: [] }（不破坏 home 渲染）。
+   */
+  async getConsumptionRanking(
+    tenantSchema: string,
+    campusId: string,
+  ): Promise<ConsumptionRankingResult> {
+    try {
+      // teacher 维：谁教的（GROUP BY schedules.teacher_id）
+      const teacherRows = await this.pg.tenantQuery<{
+        teacher_id: string | null;
+        teacher_name: string | null;
+        lesson_count: string;
+      }>(
+        tenantSchema,
+        `SELECT
+           sc.teacher_id    AS teacher_id,
+           t.name           AS teacher_name,
+           COUNT(*)         AS lesson_count
+         FROM course_consumptions cc
+         JOIN schedules sc ON sc.id = cc.schedule_id
+         LEFT JOIN teachers t ON t.id = sc.teacher_id
+         WHERE cc.status = 'confirmed'
+           AND cc.confirmed_at >= date_trunc('month', NOW())
+           AND cc.confirmed_at < date_trunc('month', NOW()) + INTERVAL '1 month'
+           AND sc.campus_id = $1
+         GROUP BY sc.teacher_id, t.name
+         ORDER BY lesson_count DESC`,
+        [campusId],
+      );
+
+      // academic 维：谁排的课（GROUP BY schedules.created_by_user_id，仅教务线）
+      const academicRows = await this.pg.tenantQuery<{
+        user_id: string | null;
+        user_name: string | null;
+        lesson_count: string;
+      }>(
+        tenantSchema,
+        `SELECT
+           sc.created_by_user_id  AS user_id,
+           u.name                 AS user_name,
+           COUNT(*)               AS lesson_count
+         FROM course_consumptions cc
+         JOIN schedules sc ON sc.id = cc.schedule_id
+         LEFT JOIN users u ON u.id = sc.created_by_user_id
+         WHERE cc.status = 'confirmed'
+           AND cc.confirmed_at >= date_trunc('month', NOW())
+           AND cc.confirmed_at < date_trunc('month', NOW()) + INTERVAL '1 month'
+           AND sc.created_by_role IN ('academic','academic_admin')
+           AND sc.campus_id = $1
+         GROUP BY sc.created_by_user_id, u.name
+         ORDER BY lesson_count DESC`,
+        [campusId],
+      );
+
+      const teacher: ConsumptionRankingItem[] = teacherRows.map((r) => ({
+        id: r.teacher_id ?? null,
+        name: r.teacher_id ? (r.teacher_name ?? '未知') : '未知',
+        lessonCount: parseInt(r.lesson_count, 10) || 0,
+      }));
+      const academic: ConsumptionRankingItem[] = academicRows.map((r) => ({
+        id: r.user_id ?? null,
+        name: r.user_id ? (r.user_name ?? '未知') : '未知',
+        lessonCount: parseInt(r.lesson_count, 10) || 0,
+      }));
+
+      return { teacher, academic };
+    } catch (e) {
+      this.logger.error(
+        `[KPI-consumption-ranking] ${tenantSchema}: ${(e as Error).message}`,
+      );
+      return { teacher: [], academic: [] };
     }
   }
 }
