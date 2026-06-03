@@ -504,21 +504,21 @@ describe('Feedback Services InDb (V9)', () => {
         expect(r.teacherInternalNote).toBeNull();
       });
 
-      // ----- V68 (SSOT §3.-2): feedbackAttachments 家长可见 → 对所有 role 都不剥离 -----
-      it('findInDb role=parent → feedbackAttachments 保留（家长可见，与 teacherInternalNote 相反）', async () => {
+      // ----- V68 (SSOT §3.-2, 2026-06-03 用户修订): feedbackAttachments 原始聊天记录=内部素材 → 同 teacherInternalNote 白名单剥离 -----
+      it('findInDb role=parent → feedbackAttachments 剥离=[]（原始聊天记录仅内部可见，家长看 AI 处理结果待 LLM）', async () => {
         repo.findByIdWithMeta.mockResolvedValueOnce({ ...FB_WITH_NOTE });
         const r = await service.findInDb(FEEDBACK.id, TENANT, 'parent');
-        // 内部备注剥离，但反馈附件保留
+        // 内部备注 + 原始聊天记录附件都剥离
         expect(r.teacherInternalNote).toBeNull();
-        expect((r as any).feedbackAttachments).toEqual(FB_ATTS);
+        expect((r as any).feedbackAttachments).toEqual([]);
       });
 
-      it('findInDb role=sales / sales_manager → feedbackAttachments 保留', async () => {
+      it('findInDb role=sales / sales_manager → feedbackAttachments 剥离=[]', async () => {
         for (const role of ['sales', 'sales_manager']) {
           repo.findByIdWithMeta.mockResolvedValueOnce({ ...FB_WITH_NOTE });
           const r = await service.findInDb(FEEDBACK.id, TENANT, role);
           expect(r.teacherInternalNote).toBeNull();
-          expect((r as any).feedbackAttachments).toEqual(FB_ATTS);
+          expect((r as any).feedbackAttachments).toEqual([]);
         }
       });
 
@@ -528,18 +528,18 @@ describe('Feedback Services InDb (V9)', () => {
         expect((r as any).feedbackAttachments).toEqual(FB_ATTS);
       });
 
-      it('listByStudentInDb role=parent → 每条 feedbackAttachments 保留', async () => {
+      it('listByStudentInDb role=parent → 每条 feedbackAttachments 剥离=[]', async () => {
         repo.listByStudent.mockResolvedValueOnce([{ ...FB_WITH_NOTE }]);
         const list = await service.listByStudentInDb(STUDENT, TENANT, {}, 'parent');
         expect(list[0].teacherInternalNote).toBeNull();
-        expect((list[0] as any).feedbackAttachments).toEqual(FB_ATTS);
+        expect((list[0] as any).feedbackAttachments).toEqual([]);
       });
 
-      it('markParentReadInDb role=parent → feedbackAttachments 保留（C 端打已读后仍可见缩略图）', async () => {
+      it('markParentReadInDb role=parent → feedbackAttachments 剥离=[]（家长不看原始聊天记录）', async () => {
         repo.markParentRead.mockResolvedValueOnce({ ...FB_WITH_NOTE });
         const r = await service.markParentReadInDb(FEEDBACK.id, TENANT, 'parent');
         expect(r.teacherInternalNote).toBeNull();
-        expect((r as any).feedbackAttachments).toEqual(FB_ATTS);
+        expect((r as any).feedbackAttachments).toEqual([]);
       });
     });
 

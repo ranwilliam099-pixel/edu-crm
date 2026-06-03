@@ -32,9 +32,9 @@ export interface LessonFeedback {
   homeworkDeadline?: Date;
   homeworkDifficulty?: HomeworkDifficulty;
   nextPreview?: string;
-  // V68 (SSOT §3.-2 2026-06-03) 反馈级图片附件（家长可见，与 teacherInternalNote 相反）。
-  //   shape 复用 homework_submission attachments（type 固定 'image'，filename 选填）。
-  //   读出参默认 []（repo.mapRow 保证）。
+  // V68 (SSOT §3.-2 2026-06-03 用户修订) 微信聊天记录原始图片 = **内部素材**（与 teacherInternalNote 同白名单剥离）。
+  //   家长不看原始明细，看的是 AI 处理后的结果（另字段，待 LLM）；内部 teacher/academic/.../boss/admin 可见明细。
+  //   shape 复用 homework_submission attachments（type 固定 'image'，filename 选填）。读出参默认 []（repo.mapRow 保证）。
   feedbackAttachments?: ReadonlyArray<{ url: string; type: 'image'; filename?: string }>;
   parentReadAt?: Date;
   submittedAt: Date;
@@ -143,23 +143,27 @@ export class LessonFeedbackService {
    * 其余字段一律不动（teacherNote 家长可见备注等照常返）。
    * undefined role（理论上不该发生 — 端点都有 RbacGuard/parent middleware 注入）→ 保守剥离。
    *
-   * ⚠️ V68 (SSOT §3.-2 2026-06-03) 不变量：feedbackAttachments = **反馈级图片附件，家长可见**，
-   *   与 teacherInternalNote **语义相反** → **对所有 role 都保留不剥离**（含 parent / sales）。
-   *   本函数只 set teacherInternalNote=null，feedbackAttachments 经 `...fb` 原样透传 →
-   *   勿在此为任何 role 删/置空 feedbackAttachments（家长 C 端要看缩略图 + previewImage）。
+   * ⚠️ V68 (SSOT §3.-2 2026-06-03 用户修订) 不变量：feedbackAttachments = **微信聊天记录原始图片 = 内部素材**，
+   *   与 teacherInternalNote **同白名单剥离**（家长/销售等非内部 role 看不到原始明细；
+   *   家长看的是 AI 处理后的结果 = 另字段，待 LLM）→ 非白名单 role feedbackAttachments=[]。
    *
    * @param fb 反馈对象（可含 findInDb 扩展的 studentName/teacherName/subject meta）
    * @param role caller 的 req.user?.role
    */
   private maskFeedbackForRole<
-    T extends { teacherInternalNote?: string | null | undefined },
+    T extends {
+      teacherInternalNote?: string | null | undefined;
+      feedbackAttachments?:
+        | ReadonlyArray<{ url: string; type: 'image'; filename?: string }>
+        | null;
+    },
   >(fb: T, role: string | undefined | null): T {
     if (role && TEACHER_INTERNAL_NOTE_VISIBLE_ROLES.has(role)) {
       return fb;
     }
-    // 非白名单（含 sales / sales_manager / parent）→ 剥离老师内部备注。
-    //   feedbackAttachments 经 `...fb` 保留（家长可见，V68 不变量，勿删）。
-    return { ...fb, teacherInternalNote: null };
+    // 非白名单（含 sales / sales_manager / parent）→ 剥离老师内部备注 + 原始聊天记录附件。
+    //   2026-06-03 SSOT §3.-2 III：微信聊天记录原始明细仅内部可见；家长看 AI 处理结果（待 LLM）。
+    return { ...fb, teacherInternalNote: null, feedbackAttachments: [] };
   }
 
   constructor(
