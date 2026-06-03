@@ -460,6 +460,24 @@ describe('FeedbackController — Sprint B self-check', () => {
       const r = await controller.submitFeedbackInDb(baseBody, mkReq());
       expect(r.id).toBe(FEEDBACK_ID);
     });
+
+    // V68 (SSOT §3.-2 2026-06-03) 反馈级图片附件 body 透传 service（清洗在 service 层）
+    it('body.feedbackAttachments 经 ...rest 透传 submitInDb', async () => {
+      teacherRepo.findByUserId.mockResolvedValueOnce(baseTeacherT1);
+      feedbackSvc.submitInDb.mockResolvedValueOnce(persistedFeedback);
+      const atts = [
+        { url: 'https://minxin.top/uploads/t/202606/chat.jpg', type: 'image' as const, filename: 'chat.jpg' },
+      ];
+
+      await controller.submitFeedbackInDb({ ...baseBody, feedbackAttachments: atts }, mkReq());
+
+      expect(feedbackSvc.submitInDb).toHaveBeenCalledTimes(1);
+      const [submitInput, submitTenant] = feedbackSvc.submitInDb.mock.calls[0];
+      expect(submitTenant).toBe(TENANT);
+      expect(submitInput.feedbackAttachments).toEqual(atts);
+      // tenantSchema 不应混进 service input（被 destructure 剥离）
+      expect(submitInput.tenantSchema).toBeUndefined();
+    });
   });
 
   // ============================================================

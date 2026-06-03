@@ -42,12 +42,14 @@ export class LessonFeedbackRepository {
          knowledge_points, homework, homework_attachments,
          teacher_note, teacher_internal_note,
          knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
+         feedback_attachments,
          submitted_at, updated_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        RETURNING id, schedule_id, student_id, teacher_id, attendance_status,
                  classroom_performance, knowledge_points, homework,
                  homework_attachments, teacher_note, teacher_internal_note,
                  knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
+                 feedback_attachments,
                  parent_read_at, submitted_at, updated_at`,
       [
         feedback.id,
@@ -66,6 +68,8 @@ export class LessonFeedbackRepository {
         feedback.homeworkDeadline || null,
         feedback.homeworkDifficulty || null,
         feedback.nextPreview || null,
+        // V68 (SSOT §3.-2 2026-06-03) 反馈级图片附件（家长可见）
+        feedback.feedbackAttachments ? JSON.stringify(feedback.feedbackAttachments) : null,
         feedback.submittedAt,
         feedback.updatedAt,
       ],
@@ -83,6 +87,7 @@ export class LessonFeedbackRepository {
               classroom_performance, knowledge_points, homework,
               homework_attachments, teacher_note, teacher_internal_note,
               knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
+              feedback_attachments,
               parent_read_at, submitted_at, updated_at
        FROM lesson_feedbacks WHERE id = $1`,
       [id],
@@ -109,6 +114,7 @@ export class LessonFeedbackRepository {
               lf.classroom_performance, lf.knowledge_points, lf.homework,
               lf.homework_attachments, lf.teacher_note, lf.teacher_internal_note,
               lf.knowledge_matrix, lf.dim_ratings, lf.homework_deadline, lf.homework_difficulty, lf.next_preview,
+              lf.feedback_attachments,
               lf.parent_read_at, lf.submitted_at, lf.updated_at,
               s.student_name AS student_name,
               t.name         AS teacher_name,
@@ -142,6 +148,7 @@ export class LessonFeedbackRepository {
               classroom_performance, knowledge_points, homework,
               homework_attachments, teacher_note, teacher_internal_note,
               knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
+              feedback_attachments,
               parent_read_at, submitted_at, updated_at
        FROM lesson_feedbacks
        WHERE schedule_id = $1 AND student_id = $2`,
@@ -163,6 +170,7 @@ export class LessonFeedbackRepository {
               classroom_performance, knowledge_points, homework,
               homework_attachments, teacher_note, teacher_internal_note,
               knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
+              feedback_attachments,
               parent_read_at, submitted_at, updated_at
        FROM lesson_feedbacks
        WHERE student_id = $1
@@ -189,6 +197,7 @@ export class LessonFeedbackRepository {
               classroom_performance, knowledge_points, homework,
               homework_attachments, teacher_note, teacher_internal_note,
               knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
+              feedback_attachments,
               parent_read_at, submitted_at, updated_at
        FROM lesson_feedbacks
        WHERE student_id = $1 AND teacher_id = $2
@@ -273,6 +282,7 @@ export class LessonFeedbackRepository {
                  classroom_performance, knowledge_points, homework,
                  homework_attachments, teacher_note, teacher_internal_note,
                  knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
+                 feedback_attachments,
                  parent_read_at, submitted_at, updated_at`,
       params,
     );
@@ -293,6 +303,7 @@ export class LessonFeedbackRepository {
                  classroom_performance, knowledge_points, homework,
                  homework_attachments, teacher_note, teacher_internal_note,
                  knowledge_matrix, dim_ratings, homework_deadline, homework_difficulty, next_preview,
+                 feedback_attachments,
                  parent_read_at, submitted_at, updated_at`,
       [id],
     );
@@ -336,6 +347,15 @@ export class LessonFeedbackRepository {
             ? JSON.parse(row.homework_attachments)
             : row.homework_attachments
           : undefined,
+      // V68 (SSOT §3.-2 2026-06-03) 反馈级图片附件（家长可见）。
+      //   契约固定：出参默认 []（区别于 homeworkAttachments 的 undefined），前端无需 ?? [] 兜底。
+      //   既存反馈列为 NULL / 列不存在（部署前）→ 都安全落到 []。
+      feedbackAttachments:
+        row.feedback_attachments
+          ? typeof row.feedback_attachments === 'string'
+            ? JSON.parse(row.feedback_attachments)
+            : row.feedback_attachments
+          : [],
       teacherNote: row.teacher_note || undefined,
       teacherInternalNote: row.teacher_internal_note || undefined,
       knowledgeMatrix:

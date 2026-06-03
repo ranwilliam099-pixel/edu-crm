@@ -32,6 +32,10 @@ export interface LessonFeedback {
   homeworkDeadline?: Date;
   homeworkDifficulty?: HomeworkDifficulty;
   nextPreview?: string;
+  // V68 (SSOT §3.-2 2026-06-03) 反馈级图片附件（家长可见，与 teacherInternalNote 相反）。
+  //   shape 复用 homework_submission attachments（type 固定 'image'，filename 选填）。
+  //   读出参默认 []（repo.mapRow 保证）。
+  feedbackAttachments?: ReadonlyArray<{ url: string; type: 'image'; filename?: string }>;
   parentReadAt?: Date;
   submittedAt: Date;
   updatedAt: Date;
@@ -58,6 +62,74 @@ const TEACHER_INTERNAL_NOTE_VISIBLE_ROLES: ReadonlySet<string> = new Set([
   'admin',
 ]);
 
+/**
+ * V68 (SSOT §3.-2 2026-06-03)：反馈级图片附件上限（聊天记录截图为主，对齐前端 chooseMessageFile count）。
+ */
+const FEEDBACK_ATTACHMENT_MAX = 9;
+
+/**
+ * V68 反馈附件 url 白名单校验。
+ *
+ * 契约（SSOT §3.-2）：url 须为 https，或本机 OSS（UploadController nginp 自建方案，
+ *   UPLOAD_PUBLIC_BASE 默认 `http://1.14.127.67/uploads`，备案后切 `https://minxin.top`）。
+ *   非法项**静默丢弃不抛错**（与前端 imgSecCheck fail-open 一致；不让一张坏图阻断整次反馈提交）。
+ *
+ * 防 url 注入：用 WHATWG URL 解析（拒 javascript:/data:/file: 等伪协议、空白、相对路径），
+ *   只放行 https 任意 host，或 http 但 host 命中本机 OSS allow-list。
+ */
+const FEEDBACK_OSS_HTTP_HOSTS: ReadonlySet<string> = new Set([
+  '1.14.127.67',
+  'minxin.top',
+  'www.minxin.top',
+]);
+
+function isAllowedFeedbackAttachmentUrl(url: unknown): boolean {
+  if (typeof url !== 'string' || url.length === 0 || url.length > 2048) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false; // 非法 / 相对 / 伪协议（javascript: data: 等会 throw 或被下面协议过滤）
+  }
+  if (parsed.protocol === 'https:') return true;
+  // http 仅放行本机自建 OSS host（备案前过渡；备案后前端切 https，此分支自然不命中）
+  if (parsed.protocol === 'http:') {
+    return FEEDBACK_OSS_HTTP_HOSTS.has(parsed.hostname.toLowerCase());
+  }
+  return false;
+}
+
+/**
+ * V68 反馈附件清洗：数组 → 合法项数组（≤9），每项 normalize 成 { url, type:'image', filename? }。
+ *   - 非数组 / 缺省 → []
+ *   - 每项 url 不合法（非 https / 非本机 OSS / 伪协议 / 非 string）→ 静默丢弃
+ *   - type 强制 'image'（本批仅图片，SSOT §3.-2；非图片文件无内容审核接口，合规风险，不做）
+ *   - filename 选填，仅当为 string 时保留（去掉非法类型）
+ *   - 超过 9 张 → 取前 9（截断不报错）
+ */
+function sanitizeFeedbackAttachments(
+  input: unknown,
+): Array<{ url: string; type: 'image'; filename?: string }> {
+  if (!Array.isArray(input)) return [];
+  const out: Array<{ url: string; type: 'image'; filename?: string }> = [];
+  for (const item of input) {
+    if (out.length >= FEEDBACK_ATTACHMENT_MAX) break;
+    if (!item || typeof item !== 'object') continue;
+    const url = (item as { url?: unknown }).url;
+    if (!isAllowedFeedbackAttachmentUrl(url)) continue; // 非法整项丢弃
+    const filename = (item as { filename?: unknown }).filename;
+    const normalized: { url: string; type: 'image'; filename?: string } = {
+      url: url as string,
+      type: 'image',
+    };
+    if (typeof filename === 'string' && filename.length > 0) {
+      normalized.filename = filename.slice(0, 256);
+    }
+    out.push(normalized);
+  }
+  return out;
+}
+
 @Injectable()
 export class LessonFeedbackService {
   private readonly logger = new Logger(LessonFeedbackService.name);
@@ -71,6 +143,11 @@ export class LessonFeedbackService {
    * 其余字段一律不动（teacherNote 家长可见备注等照常返）。
    * undefined role（理论上不该发生 — 端点都有 RbacGuard/parent middleware 注入）→ 保守剥离。
    *
+   * ⚠️ V68 (SSOT §3.-2 2026-06-03) 不变量：feedbackAttachments = **反馈级图片附件，家长可见**，
+   *   与 teacherInternalNote **语义相反** → **对所有 role 都保留不剥离**（含 parent / sales）。
+   *   本函数只 set teacherInternalNote=null，feedbackAttachments 经 `...fb` 原样透传 →
+   *   勿在此为任何 role 删/置空 feedbackAttachments（家长 C 端要看缩略图 + previewImage）。
+   *
    * @param fb 反馈对象（可含 findInDb 扩展的 studentName/teacherName/subject meta）
    * @param role caller 的 req.user?.role
    */
@@ -80,7 +157,8 @@ export class LessonFeedbackService {
     if (role && TEACHER_INTERNAL_NOTE_VISIBLE_ROLES.has(role)) {
       return fb;
     }
-    // 非白名单（含 sales / sales_manager / parent）→ 剥离老师内部备注
+    // 非白名单（含 sales / sales_manager / parent）→ 剥离老师内部备注。
+    //   feedbackAttachments 经 `...fb` 保留（家长可见，V68 不变量，勿删）。
     return { ...fb, teacherInternalNote: null };
   }
 
@@ -115,6 +193,8 @@ export class LessonFeedbackService {
     homeworkDeadline?: Date;
     homeworkDifficulty?: HomeworkDifficulty;
     nextPreview?: string;
+    // V68 (SSOT §3.-2 2026-06-03) 反馈级图片附件（家长可见）；非法项静默丢弃，缺省 []
+    feedbackAttachments?: ReadonlyArray<{ url: string; type: 'image'; filename?: string }>;
   }): LessonFeedback {
     if (!input.id || input.id.length !== 32) {
       throw new BadRequestException('feedback id must be 32-char ULID');
@@ -139,10 +219,12 @@ export class LessonFeedbackService {
       );
     }
     const now = new Date();
+    // V68 (SSOT §3.-2): 清洗反馈附件 — 非法项静默丢弃，缺省 []，上限 9，url 须 https/本机 OSS
+    const feedbackAttachments = sanitizeFeedbackAttachments(input.feedbackAttachments);
     this.logger.log(
       `[BE-V9-1] submitFeedback id=${input.id} schedule=${input.scheduleId} ` +
         `student=${input.studentId} attendance=${input.attendanceStatus} ` +
-        `performance=${input.classroomPerformance}`,
+        `performance=${input.classroomPerformance} attachments=${feedbackAttachments.length}`,
     );
     return {
       id: input.id,
@@ -161,6 +243,7 @@ export class LessonFeedbackService {
       homeworkDeadline: input.homeworkDeadline,
       homeworkDifficulty: input.homeworkDifficulty,
       nextPreview: input.nextPreview,
+      feedbackAttachments,
       submittedAt: now,
       updatedAt: now,
     };

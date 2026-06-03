@@ -354,6 +354,10 @@ export class FeedbackController {
       homeworkDeadlineMs?: number;
       homeworkDifficulty?: HomeworkDifficulty;
       nextPreview?: string;
+      // V68 (SSOT §3.-2 2026-06-03) 反馈级图片附件（家长可见）；
+      //   service.submit 清洗（非法 url 静默丢弃 / 上限 9 / 缺省 []）。
+      //   ?? 透传：经 `...rest` 进 submitInDb → service.submit。
+      feedbackAttachments?: Array<{ url: string; type: 'image'; filename?: string }>;
       tenantSchema: string;
     },
     @Req() req: AuthenticatedRequest,

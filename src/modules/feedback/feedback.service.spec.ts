@@ -82,6 +82,89 @@ describe('LessonFeedbackService - V9 BE-V9-1', () => {
     });
   });
 
+  // ============================================================
+  // V68 (SSOT §3.-2 2026-06-03) 反馈级图片附件清洗（家长可见；非法静默丢弃 / 上限 9 / 缺省 []）
+  // ============================================================
+  describe('submit - V68 feedbackAttachments 清洗', () => {
+    const base = {
+      id: ULID32_F1,
+      scheduleId: ULID32_SCH1,
+      studentId: ULID32_S1,
+      teacherId: ULID32_T1,
+      attendanceStatus: '出勤' as AttendanceForFeedback,
+      classroomPerformance: '良好' as ClassroomPerformance,
+    };
+
+    it('缺省（不传）→ feedbackAttachments = []', () => {
+      const f = service.submit({ ...base });
+      expect(f.feedbackAttachments).toEqual([]);
+    });
+
+    it('非数组（{} / string）→ []（不抛错）', () => {
+      const f1 = service.submit({ ...base, feedbackAttachments: {} as any });
+      expect(f1.feedbackAttachments).toEqual([]);
+      const f2 = service.submit({ ...base, feedbackAttachments: 'oops' as any });
+      expect(f2.feedbackAttachments).toEqual([]);
+    });
+
+    it('合法 https 项保留；type 强制 image；filename 选填', () => {
+      const f = service.submit({
+        ...base,
+        feedbackAttachments: [
+          { url: 'https://minxin.top/uploads/t/202606/a.jpg', type: 'image', filename: 'chat.jpg' },
+          { url: 'https://cdn.example.com/b.png', type: 'image' }, // 无 filename
+        ],
+      });
+      expect(f.feedbackAttachments).toEqual([
+        { url: 'https://minxin.top/uploads/t/202606/a.jpg', type: 'image', filename: 'chat.jpg' },
+        { url: 'https://cdn.example.com/b.png', type: 'image' },
+      ]);
+    });
+
+    it('本机 OSS http host（备案前）放行；其它 http host 丢弃', () => {
+      const f = service.submit({
+        ...base,
+        feedbackAttachments: [
+          { url: 'http://1.14.127.67/uploads/t/202606/ok.jpg', type: 'image' }, // 本机 OSS → 保留
+          { url: 'http://evil.com/x.jpg', type: 'image' }, // 非本机 http → 丢弃
+        ] as any,
+      });
+      expect(f.feedbackAttachments).toEqual([
+        { url: 'http://1.14.127.67/uploads/t/202606/ok.jpg', type: 'image' },
+      ]);
+    });
+
+    it('非法 url（伪协议 / 相对 / 空 / 非 string）整项静默丢弃，合法项保留', () => {
+      const f = service.submit({
+        ...base,
+        feedbackAttachments: [
+          { url: 'javascript:alert(1)', type: 'image' }, // 伪协议 → 丢
+          { url: '/relative/path.jpg', type: 'image' }, // 相对 → 丢
+          { url: '', type: 'image' }, // 空 → 丢
+          { url: 12345, type: 'image' }, // 非 string → 丢
+          { url: 'data:image/png;base64,AAAA', type: 'image' }, // data: → 丢
+          { type: 'image' }, // 缺 url → 丢
+          null, // 非对象 → 丢
+          { url: 'https://minxin.top/good.jpg', type: 'image' }, // 合法 → 留
+        ] as any,
+      });
+      expect(f.feedbackAttachments).toEqual([
+        { url: 'https://minxin.top/good.jpg', type: 'image' },
+      ]);
+    });
+
+    it('超过 9 张 → 截断取前 9（不抛错）', () => {
+      const many = Array.from({ length: 12 }, (_, i) => ({
+        url: `https://minxin.top/uploads/${i}.jpg`,
+        type: 'image' as const,
+      }));
+      const f = service.submit({ ...base, feedbackAttachments: many });
+      expect(f.feedbackAttachments).toHaveLength(9);
+      expect(f.feedbackAttachments![0].url).toBe('https://minxin.top/uploads/0.jpg');
+      expect(f.feedbackAttachments![8].url).toBe('https://minxin.top/uploads/8.jpg');
+    });
+  });
+
   describe('update - 24h 修改窗口', () => {
     const baseFeedback: LessonFeedback = {
       id: ULID32_F1,

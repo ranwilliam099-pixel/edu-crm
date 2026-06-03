@@ -33,6 +33,7 @@ describe('LessonFeedbackRepository', () => {
     homework_attachments: null,
     teacher_note: null,
     teacher_internal_note: null,
+    feedback_attachments: null,
     parent_read_at: null,
     submitted_at: SAMPLE.submittedAt,
     updated_at: SAMPLE.updatedAt,
@@ -98,6 +99,36 @@ describe('LessonFeedbackRepository', () => {
       expect(result.homeworkDifficulty).toBe('medium');
       expect(result.nextPreview).toBe('下次预习平方差');
     });
+
+    // V68 (SSOT §3.-2 2026-06-03) 反馈级图片附件（家长可见）
+    it('serializes V68 feedback_attachments (param[16] = JSON.stringify) and maps back', async () => {
+      const atts = [
+        { url: 'https://minxin.top/uploads/t/202606/a.jpg', type: 'image', filename: 'chat1.jpg' },
+        { url: 'https://minxin.top/uploads/t/202606/b.jpg', type: 'image' },
+      ];
+      const sampleWithAtts: LessonFeedback = {
+        ...SAMPLE,
+        feedbackAttachments: atts as any,
+      };
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...ROW, feedback_attachments: JSON.stringify(atts) },
+      ]);
+      const result = await repo.insert(TENANT, sampleWithAtts);
+      const [, sql, params] = pg.tenantQuery.mock.calls[0];
+      // 列名 + 占位 $19 在 SQL 中
+      expect(sql).toContain('feedback_attachments');
+      expect(sql).toContain('$19');
+      // param[16] = feedback_attachments（id..nextPreview 共 16 个 → 索引 16）
+      expect(params[16]).toBe(JSON.stringify(atts));
+      expect(result.feedbackAttachments).toEqual(atts);
+    });
+
+    it('feedback_attachments 缺省（undefined）→ INSERT 传 null', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([ROW]);
+      await repo.insert(TENANT, SAMPLE); // SAMPLE 无 feedbackAttachments
+      const params = pg.tenantQuery.mock.calls[0][2];
+      expect(params[16]).toBeNull();
+    });
   });
 
   describe('update with V18 fields', () => {
@@ -141,6 +172,33 @@ describe('LessonFeedbackRepository', () => {
       ]);
       const r = await repo.findById(TENANT, SAMPLE.id);
       expect(r?.knowledgePoints).toEqual(SAMPLE.knowledgePoints);
+    });
+
+    // V68 (SSOT §3.-2) 出参默认 [] + 解析（string / 已 parse 两路）
+    it('SELECT includes feedback_attachments; null → maps to [] (default)', async () => {
+      pg.tenantQuery.mockResolvedValueOnce([ROW]); // feedback_attachments: null
+      const r = await repo.findById(TENANT, SAMPLE.id);
+      const sql = pg.tenantQuery.mock.calls[0][1] as string;
+      expect(sql).toContain('feedback_attachments');
+      expect(r?.feedbackAttachments).toEqual([]);
+    });
+
+    it('parses feedback_attachments JSON string into array', async () => {
+      const atts = [{ url: 'https://minxin.top/uploads/x.jpg', type: 'image', filename: 'x.jpg' }];
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...ROW, feedback_attachments: JSON.stringify(atts) },
+      ]);
+      const r = await repo.findById(TENANT, SAMPLE.id);
+      expect(r?.feedbackAttachments).toEqual(atts);
+    });
+
+    it('handles feedback_attachments already parsed (pg jsonb)', async () => {
+      const atts = [{ url: 'https://minxin.top/uploads/y.jpg', type: 'image' }];
+      pg.tenantQuery.mockResolvedValueOnce([
+        { ...ROW, feedback_attachments: atts },
+      ]);
+      const r = await repo.findById(TENANT, SAMPLE.id);
+      expect(r?.feedbackAttachments).toEqual(atts);
     });
   });
 
